@@ -1,0 +1,41 @@
+{
+  "$schema": "../tool-manifest.schema.json",
+  "schemaVersion": 1,
+  "id": "vectornest",
+  "name": "VectorNest",
+  "version": "0.0.0",
+  "status": "scaffold",
+  "summary": "Consolidate a separate vector DB into the Neon Postgres you already run: RAG ingest/query with safe, branch-based re-embedding.",
+  "category": "ai",
+  "tags": ["rag", "pgvector", "embeddings", "vector-search", "neon", "postgres"],
+  "entrypoints": {
+    "library": { "packageName": "@neon-tools/vectornest", "import": "@neon-tools/vectornest" },
+    "cli": { "bin": "vectornest", "install": "pnpm --filter vectornest cli" },
+    "http": { "openapi": "openapi.yaml", "baseUrlEnv": "VECTORNEST_BASE_URL" },
+    "mcp": {
+      "transport": "stdio",
+      "command": "pnpm",
+      "args": ["--filter", "vectornest", "mcp"],
+      "tools": ["vn_ingest", "vn_query", "vn_reembed", "vn_eval", "vn_collections"]
+    }
+  },
+  "neon": { "features": ["pgvector", "branching", "scale-to-zero", "neon-api"] },
+  "env": [
+    { "name": "DATABASE_URL", "required": true, "secret": true, "description": "Neon Postgres connection string (least-privilege role)." },
+    { "name": "NEON_API_KEY", "required": false, "secret": true, "description": "Neon API key — required only for branch-based re-embed." },
+    { "name": "NEON_PROJECT_ID", "required": false, "secret": false, "description": "Neon project id for branch operations." },
+    { "name": "AI_GATEWAY_API_KEY", "required": true, "secret": true, "description": "Vercel AI Gateway key for embedding models (provider/model strings)." },
+    { "name": "VECTORNEST_BASE_URL", "required": false, "secret": false, "description": "Base URL when running the HTTP entrypoint." }
+  ],
+  "provides": ["rag.ingest", "rag.query", "rag.reembed", "rag.eval"],
+  "consumes": [],
+  "dependsOn": [],
+  "paths": {
+    "readme": "README.md",
+    "architecture": "ARCHITECTURE.md",
+    "claudeMd": "CLAUDE.md",
+    "source": "src/"
+  },
+  "owner": "fablabfortsmith.org",
+  "links": { "neonDocs": "https://neon.com/docs/introduction" }
+}
