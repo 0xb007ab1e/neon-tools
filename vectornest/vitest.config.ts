@@ -8,8 +8,9 @@ export default defineConfig({
       reporter: ['text', 'html'],
       include: ['src/**'],
       // Exclude composition roots / entrypoints (thin imperative shell wiring) and
-      // type-only port declarations from the coverage denominator.
-      exclude: ['src/app/**', 'src/ports/**', 'src/**/*.d.ts'],
+      // type-only declarations (ports, domain types) from the coverage denominator —
+      // they transpile to no executable code.
+      exclude: ['src/app/**', 'src/ports/**', 'src/core/domain.ts', 'src/**/*.d.ts'],
       thresholds: {
         // Master §4 baseline (≥90% line + branch elsewhere).
         lines: 90,
