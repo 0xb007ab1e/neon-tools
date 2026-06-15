@@ -1,0 +1,19 @@
+# Secrets / local env (commit only *.example)
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+coverage/
+.turbo/
+
+# Generated tool registry (regenerated from neon-tool.json manifests)
+tools.lock.json
+
+# OS / editor
+.DS_Store
+*.log

@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fablabfortsmith.org/neon/tool-manifest.schema.json",
+  "title": "Neon Collection Tool Manifest",
+  "description": "Discovery manifest every tool in this collection MUST publish at its directory root as `neon-tool.json`. A harness/agent discovers tools by globbing `**/neon-tool.json` from the collection root, and uses `entrypoints` to invoke them (library import, CLI, HTTP+OpenAPI, or MCP server). `provides`/`consumes` capability tokens let tools compose into a larger SaaS.",
+  "type": "object",
+  "required": ["schemaVersion", "id", "name", "version", "status", "summary", "category", "entrypoints"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1, "description": "Manifest schema version." },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,48}$",
+      "description": "Globally unique kebab-case tool id (matches the directory name)."
+    },
+    "name": { "type": "string", "description": "Human display name." },
+    "version": { "type": "string", "description": "SemVer of the tool." },
+    "status": {
+      "enum": ["design", "scaffold", "alpha", "beta", "stable", "deprecated"],
+      "description": "Lifecycle stage."
+    },
+    "summary": { "type": "string", "maxLength": 280, "description": "One-line description." },
+    "category": {
+      "enum": ["data", "ai", "devtools", "infra", "compliance", "finops", "security"],
+      "description": "Primary classification."
+    },
+    "tags": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "entrypoints": {
+      "type": "object",
+      "description": "How this tool can be invoked. At least one MUST be present.",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "library": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "packageName": { "type": "string" },
+            "import": { "type": "string", "description": "Primary export path, e.g. '@neon-tools/vectornest'." }
+          }
+        },
+        "cli": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bin": { "type": "string", "description": "CLI command name." },
+            "install": { "type": "string", "description": "How to install/run, e.g. 'pnpm --filter vectornest cli'." }
+          }
+        },
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "openapi": { "type": "string", "description": "Path to the OpenAPI spec relative to the tool dir." },
+            "baseUrlEnv": { "type": "string", "description": "Env var holding the service base URL." }
+          }
+        },
+        "mcp": {
+          "type": "object",
+          "description": "MCP server so agents/harnesses can discover + call this tool at runtime.",
+          "additionalProperties": false,
+          "properties": {
+            "transport": { "enum": ["stdio", "http"] },
+            "command": { "type": "string", "description": "Launch command for stdio transport." },
+            "args": { "type": "array", "items": { "type": "string" } },
+            "tools": {
+              "type": "array",
+              "description": "Names of MCP tools this server exposes (for static discovery before launch).",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "neon": {
+      "type": "object",
+      "description": "Which Neon capabilities this tool relies on (audit + composition aid).",
+      "additionalProperties": false,
+      "properties": {
+        "features": {
+          "type": "array",
+          "items": { "enum": ["pgvector", "branching", "scale-to-zero", "pitr", "data-api", "neon-auth", "logical-replication", "read-replicas", "regions", "neon-api"] }
+        }
+      }
+    },
+    "env": {
+      "type": "array",
+      "description": "Environment variables the tool needs. Secrets MUST come from env/secret manager, never committed.",
+      "items": {
+        "type": "object",
+        "required": ["name", "required"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "required": { "type": "boolean" },
+          "secret": { "type": "boolean", "default": false },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "provides": {
+      "type": "array",
+      "description": "Capability tokens this tool offers for composition (e.g. 'rag.query', 'rag.ingest').",
+      "items": { "type": "string" }
+    },
+    "consumes": {
+      "type": "array",
+      "description": "Capability tokens this tool needs from other tools.",
+      "items": { "type": "string" }
+    },
+    "dependsOn": {
+      "type": "array",
+      "description": "Ids of other tools in this collection this one depends on.",
+      "items": { "type": "string" }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "readme": { "type": "string" },
+        "architecture": { "type": "string" },
+        "claudeMd": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    },
+    "owner": { "type": "string" },
+    "links": { "type": "object", "additionalProperties": { "type": "string" } }
+  }
+}
