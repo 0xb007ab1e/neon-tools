@@ -21,11 +21,36 @@
   },
   "neon": { "features": ["pgvector", "branching", "scale-to-zero", "neon-api"] },
   "env": [
-    { "name": "DATABASE_URL", "required": true, "secret": true, "description": "Neon Postgres connection string (least-privilege role)." },
-    { "name": "NEON_API_KEY", "required": false, "secret": true, "description": "Neon API key — required only for branch-based re-embed." },
-    { "name": "NEON_PROJECT_ID", "required": false, "secret": false, "description": "Neon project id for branch operations." },
-    { "name": "AI_GATEWAY_API_KEY", "required": true, "secret": true, "description": "Vercel AI Gateway key for embedding models (provider/model strings)." },
-    { "name": "VECTORNEST_BASE_URL", "required": false, "secret": false, "description": "Base URL when running the HTTP entrypoint." }
+    {
+      "name": "DATABASE_URL",
+      "required": true,
+      "secret": true,
+      "description": "Neon Postgres connection string (least-privilege role)."
+    },
+    {
+      "name": "NEON_API_KEY",
+      "required": false,
+      "secret": true,
+      "description": "Neon API key — required only for branch-based re-embed."
+    },
+    {
+      "name": "NEON_PROJECT_ID",
+      "required": false,
+      "secret": false,
+      "description": "Neon project id for branch operations."
+    },
+    {
+      "name": "AI_GATEWAY_API_KEY",
+      "required": true,
+      "secret": true,
+      "description": "Vercel AI Gateway key for embedding models (provider/model strings)."
+    },
+    {
+      "name": "VECTORNEST_BASE_URL",
+      "required": false,
+      "secret": false,
+      "description": "Base URL when running the HTTP entrypoint."
+    }
   ],
   "provides": ["rag.ingest", "rag.query", "rag.reembed", "rag.eval"],
   "consumes": [],

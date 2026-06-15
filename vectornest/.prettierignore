@@ -1,0 +1,6 @@
+dist
+coverage
+pnpm-lock.yaml
+
+# Authored design docs are formatted by hand (tables, mermaid) — leave to the author.
+*.md

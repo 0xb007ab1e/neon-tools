@@ -1,0 +1,53 @@
+{
+  "name": "@neon-tools/vectornest",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Consolidate a separate vector DB into the Neon Postgres you already run: RAG ingest/query with safe, branch-based re-embedding.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "vectornest": "./dist/app/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/app/lib.d.ts",
+      "import": "./dist/app/lib.js"
+    }
+  },
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "cli": "tsx src/app/cli.ts",
+    "mcp": "tsx src/app/mcp.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "test:int": "vitest run test/integration"
+  },
+  "dependencies": {
+    "citty": "^0.1.6",
+    "pg": "^8.13.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "@vitest/coverage-v8": "^2.1.8",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-jsdoc": "^50.6.1",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.19.0",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@neon-tools/collection",
+  "private": true,
+  "type": "module",
+  "description": "Collection of standalone products built on Neon (serverless Postgres). Orchestration root for the pnpm workspace.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

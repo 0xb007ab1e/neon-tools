@@ -1,0 +1,7 @@
+# Each tool in the Neon collection lives in its own top-level directory and is a
+# standalone package. The workspace provides shared orchestration + a single lockfile;
+# directories without a package.json (e.g. research/) are ignored.
+packages:
+  - '*'
+allowBuilds:
+  esbuild: true
