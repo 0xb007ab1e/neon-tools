@@ -16,6 +16,11 @@ export default defineConfig({
         'src/core/domain.ts',
         'src/**/index.ts', // barrel re-exports: no executable logic
         'src/**/*.d.ts',
+        // I/O adapters (the imperative shell): validated by the integration test (task #7),
+        // not unit coverage. Pure helpers (e.g. serde) stay in the unit denominator.
+        'src/adapters/neon-pg/vector-store.ts',
+        'src/adapters/ai-gateway/**',
+        'src/adapters/loaders/**',
       ],
       thresholds: {
         // Master §4 baseline (≥90% line + branch elsewhere).
