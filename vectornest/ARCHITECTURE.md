@@ -62,7 +62,7 @@ flowchart LR
     LOADER[(DocumentLoader)]:::port
   end
   subgraph Adapters
-    GW[AI Gateway / OpenAI]:::a
+    GW[OpenAI-compatible API]:::a
     PG[Neon pg + pgvector]:::a
     NEONAPI[Neon API branches]:::a
     FILES[fs/url/markdown loaders]:::a
@@ -134,7 +134,7 @@ report and a pass/fail against a threshold. Gates step 3 of re-embed. (Grows int
 
 ## 7. Security & SSDLC compliance
 
-- **Secrets** (`DATABASE_URL`, `NEON_API_KEY`, `AI_GATEWAY_API_KEY`) from env only; `.env` git-ignored,
+- **Secrets** (`DATABASE_URL`, `EMBEDDINGS_API_KEY`, `NEON_API_KEY`) from env only; `.env` git-ignored,
   `.env.example` committed. Least-privilege DB role (DML on `vn_*`, no superuser).
 - **Validate all inputs** at boundaries (zod): document size caps, chunk limits, query length, k bounds
   (DoS / cost control). Treat embedding-provider responses as untrusted.
@@ -147,8 +147,9 @@ report and a pass/fail against a threshold. Gates step 3 of re-embed. (Grows int
 ## 8. Tech stack
 
 - **Node LTS + TypeScript (strict, ESM).** `pg` (node-postgres) or `postgres.js`; `zod` validation.
-- **Embeddings via Vercel AI Gateway** using `provider/model` strings (default, pluggable per the
-  `EmbeddingProvider` port) — e.g. `openai/text-embedding-3-small`.
+- **Embeddings via any OpenAI-compatible endpoint** (default Cloudflare Workers AI
+  `@cf/baai/bge-base-en-v1.5`; pluggable per the `EmbeddingProvider` port — Ollama, Gemini, etc.
+  by changing `EMBEDDINGS_BASE_URL`/`VECTORNEST_MODEL`).
 - CLI: lightweight (e.g. `citty`/`commander`). MCP: `@modelcontextprotocol/sdk`. Tests: `vitest` +
   Neon-branch-backed integration. Migrations: plain SQL files, forward-only + reversible where feasible.
 
@@ -163,7 +164,7 @@ vectornest/
   src/
     core/                 # pure: chunking, ranking, swap-state-machine, model-registry
     ports/                # EmbeddingProvider, VectorStore, BranchManager, DocumentLoader
-    adapters/             # ai-gateway/, neon-pg/, neon-api/, loaders/
+    adapters/             # openai-compatible/, neon-pg/, neon-api/, loaders/
     app/                  # composition roots: lib.ts, cli.ts, mcp.ts (http.ts later)
   test/                   # unit (core) + integration (Neon branch)
   openapi.yaml            # reserved for the v2 HTTP entrypoint
@@ -172,7 +173,7 @@ vectornest/
 ## 10. Milestones
 
 - **Week 1 (walking skeleton):** schema + migrations; `VectorStore` (Neon pg) + `EmbeddingProvider`
-  (AI Gateway) adapters; `ingest` + `query` via **library + CLI**; unit tests on the pure core;
+  (OpenAI-compatible) adapters; `ingest` + `query` via **library + CLI**; unit tests on the pure core;
   one integration test against a Neon branch. → can ingest a folder and semantically query it.
 - **Month 1 (the differentiators):** branch-rehearsed **re-embed** + zero-downtime active-model swap;
   **eval** command + swap gate; **MCP server** entrypoint; hybrid (vector+FTS) query; cost guardrails;

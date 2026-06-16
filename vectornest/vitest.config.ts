@@ -1,8 +1,10 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
     include: ['test/**/*.test.ts'],
+    // Integration tests are non-hermetic (live Neon + embeddings endpoint); run them via test:int.
+    exclude: [...configDefaults.exclude, 'test/integration/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
@@ -17,9 +19,9 @@ export default defineConfig({
         'src/**/index.ts', // barrel re-exports: no executable logic
         'src/**/*.d.ts',
         // I/O adapters (the imperative shell): validated by the integration test (task #7),
-        // not unit coverage. Pure helpers (e.g. serde) stay in the unit denominator.
+        // not unit coverage. The embedding adapter and pure helpers (serde) use injected
+        // collaborators and stay in the unit denominator.
         'src/adapters/neon-pg/vector-store.ts',
-        'src/adapters/ai-gateway/**',
         'src/adapters/loaders/**',
       ],
       thresholds: {

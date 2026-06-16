@@ -1,7 +1,7 @@
 import type { Vector } from '../core/domain.js';
 
 /**
- * Port: turns text into embedding vectors via some provider (e.g. Vercel AI Gateway).
+ * Port: turns text into embedding vectors via some provider (e.g. an OpenAI-compatible endpoint).
  *
  * Implementations are injected at the composition root. Callers treat the returned vectors as
  * untrusted until validated: an adapter MUST return exactly one vector per input, each of length

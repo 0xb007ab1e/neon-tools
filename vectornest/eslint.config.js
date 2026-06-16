@@ -14,6 +14,13 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
     },
+    rules: {
+      // Align with tsc's noUnusedParameters: allow intentionally-unused `_`-prefixed names.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'none' },
+      ],
+    },
   },
   {
     // Docstring mandate (master §1): every exported symbol is documented.
@@ -35,10 +42,15 @@ export default tseslint.config(
     },
   },
   {
-    // Tests and config files: relax docstring + some type-checked strictness.
+    // Tests and config files: relax the unsafe-* family (mocks/fakes use loose typing).
     files: ['test/**/*.ts', '*.config.ts', '*.config.js'],
     rules: {
       '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/require-await': 'off',
     },
   },
   prettier,

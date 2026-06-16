@@ -7,16 +7,21 @@ import { knownDimension } from '../core/model-registry.js';
  */
 const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  AI_GATEWAY_API_KEY: z.string().min(1, 'AI_GATEWAY_API_KEY is required'),
-  VECTORNEST_MODEL: z.string().min(1).default('openai/text-embedding-3-small'),
+  EMBEDDINGS_BASE_URL: z.string().url('EMBEDDINGS_BASE_URL must be a URL'),
+  EMBEDDINGS_API_KEY: z.string().optional(),
+  VECTORNEST_MODEL: z.string().min(1).default('@cf/baai/bge-base-en-v1.5'),
   VECTORNEST_EMBED_DIM: z.coerce.number().int().positive().optional(),
   VECTORNEST_EMBED_BATCH_SIZE: z.coerce.number().int().positive().default(64),
 });
 
-/** Resolved, validated configuration. Holds no secrets beyond the DB URL needed to connect. */
+/** Resolved, validated configuration. */
 export interface Config {
   /** Postgres connection string. */
   databaseUrl: string;
+  /** OpenAI-compatible embeddings base URL (includes the `/v1` segment). */
+  embeddingsBaseUrl: string;
+  /** Optional bearer token for the embeddings endpoint (omit for keyless local servers). */
+  embeddingsApiKey?: string;
   /** Provider/model string for embeddings. */
   model: string;
   /** Embedding dimension (resolved from a known model or VECTORNEST_EMBED_DIM). */
@@ -27,9 +32,6 @@ export interface Config {
 
 /**
  * Load and validate configuration from the environment.
- *
- * `AI_GATEWAY_API_KEY` is validated as present (the AI Gateway client reads it directly) but is
- * not carried in the returned config, to limit secret propagation.
  *
  * @param env - The environment to read (defaults to `process.env`).
  * @returns The validated configuration.
@@ -43,10 +45,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       `unknown embedding dimension for "${parsed.VECTORNEST_MODEL}"; set VECTORNEST_EMBED_DIM`,
     );
   }
-  return {
+  const config: Config = {
     databaseUrl: parsed.DATABASE_URL,
+    embeddingsBaseUrl: parsed.EMBEDDINGS_BASE_URL,
     model: parsed.VECTORNEST_MODEL,
     dim,
     embedBatchSize: parsed.VECTORNEST_EMBED_BATCH_SIZE,
   };
+  if (parsed.EMBEDDINGS_API_KEY !== undefined && parsed.EMBEDDINGS_API_KEY !== '') {
+    config.embeddingsApiKey = parsed.EMBEDDINGS_API_KEY;
+  }
+  return config;
 }

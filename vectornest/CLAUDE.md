@@ -21,7 +21,7 @@
 ## Stack
 - Runtime: Node LTS; TypeScript strict; ESM.
 - Data: Neon Postgres + pgvector; query layer: `pg` (or `postgres.js`); validation: `zod`.
-- Embeddings: Vercel AI Gateway (`provider/model` strings), behind an `EmbeddingProvider` port.
+- Embeddings: OpenAI-compatible endpoint (default Cloudflare Workers AI `@cf/baai/bge-base-en-v1.5`), behind an `EmbeddingProvider` port; provider-agnostic (Ollama/Gemini/etc. via env).
 - Entrypoints: library, CLI, MCP server (`@modelcontextprotocol/sdk`); HTTP reserved for v2.
 
 ## Project-specific rules

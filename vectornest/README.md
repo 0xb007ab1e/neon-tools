@@ -28,7 +28,7 @@ Neon branch, then swapped atomically with zero downtime.
 ## Quickstart (planned — week-1 target)
 
 ```bash
-cp .env.example .env          # set DATABASE_URL + AI_GATEWAY_API_KEY
+cp .env.example .env          # set DATABASE_URL + EMBEDDINGS_BASE_URL (+ EMBEDDINGS_API_KEY)
 pnpm install
 pnpm --filter vectornest cli ingest ./docs
 pnpm --filter vectornest cli query "how does re-embedding work?"
@@ -37,8 +37,8 @@ pnpm --filter vectornest cli query "how does re-embedding work?"
 ## Configuration
 
 Secrets come from the environment (never committed). See [`.env.example`](./.env.example) and the
-`env` block in [`neon-tool.json`](./neon-tool.json): `DATABASE_URL`, `AI_GATEWAY_API_KEY` (required),
-`NEON_API_KEY` + `NEON_PROJECT_ID` (for branch-based re-embed).
+`env` block in [`neon-tool.json`](./neon-tool.json): `DATABASE_URL` + `EMBEDDINGS_BASE_URL` (required),
+`EMBEDDINGS_API_KEY` (for hosted endpoints), `NEON_API_KEY` + `NEON_PROJECT_ID` (for branch-based re-embed).
 
 ## Discoverability
 

@@ -40,10 +40,22 @@
       "description": "Neon project id for branch operations."
     },
     {
-      "name": "AI_GATEWAY_API_KEY",
+      "name": "EMBEDDINGS_BASE_URL",
       "required": true,
+      "secret": false,
+      "description": "OpenAI-compatible embeddings base URL (e.g. Cloudflare Workers AI or Ollama, incl. /v1)."
+    },
+    {
+      "name": "EMBEDDINGS_API_KEY",
+      "required": false,
       "secret": true,
-      "description": "Vercel AI Gateway key for embedding models (provider/model strings)."
+      "description": "Bearer token for the embeddings endpoint; omit for keyless local servers."
+    },
+    {
+      "name": "VECTORNEST_MODEL",
+      "required": false,
+      "secret": false,
+      "description": "Embedding provider/model string (default @cf/baai/bge-base-en-v1.5)."
     },
     {
       "name": "VECTORNEST_BASE_URL",

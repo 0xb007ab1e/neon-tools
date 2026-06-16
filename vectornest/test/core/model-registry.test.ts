@@ -27,6 +27,7 @@ describe('knownDimension', () => {
   it('returns the dimension for a known model', () => {
     expect(knownDimension('openai/text-embedding-3-small')).toBe(1536);
     expect(knownDimension('openai/text-embedding-3-large')).toBe(3072);
+    expect(knownDimension('@cf/baai/bge-base-en-v1.5')).toBe(768);
   });
 
   it('returns undefined for an unknown model', () => {

@@ -2,7 +2,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { EmbeddingModel, QueryHit, Vector } from '../core/domain.js';
 import { type ChunkOptions, chunkText, parseModelName } from '../core/index.js';
-import { createAiGatewayEmbeddingProvider } from '../adapters/ai-gateway/embedding-provider.js';
+import { createOpenAiCompatibleEmbeddingProvider } from '../adapters/openai-compatible/embedding-provider.js';
 import { createFsLoader } from '../adapters/loaders/fs-loader.js';
 import { createNeonPgVectorStore } from '../adapters/neon-pg/vector-store.js';
 import type { DocumentLoader } from '../ports/document-loader.js';
@@ -110,7 +110,10 @@ async function ensureActiveModel(
 ): Promise<EmbeddingModel> {
   const active = await store.getActiveModel();
   if (active && active.name === embedder.model) return active;
-  const { provider } = parseModelName(embedder.model);
+  // Slash-delimited names (openai/…, @cf/…) yield a provider segment; bare names (Ollama) don't.
+  const provider = embedder.model.includes('/')
+    ? parseModelName(embedder.model).provider
+    : embedder.model;
   const registered = await store.registerModel({
     name: embedder.model,
     provider,
@@ -206,14 +209,20 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
  * Composition root: wire the production adapters from validated config.
  *
  * @param config - Validated configuration.
- * @returns A ready VectorNest backed by Neon + the AI Gateway + the filesystem loader.
+ * @returns A ready VectorNest backed by Neon + the embeddings endpoint + the filesystem loader.
  */
 export function vectorNestFromConfig(config: Config): VectorNest {
   const store = createNeonPgVectorStore({
     connectionString: config.databaseUrl,
     migrationsDir,
   });
-  const embedder = createAiGatewayEmbeddingProvider({ model: config.model, dim: config.dim });
+  const embedder = createOpenAiCompatibleEmbeddingProvider({
+    baseUrl: config.embeddingsBaseUrl,
+    model: config.model,
+    dim: config.dim,
+    maxBatchSize: config.embedBatchSize,
+    ...(config.embeddingsApiKey !== undefined ? { apiKey: config.embeddingsApiKey } : {}),
+  });
   const loader = createFsLoader();
   return createVectorNest({ store, embedder, loader, embedBatchSize: config.embedBatchSize });
 }
