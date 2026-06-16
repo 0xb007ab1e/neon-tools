@@ -10,7 +10,13 @@ export default defineConfig({
       // Exclude composition roots / entrypoints (thin imperative shell wiring) and
       // type-only declarations (ports, domain types) from the coverage denominator —
       // they transpile to no executable code.
-      exclude: ['src/app/**', 'src/ports/**', 'src/core/domain.ts', 'src/**/*.d.ts'],
+      exclude: [
+        'src/app/**',
+        'src/ports/**',
+        'src/core/domain.ts',
+        'src/**/index.ts', // barrel re-exports: no executable logic
+        'src/**/*.d.ts',
+      ],
       thresholds: {
         // Master §4 baseline (≥90% line + branch elsewhere).
         lines: 90,
