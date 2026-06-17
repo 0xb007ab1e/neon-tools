@@ -67,10 +67,11 @@ control-plane registry DB), and `TENANTFORGE_HTTP_TOKEN` (HTTP server).
 
 ## Operations
 
-Runbooks live in [`docs/runbooks/`](./docs/runbooks/). A fleet migration is a release —
-see [**fleet-migration rollback**](./docs/runbooks/fleet-migration-rollback.md) for halting,
-assessing per-tenant state, and reverting safely (app rollback / compensating down migration /
-resume). The HTTP API contract is [`openapi.yaml`](./openapi.yaml).
+Runbooks live in [`docs/runbooks/`](./docs/runbooks/) ([index](./docs/runbooks/README.md)) — deploy,
+rollback, [fleet-migration rollback](./docs/runbooks/fleet-migration-rollback.md), incident-response,
+backup-restore, on-call, scaling, secret-rotation, and dependency-patch. A fleet migration is a
+release; a cross-tenant leak or Neon-API-key compromise is a SEV1. The HTTP API contract is
+[`openapi.yaml`](./openapi.yaml). _(Runbooks are drafted for the alpha and not yet drilled.)_
 
 ## Discoverability & rules
 
