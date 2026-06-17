@@ -1,0 +1,159 @@
+openapi: 3.1.0
+info:
+  title: VectorNest HTTP API
+  version: 0.0.0
+  description: >
+    Read + light-management HTTP surface for VectorNest. Ingest and re-embed are intentionally not
+    exposed here (server-path-based / long-running) — use the CLI or MCP server for those.
+servers:
+  - url: '{baseUrl}'
+    variables:
+      baseUrl:
+        default: http://localhost:3000
+        description: Set via VECTORNEST_BASE_URL.
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem detail.
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+    QueryHit:
+      type: object
+      properties:
+        chunkId: { type: string }
+        documentId: { type: string }
+        sourceUri: { type: string }
+        ordinal: { type: integer }
+        text: { type: string }
+        score: { type: number }
+        metadata: { type: object, additionalProperties: true }
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    BadRequest:
+      description: Invalid JSON or failed validation.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+paths:
+  /health:
+    get:
+      summary: Liveness check (no auth).
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  tool: { type: string }
+                  version: { type: string }
+  /v1/query:
+    post:
+      summary: Semantic / keyword / hybrid search.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, minLength: 1 }
+                collection: { type: string }
+                k: { type: integer, minimum: 1, maximum: 100 }
+                mode: { type: string, enum: [vector, keyword, hybrid] }
+      responses:
+        '200':
+          description: Ranked hits.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hits:
+                    type: array
+                    items: { $ref: '#/components/schemas/QueryHit' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/collections:
+    get:
+      summary: List collections.
+      responses:
+        '200':
+          description: Collections.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/models:
+    get:
+      summary: List registered models with coverage and active flag.
+      responses:
+        '200':
+          description: Models.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/models/{name}/activate:
+    post:
+      summary: Activate a fully-embedded model (zero-downtime swap / rollback).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Activated.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Model not registered.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Model not fully embedded.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/eval:
+    post:
+      summary: Evaluate a model against a labeled query set (recall@k, MRR).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, evalSet]
+              properties:
+                model: { type: string }
+                k: { type: integer, minimum: 1, maximum: 100 }
+                evalSet:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [query, relevant]
+                    properties:
+                      query: { type: string }
+                      relevant:
+                        type: array
+                        items: { type: string }
+      responses:
+        '200':
+          description: Eval report (recall@k, MRR, cases, passed).
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
