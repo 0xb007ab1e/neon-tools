@@ -10,4 +10,11 @@ export { isTerminal, canTransition, assertTransition } from './lifecycle.js';
 export { assertRoutable, type RoutableTenant } from './routing.js';
 export { retentionCutoff, isPurgeable, type RetainableTenant } from './retention.js';
 export { redactSecrets, type TenantEvent } from './observability.js';
+export {
+  assertPeriod,
+  aggregateConsumption,
+  type BillingPeriod,
+  type Consumption,
+  type TenantUsage,
+} from './usage.js';
 export { planFleetMigration, type FleetPlanInput, type FleetMigrationPlan } from './fleet-plan.js';

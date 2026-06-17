@@ -548,3 +548,84 @@ describe('createTenantForge observability', () => {
     await expect(tf.provision({ slug: 'acme' })).resolves.toBeDefined();
   });
 });
+
+describe('createTenantForge.usage', () => {
+  const period = { from: new Date('2026-05-18'), to: new Date('2026-06-17') };
+  const make = (usageProvider?: import('../../src/ports/usage-provider.js').UsageProvider) =>
+    createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      ...(usageProvider ? { usageProvider } : {}),
+      defaultRegion: 'aws-us-east-1',
+    });
+
+  it('meters a tenant: resolves the project and aggregates consumption', async () => {
+    const provider = {
+      getProjectConsumption: () =>
+        Promise.resolve([
+          {
+            computeTimeSeconds: 10,
+            activeTimeSeconds: 8,
+            writtenDataBytes: 100,
+            syntheticStorageBytes: 500,
+          },
+          {
+            computeTimeSeconds: 5,
+            activeTimeSeconds: 4,
+            writtenDataBytes: 50,
+            syntheticStorageBytes: 700,
+          },
+        ]),
+    };
+    const tf = make(provider);
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    const report = await tf.usage(tenant.id, period);
+    expect(report.neonProjectId).toBe('proj-1');
+    expect(report.consumption).toEqual({
+      computeTimeSeconds: 15,
+      activeTimeSeconds: 12,
+      writtenDataBytes: 150,
+      syntheticStorageBytes: 700, // peak
+    });
+    expect(report.period).toEqual({ from: period.from.toISOString(), to: period.to.toISOString() });
+  });
+
+  it('fails closed when no usage provider is configured', async () => {
+    const tf = make();
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await expect(tf.usage(tenant.id, period)).rejects.toThrow(/no usage provider configured/);
+  });
+
+  it('rejects an inverted period', async () => {
+    const provider = { getProjectConsumption: () => Promise.resolve([]) };
+    const tf = make(provider);
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await expect(tf.usage(tenant.id, { from: period.to, to: period.from })).rejects.toThrow(
+      /must not be after/,
+    );
+  });
+
+  it('throws for a tenant with no provisioned project', async () => {
+    const provider = { getProjectConsumption: () => Promise.resolve([]) };
+    const registry = fakeRegistry();
+    registry.seed({
+      id: 'half',
+      slug: 'half',
+      region: 'aws-us-east-1',
+      status: 'provisioning',
+      neonProjectId: null,
+      metadata: {},
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      defaultRegion: 'aws-us-east-1',
+    });
+    await expect(tf.usage('half', period)).rejects.toThrow(/no provisioned project/);
+  });
+});

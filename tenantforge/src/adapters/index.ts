@@ -7,6 +7,7 @@ export {
   type NeonProvisioningOptions,
 } from './neon-api/provisioning-provider.js';
 export { createPgTenantRegistry, type PgRegistryOptions } from './neon-pg/registry.js';
+export { createNeonUsageProvider, type NeonUsageOptions } from './neon-api/usage-provider.js';
 export {
   createPgMigrationRunner,
   type PgMigrationRunnerOptions,

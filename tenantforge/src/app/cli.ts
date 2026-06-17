@@ -99,6 +99,35 @@ const get = defineCommand({
   },
 });
 
+const usage = defineCommand({
+  meta: {
+    name: 'usage',
+    description: "Report a tenant's Neon resource consumption over a period (metering)",
+  },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    from: { type: 'string', description: 'Period start (ISO-8601); default 30 days ago' },
+    to: { type: 'string', description: 'Period end (ISO-8601); default now' },
+  },
+  async run({ args }) {
+    const to = args.to ? new Date(args.to) : new Date();
+    const from = args.from
+      ? new Date(args.from)
+      : new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
+    await withTenantForge(async (tf) => {
+      const u = await tf.usage(args.id, { from, to });
+      const c = u.consumption;
+      process.stdout.write(
+        `${u.tenantId}  project=${u.neonProjectId}  ${u.period.from}..${u.period.to}\n`,
+      );
+      process.stdout.write(
+        `  compute=${c.computeTimeSeconds}s active=${c.activeTimeSeconds}s ` +
+          `written=${c.writtenDataBytes}B storage(peak)=${c.syntheticStorageBytes}B\n`,
+      );
+    });
+  },
+});
+
 const suspend = defineCommand({
   meta: { name: 'suspend', description: 'Suspend an active tenant (reversible)' },
   args: { id: { type: 'positional', description: 'Tenant id (UUID)', required: true } },
@@ -242,6 +271,7 @@ const main = defineCommand({
     provision,
     list,
     get,
+    usage,
     suspend,
     resume,
     offboard,
