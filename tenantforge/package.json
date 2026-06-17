@@ -24,6 +24,7 @@
     "build": "tsc -p tsconfig.build.json",
     "cli": "node --env-file-if-exists=.env --import tsx src/app/cli.ts",
     "http": "node --env-file-if-exists=.env --import tsx src/app/http.ts",
+    "mcp": "node --env-file-if-exists=.env --import tsx src/app/mcp.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
@@ -34,6 +35,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.0.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "citty": "^0.1.6",
     "hono": "^4.12.25",
     "pg": "^8.13.1",

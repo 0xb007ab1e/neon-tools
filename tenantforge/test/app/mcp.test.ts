@@ -1,0 +1,107 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { describe, expect, it } from 'vitest';
+import { createMcpServer } from '../../src/app/mcp-server.js';
+import type { TenantRecord } from '../../src/core/domain.js';
+import type { TenantForge } from '../../src/app/lib.js';
+
+/** Build a fake TenantForge with only the methods a given test exercises. */
+const fakeTf = (overrides: Partial<TenantForge>): TenantForge =>
+  overrides as unknown as TenantForge;
+
+/** Connect an in-memory client to a server wrapping the given fake. */
+async function connect(tf: TenantForge): Promise<Client> {
+  const server = createMcpServer(tf);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'test', version: '0.0.0' });
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  return client;
+}
+
+const tenant: TenantRecord = {
+  id: 't1',
+  slug: 'acme',
+  region: 'aws-us-east-1',
+  status: 'active',
+  neonProjectId: 'proj-1',
+  metadata: {},
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+};
+
+// The concatenated text of a tool result's content blocks (the real JSON/message, not re-stringified).
+const body = (result: unknown) =>
+  (result as { content: { text: string }[] }).content.map((c) => c.text).join('\n');
+
+describe('MCP server', () => {
+  it('exposes the documented tool surface', async () => {
+    const client = await connect(fakeTf({}));
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual([
+      'tf_list_tenants',
+      'tf_offboard',
+      'tf_provision',
+      'tf_resume',
+      'tf_suspend',
+      'tf_tenant',
+    ]);
+    await client.close();
+  });
+
+  it('tf_provision returns the tenant WITHOUT the connection secret', async () => {
+    const client = await connect(
+      fakeTf({
+        provision: async () => ({ tenant, connectionUri: 'postgresql://secret@host/db' }),
+      }),
+    );
+    const result = await client.callTool({ name: 'tf_provision', arguments: { slug: 'acme' } });
+    const out = body(result);
+    expect(out).toContain('"connectionSecretIssued": true');
+    expect(out).not.toContain('postgresql://secret@host/db'); // secret never enters model context
+    await client.close();
+  });
+
+  it('tf_tenant reports not found', async () => {
+    const client = await connect(fakeTf({ getTenant: async () => null }));
+    const result = await client.callTool({ name: 'tf_tenant', arguments: { id: 'nope' } });
+    expect(body(result)).toContain('not found');
+    await client.close();
+  });
+
+  it('tf_list_tenants returns tenants', async () => {
+    const client = await connect(fakeTf({ listTenants: async () => [tenant] }));
+    const result = await client.callTool({ name: 'tf_list_tenants', arguments: {} });
+    expect(body(result)).toContain('acme');
+    await client.close();
+  });
+
+  it('tf_offboard refuses without confirm=true (no delete attempted)', async () => {
+    let called = false;
+    const client = await connect(
+      fakeTf({
+        offboard: async () => {
+          called = true;
+          return { tenant: { ...tenant, status: 'deleted' }, export: null };
+        },
+      }),
+    );
+    const result = await client.callTool({ name: 'tf_offboard', arguments: { id: 't1' } });
+    expect(body(result)).toContain('confirm=true');
+    expect(called).toBe(false);
+    await client.close();
+  });
+
+  it('tf_offboard proceeds with confirm=true', async () => {
+    const client = await connect(
+      fakeTf({
+        offboard: async () => ({ tenant: { ...tenant, status: 'deleted' }, export: null }),
+      }),
+    );
+    const result = await client.callTool({
+      name: 'tf_offboard',
+      arguments: { id: 't1', confirm: true, skipExport: true, reason: 'never activated' },
+    });
+    expect(body(result)).toContain('"status": "deleted"');
+    await client.close();
+  });
+});
