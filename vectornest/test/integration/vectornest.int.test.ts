@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildPoolConfig } from '../../src/adapters/neon-pg/connection.js';
 import { loadConfig } from '../../src/app/config.js';
 import { type VectorNest, vectorNestFromConfig } from '../../src/app/lib.js';
 
@@ -20,7 +21,7 @@ describe.skipIf(!hasCreds)('VectorNest integration (live Neon + embeddings endpo
   afterAll(async () => {
     if (vn) await vn.close();
     if (hasCreds) {
-      const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+      const pool = new pg.Pool(buildPoolConfig(process.env.DATABASE_URL ?? ''));
       try {
         await pool.query('DELETE FROM vn_collections WHERE name = $1', [collection]);
       } finally {

@@ -16,6 +16,7 @@ import type {
   StoredChunk,
   VectorStore,
 } from '../../ports/vector-store.js';
+import { buildPoolConfig } from './connection.js';
 import { formatVector } from './serde.js';
 
 const { Pool } = pg;
@@ -46,7 +47,7 @@ interface ModelRow {
  * @returns A connected vector store.
  */
 export function createNeonPgVectorStore(options: NeonPgOptions): VectorStore {
-  const pool = new Pool({ connectionString: options.connectionString });
+  const pool = new Pool(buildPoolConfig(options.connectionString));
 
   const mapModel = (row: ModelRow): EmbeddingModel => ({
     id: row.id,

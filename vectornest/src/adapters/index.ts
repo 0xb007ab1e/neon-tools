@@ -6,6 +6,7 @@
  */
 export { createNeonPgVectorStore, type NeonPgOptions } from './neon-pg/vector-store.js';
 export { formatVector, parseVector } from './neon-pg/serde.js';
+export { buildPoolConfig, resolveSslConfig } from './neon-pg/connection.js';
 export {
   createOpenAiCompatibleEmbeddingProvider,
   type OpenAiCompatibleOptions,
