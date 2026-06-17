@@ -10,7 +10,8 @@
   "tags": ["multi-tenancy", "provisioning", "control-plane", "compliance", "neon", "postgres"],
   "entrypoints": {
     "library": { "packageName": "@neon-tools/tenantforge", "import": "@neon-tools/tenantforge" },
-    "cli": { "bin": "tenantforge", "install": "pnpm --filter tenantforge cli" }
+    "cli": { "bin": "tenantforge", "install": "pnpm --filter tenantforge cli" },
+    "http": { "baseUrlEnv": "TENANTFORGE_BASE_URL" }
   },
   "neon": { "features": ["neon-api", "branching", "scale-to-zero", "project-per-tenant"] },
   "env": [
