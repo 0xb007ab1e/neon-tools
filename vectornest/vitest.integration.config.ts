@@ -8,5 +8,8 @@ export default defineConfig({
     setupFiles: ['./test/integration/setup.ts'],
     testTimeout: 60_000,
     hookTimeout: 60_000,
+    // These hit one shared live database — run files sequentially to avoid cross-file races
+    // on global state (active model, registered models).
+    fileParallelism: false,
   },
 });
