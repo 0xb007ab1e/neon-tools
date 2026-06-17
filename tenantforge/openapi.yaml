@@ -1,0 +1,265 @@
+openapi: 3.1.0
+info:
+  title: TenantForge HTTP Control-Plane API
+  version: 0.0.0
+  description: >
+    Control plane for database-per-tenant SaaS on Neon: provision an isolated project per tenant,
+    look tenants up, and run lifecycle operations (suspend / resume / offboard). Long-running fleet
+    migrations are intentionally not exposed over HTTP — use the CLI (`tenantforge migrate-fleet`).
+    Every `/v1/*` route requires a bearer token; tenant scope is derived server-side from the
+    authenticated principal (a client-supplied id is never trusted — std-owasp-api BOLA).
+servers:
+  - url: '{baseUrl}'
+    variables:
+      baseUrl:
+        default: http://localhost:3000
+        description: Set via TENANTFORGE_BASE_URL.
+security:
+  - bearerAuth: []
+tags:
+  - name: tenants
+    description: Tenant provisioning, lookup, and lifecycle.
+  - name: meta
+    description: Service metadata.
+paths:
+  /health:
+    get:
+      tags: [meta]
+      summary: Liveness probe.
+      security: []
+      responses:
+        '200':
+          description: The service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, const: ok }
+                  tool: { type: string }
+                  version: { type: string }
+                required: [status, tool, version]
+  /v1/tenants:
+    post:
+      tags: [tenants]
+      summary: Provision a tenant (isolated Neon project). Idempotent on slug.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProvisionRequest' }
+      responses:
+        '201':
+          description: Provisioned (or idempotent re-request).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant: { $ref: '#/components/schemas/Tenant' }
+                  connectionUri:
+                    type: [string, 'null']
+                    description: >
+                      Owner connection URI — a SECRET, returned once to the authenticated caller on
+                      first creation (null on an idempotent re-request). Store it in a secret
+                      manager; never log it.
+                required: [tenant, connectionUri]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [tenants]
+      summary: List tenants, most-recent first.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/TenantStatus' }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Matching tenants.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenants:
+                    type: array
+                    items: { $ref: '#/components/schemas/Tenant' }
+                required: [tenants]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/tenants/{id}:
+    get:
+      tags: [tenants]
+      summary: Get a tenant by id.
+      parameters:
+        - { $ref: '#/components/parameters/TenantId' }
+      responses:
+        '200':
+          description: The tenant.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant: { $ref: '#/components/schemas/Tenant' }
+                required: [tenant]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/tenants/{id}/suspend:
+    post:
+      tags: [tenants]
+      summary: Suspend an active tenant (reversible).
+      parameters:
+        - { $ref: '#/components/parameters/TenantId' }
+      responses:
+        '200': { $ref: '#/components/responses/TenantEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/tenants/{id}/resume:
+    post:
+      tags: [tenants]
+      summary: Resume a suspended tenant back to active.
+      parameters:
+        - { $ref: '#/components/parameters/TenantId' }
+      responses:
+        '200': { $ref: '#/components/responses/TenantEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/tenants/{id}/offboard:
+    post:
+      tags: [tenants]
+      summary: >
+        Offboard a tenant — export then IRREVERSIBLY delete its Neon project. Requires
+        `confirm: true`.
+      parameters:
+        - { $ref: '#/components/parameters/TenantId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OffboardRequest' }
+      responses:
+        '200':
+          description: Offboarded (tenant deleted).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant: { $ref: '#/components/schemas/Tenant' }
+                  export:
+                    oneOf:
+                      - { $ref: '#/components/schemas/ExportResult' }
+                      - { type: 'null' }
+                required: [tenant, export]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    TenantId:
+      name: id
+      in: path
+      required: true
+      description: The tenant id (UUID), derived server-side from the authenticated principal.
+      schema: { type: string }
+  schemas:
+    TenantStatus:
+      type: string
+      enum: [provisioning, active, suspended, offboarding, deleted]
+    Tenant:
+      type: object
+      description: A control-plane tenant record (metadata only — never tenant content).
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        region: { type: string }
+        status: { $ref: '#/components/schemas/TenantStatus' }
+        neonProjectId: { type: [string, 'null'] }
+        metadata: { type: object, additionalProperties: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, slug, region, status, neonProjectId, metadata, createdAt, updatedAt]
+    ProvisionRequest:
+      type: object
+      properties:
+        slug:
+          type: string
+          description: 3–63 chars, lowercase alphanumerics in single-hyphen groups; not reserved.
+        region:
+          type: string
+          description: Neon region id; defaults to the server's configured region when omitted.
+        metadata: { type: object, additionalProperties: true }
+      required: [slug]
+    OffboardRequest:
+      type: object
+      properties:
+        confirm:
+          type: boolean
+          const: true
+          description: Must be true — confirms the irreversible deletion (defense in depth).
+        skipExport:
+          type: boolean
+          description: Skip export-before-delete; only safe with no exportable data. Needs a reason.
+        reason:
+          type: string
+          description: Why export was skipped (recorded for audit).
+      required: [confirm]
+    ExportResult:
+      type: object
+      properties:
+        location: { type: string, description: Where the export was written (a reference). }
+        bytes: { type: integer }
+      required: [location]
+    Problem:
+      type: object
+      description: RFC 9457 problem detail.
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+      required: [title, status]
+  responses:
+    TenantEnvelope:
+      description: The updated tenant.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              tenant: { $ref: '#/components/schemas/Tenant' }
+            required: [tenant]
+    BadRequest:
+      description: Invalid request (validation / bad input).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Tenant not found.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Illegal state transition or slug conflict.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }

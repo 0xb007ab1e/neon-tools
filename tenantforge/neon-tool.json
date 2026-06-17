@@ -11,7 +11,7 @@
   "entrypoints": {
     "library": { "packageName": "@neon-tools/tenantforge", "import": "@neon-tools/tenantforge" },
     "cli": { "bin": "tenantforge", "install": "pnpm --filter tenantforge cli" },
-    "http": { "baseUrlEnv": "TENANTFORGE_BASE_URL" },
+    "http": { "openapi": "openapi.yaml", "baseUrlEnv": "TENANTFORGE_BASE_URL" },
     "mcp": {
       "transport": "stdio",
       "command": "pnpm",
