@@ -11,7 +11,20 @@
   "entrypoints": {
     "library": { "packageName": "@neon-tools/tenantforge", "import": "@neon-tools/tenantforge" },
     "cli": { "bin": "tenantforge", "install": "pnpm --filter tenantforge cli" },
-    "http": { "baseUrlEnv": "TENANTFORGE_BASE_URL" }
+    "http": { "baseUrlEnv": "TENANTFORGE_BASE_URL" },
+    "mcp": {
+      "transport": "stdio",
+      "command": "pnpm",
+      "args": ["--filter", "tenantforge", "mcp"],
+      "tools": [
+        "tf_provision",
+        "tf_tenant",
+        "tf_list_tenants",
+        "tf_suspend",
+        "tf_resume",
+        "tf_offboard"
+      ]
+    }
   },
   "neon": { "features": ["neon-api", "branching", "scale-to-zero", "project-per-tenant"] },
   "env": [
