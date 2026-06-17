@@ -242,7 +242,7 @@ describe('createTenantForge lifecycle', () => {
     await expect(tf.suspend(tenant.id)).rejects.toThrow(/illegal tenant status transition/);
   });
 
-  it('offboards: exports, then deletes the project, then marks deleted', async () => {
+  it('offboards by ARCHIVING: retains the project (no delete), returns the archive ref', async () => {
     const tf = createTenantForge({
       registry,
       provisioning,
@@ -252,12 +252,42 @@ describe('createTenantForge lifecycle', () => {
     });
     const { tenant } = await tf.provision({ slug: 'acme' });
     const outcome = await tf.offboard(tenant.id);
-    expect(outcome.tenant.status).toBe('deleted');
-    expect(outcome.export?.location).toBe('s3://exports/t');
+    expect(outcome.tenant.status).toBe('offboarding'); // retained, pending purge — NOT deleted
+    expect(outcome.archive?.location).toBe('s3://exports/t');
+    expect(provisioning.deletes).toEqual([]); // reversible: nothing deleted
+    expect(await secretStore.get(tenant.id)).not.toBeNull(); // secret retained
+  });
+
+  it('offboards without an exporter (null archive ref), still reversible', async () => {
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    const outcome = await tf.offboard(tenant.id);
+    expect(outcome.tenant.status).toBe('offboarding');
+    expect(outcome.archive).toBeNull();
+    expect((await tf.resume(tenant.id)).status).toBe('active'); // reversible
+  });
+
+  it('purge irreversibly deletes the offboarded project and shreds the secret', async () => {
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await tf.offboard(tenant.id);
+    const deleted = await tf.purge(tenant.id);
+    expect(deleted.status).toBe('deleted');
     expect(provisioning.deletes).toEqual(['proj-1']);
+    expect(await secretStore.get(tenant.id)).toBeNull();
   });
 
-  it('fails closed: no exporter and export not skipped → throws BEFORE deleting', async () => {
+  it('purge fails closed on an active (non-offboarded) tenant — no delete', async () => {
     const tf = createTenantForge({
       registry,
       provisioning,
@@ -265,33 +295,8 @@ describe('createTenantForge lifecycle', () => {
       defaultRegion: 'aws-us-east-1',
     });
     const { tenant } = await tf.provision({ slug: 'acme' });
-    await expect(tf.offboard(tenant.id)).rejects.toThrow(/no exporter configured/);
-    expect(provisioning.deletes).toEqual([]); // irreversible delete never ran
-  });
-
-  it('requires a reason when export is skipped', async () => {
-    const tf = createTenantForge({
-      registry,
-      provisioning,
-      secretStore,
-      defaultRegion: 'aws-us-east-1',
-    });
-    const { tenant } = await tf.provision({ slug: 'acme' });
-    await expect(tf.offboard(tenant.id, { skipExport: true })).rejects.toThrow(/requires a reason/);
-  });
-
-  it('offboards with export skipped when a reason is given', async () => {
-    const tf = createTenantForge({
-      registry,
-      provisioning,
-      secretStore,
-      defaultRegion: 'aws-us-east-1',
-    });
-    const { tenant } = await tf.provision({ slug: 'acme' });
-    const outcome = await tf.offboard(tenant.id, { skipExport: true, reason: 'never activated' });
-    expect(outcome.tenant.status).toBe('deleted');
-    expect(outcome.export).toBeNull();
-    expect(provisioning.deletes).toEqual(['proj-1']);
+    await expect(tf.purge(tenant.id)).rejects.toThrow(/illegal tenant status transition/);
+    expect(provisioning.deletes).toEqual([]);
   });
 
   it('throws when offboarding an unknown tenant', async () => {
@@ -364,11 +369,13 @@ describe('createTenantForge connection secrets', () => {
     await expect(make().getConnection('missing')).rejects.toThrow(/not found/);
   });
 
-  it('offboard crypto-shreds the connection secret', async () => {
+  it('offboard retains the secret; purge crypto-shreds it', async () => {
     const tf = make();
     const { tenant } = await tf.provision({ slug: 'acme' });
-    await tf.offboard(tenant.id, { skipExport: true, reason: 'test' });
-    expect(await secretStore.get(tenant.id)).toBeNull();
+    await tf.offboard(tenant.id);
+    expect(await secretStore.get(tenant.id)).not.toBeNull(); // archived, still recoverable
+    await tf.purge(tenant.id);
+    expect(await secretStore.get(tenant.id)).toBeNull(); // shredded on purge
   });
 });
 

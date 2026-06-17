@@ -119,36 +119,53 @@ describe('HTTP control-plane', () => {
     expect(conflict.status).toBe(409);
   });
 
-  it('requires confirm:true to offboard (400 without it)', async () => {
-    const res = await app().request('/v1/tenants/t1/offboard', {
+  it('offboards (archive, reversible) — no confirm needed; returns the archive ref', async () => {
+    const res = await app({
+      offboard: async () => ({
+        tenant: { ...tenant, status: 'offboarding' },
+        archive: { location: 'neon-project:proj-1' },
+      }),
+    }).request('/v1/tenants/t1/offboard', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      tenant: { status: 'offboarding' },
+      archive: { location: 'neon-project:proj-1' },
+    });
+  });
+
+  it('requires confirm:true to purge (400 without it)', async () => {
+    const res = await app().request('/v1/tenants/t1/purge', {
       method: 'POST',
       headers: auth,
-      body: JSON.stringify({ skipExport: true, reason: 'x' }), // no confirm
+      body: JSON.stringify({}), // no confirm
     });
     expect(res.status).toBe(400);
   });
 
-  it('offboards with confirm + export skipped', async () => {
+  it('purges with confirm:true', async () => {
     const res = await app({
-      offboard: async () => ({ tenant: { ...tenant, status: 'deleted' }, export: null }),
-    }).request('/v1/tenants/t1/offboard', {
+      purge: async () => ({ ...tenant, status: 'deleted' }),
+    }).request('/v1/tenants/t1/purge', {
       method: 'POST',
       headers: auth,
-      body: JSON.stringify({ confirm: true, skipExport: true, reason: 'never activated' }),
+      body: JSON.stringify({ confirm: true }),
     });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ tenant: { status: 'deleted' }, export: null });
+    expect(await res.json()).toMatchObject({ tenant: { status: 'deleted' } });
   });
 
-  it('maps a missing tenant to 404 on offboard', async () => {
+  it('maps a missing tenant to 404 on purge', async () => {
     const res = await app({
-      offboard: async () => {
+      purge: async () => {
         throw new Error('tenant nope not found');
       },
-    }).request('/v1/tenants/nope/offboard', {
+    }).request('/v1/tenants/nope/purge', {
       method: 'POST',
       headers: auth,
-      body: JSON.stringify({ confirm: true, skipExport: true, reason: 'x' }),
+      body: JSON.stringify({ confirm: true }),
     });
     expect(res.status).toBe(404);
   });

@@ -27,7 +27,8 @@ const permissiveTf = (): TenantForge =>
     getTenant: () => Promise.resolve(tenant),
     suspend: () => Promise.resolve(tenant),
     resume: () => Promise.resolve(tenant),
-    offboard: () => Promise.resolve({ tenant, export: null }),
+    offboard: () => Promise.resolve({ tenant, archive: null }),
+    purge: () => Promise.resolve(tenant),
   }) as unknown as TenantForge;
 
 interface OpenApiDoc {

@@ -15,6 +15,7 @@ export { createInMemorySecretStore } from './secret-store.js';
 export { createNeonPgSecretStore, type NeonPgSecretStoreOptions } from './neon-pg/secret-store.js';
 export { deriveKey, seal, open } from './secret-crypto.js';
 export { createConnectionRouter, type ConnectionRouterDeps } from './connection-router.js';
+export { createNeonArchiveExporter } from './neon-archive-exporter.js';
 export {
   createFleetOrchestrator,
   type FleetOrchestrator,

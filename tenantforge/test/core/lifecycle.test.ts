@@ -15,6 +15,7 @@ describe('canTransition', () => {
     expect(canTransition('active', 'suspended')).toBe(true);
     expect(canTransition('suspended', 'active')).toBe(true);
     expect(canTransition('offboarding', 'deleted')).toBe(true);
+    expect(canTransition('offboarding', 'active')).toBe(true); // un-archive (restore) during retention
   });
 
   it('rejects illegal transitions', () => {

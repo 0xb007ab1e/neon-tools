@@ -11,6 +11,7 @@ import { createPgTenantRegistry } from '../adapters/neon-pg/registry.js';
 import { createNeonPgSecretStore } from '../adapters/neon-pg/secret-store.js';
 import { deriveKey } from '../adapters/secret-crypto.js';
 import { createConnectionRouter } from '../adapters/connection-router.js';
+import { createNeonArchiveExporter } from '../adapters/neon-archive-exporter.js';
 import {
   createFleetOrchestrator,
   type FleetMigrationReport,
@@ -47,8 +48,9 @@ export interface TenantForgeDeps {
    */
   secretStore: SecretStore;
   /**
-   * Exports a tenant's data before deletion on offboard. Optional, but offboarding fails closed
-   * unless an exporter is present or export is explicitly skipped (privacy — export-then-delete).
+   * Produces a durable archive reference for a tenant on offboard (e.g. the retained, scaled-to-zero
+   * Neon project). Optional — without one, offboard still retains the project and returns a default
+   * reference.
    */
   exporter?: TenantExporter;
   /**
@@ -58,23 +60,12 @@ export interface TenantForgeDeps {
   migrationRunner?: MigrationRunner;
 }
 
-/** Options for {@link TenantForge.offboard}. */
-export interface OffboardInput {
-  /**
-   * Skip the export-before-delete step. Requires a `reason` and is only safe when the tenant holds
-   * no exportable data (e.g. a never-activated tenant). Without it, offboarding needs an exporter.
-   */
-  skipExport?: boolean;
-  /** Why export was skipped (recorded for audit). Required when `skipExport` is true. */
-  reason?: string;
-}
-
-/** The result of offboarding a tenant. */
+/** The result of offboarding (archiving) a tenant. */
 export interface OffboardOutcome {
-  /** The tenant record (deleted). */
+  /** The tenant record (now `offboarding` — retained, pending purge; reversible until purged). */
   tenant: TenantRecord;
-  /** The export reference, or null when export was skipped. */
-  export: ExportResult | null;
+  /** A reference to the retained archive (e.g. `neon-project:<id>`), or null if no exporter is wired. */
+  archive: ExportResult | null;
 }
 
 /** A request to provision a tenant. */
@@ -138,7 +129,8 @@ export interface TenantForge {
   suspend(id: string): Promise<TenantRecord>;
 
   /**
-   * Resume a suspended tenant back to active.
+   * Resume a tenant back to active — from `suspended`, or restoring an `offboarding` (archived)
+   * tenant during its retention window (the Neon project and connection secret were retained).
    *
    * @param id - The tenant id.
    * @returns The updated record.
@@ -146,14 +138,26 @@ export interface TenantForge {
   resume(id: string): Promise<TenantRecord>;
 
   /**
-   * Offboard a tenant: export its data, then **irreversibly** delete its Neon project, then mark it
-   * deleted. Export precedes deletion (privacy); fails closed if export is required but unavailable.
+   * Offboard a tenant: stop serving and **archive** it — the Neon project is retained (scaled to
+   * zero ≈ $0 idle) for the retention window, not deleted. **Reversible** via {@link TenantForge.resume}
+   * until {@link TenantForge.purge}. This honors export-then-delete by keeping the data recoverable
+   * during retention (`@rules/workflow-data-lifecycle.md`).
    *
    * @param id - The tenant id.
-   * @param input - Whether to skip export (with a reason).
-   * @returns The deleted tenant record and the export reference (null if skipped).
+   * @returns The tenant record (`offboarding`) and a reference to the retained archive.
    */
-  offboard(id: string, input?: OffboardInput): Promise<OffboardOutcome>;
+  offboard(id: string): Promise<OffboardOutcome>;
+
+  /**
+   * Purge an offboarded tenant: **irreversibly** delete its Neon project, crypto-shred its
+   * connection secret, and mark it `deleted`. The deferred hard-delete after the retention window —
+   * run manually or by a scheduled job. Only valid for an `offboarding` (or never-provisioned)
+   * tenant.
+   *
+   * @param id - The tenant id.
+   * @returns The deleted tenant record.
+   */
+  purge(id: string): Promise<TenantRecord>;
 
   /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
@@ -272,33 +276,25 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return transition(tenant, 'active');
     },
 
-    async offboard(id: string, input: OffboardInput = {}): Promise<OffboardOutcome> {
+    async offboard(id: string): Promise<OffboardOutcome> {
       const tenant = await requireTenant(id);
-      // Move into offboarding first (validates the transition; blocks routing).
+      // Move into offboarding (validates the transition; blocks routing). The Neon project is
+      // RETAINED (Neon scales it to zero ≈ $0) — reversible until purge; NOT deleted here.
       const offboarding = await transition(tenant, 'offboarding');
+      const archive = exporter ? await exporter.exportTenant(offboarding) : null;
+      return { tenant: offboarding, archive };
+    },
 
-      // Export-then-delete (privacy). Fail closed if export is required but no exporter is wired.
-      let exported: ExportResult | null = null;
-      if (input.skipExport) {
-        if (!input.reason) {
-          throw new Error('offboard: skipExport requires a reason (recorded for audit)');
-        }
-      } else {
-        if (!exporter) {
-          throw new Error(
-            'offboard: no exporter configured; pass { skipExport: true, reason } only if the tenant has no exportable data',
-          );
-        }
-        exported = await exporter.exportTenant(offboarding);
+    async purge(id: string): Promise<TenantRecord> {
+      const tenant = await requireTenant(id);
+      // assertTransition(... 'deleted') rejects purging an active/suspended tenant (must offboard
+      // first) — fail closed. Irreversible from here.
+      assertTransition(tenant.status, 'deleted');
+      if (tenant.neonProjectId !== null) {
+        await provisioning.deleteTenantProject(tenant.neonProjectId);
       }
-
-      // Irreversible: destroy the tenant's Neon project, crypto-shred its secret, then mark deleted.
-      if (offboarding.neonProjectId !== null) {
-        await provisioning.deleteTenantProject(offboarding.neonProjectId);
-      }
-      await secretStore.delete(offboarding.id);
-      const deleted = await transition(offboarding, 'deleted');
-      return { tenant: deleted, export: exported };
+      await secretStore.delete(tenant.id);
+      return transition(tenant, 'deleted');
     },
 
     async getConnection(id: string): Promise<TenantConnection> {
@@ -359,6 +355,7 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
     provisioning,
     secretStore,
     migrationRunner: createPgMigrationRunner(),
+    exporter: createNeonArchiveExporter(),
     defaultRegion: config.defaultRegion,
   });
 }

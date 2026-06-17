@@ -105,28 +105,14 @@ export function createMcpServer(tf: TenantForge): McpServer {
     'tf_offboard',
     {
       description:
-        "DESTRUCTIVE + IRREVERSIBLE: export then delete a tenant's Neon project. Requires " +
-        'confirm=true. Export runs first unless skipExport=true with a reason.',
-      inputSchema: {
-        id: z.string(),
-        confirm: z.boolean().optional(),
-        skipExport: z.boolean().optional(),
-        reason: z.string().optional(),
-      },
+        'Offboard a tenant: archive it — retain the Neon project (scaled to zero), stop serving. ' +
+        'REVERSIBLE via tf_resume until purged. The irreversible hard-delete (purge) is intentionally ' +
+        'not exposed to agents; run it via the CLI/HTTP control plane.',
+      inputSchema: { id: z.string() },
     },
-    async ({ id, confirm, skipExport, reason }) => {
-      // Excessive-agency guard: refuse the irreversible delete without explicit confirmation.
-      if (confirm !== true) {
-        return text(
-          `refusing to offboard ${id}: this irreversibly deletes the tenant's database. ` +
-            'Re-invoke with confirm=true to proceed.',
-        );
-      }
-      const outcome = await tf.offboard(id, {
-        ...(skipExport !== undefined ? { skipExport } : {}),
-        ...(reason !== undefined ? { reason } : {}),
-      });
-      return json({ tenant: outcome.tenant, export: outcome.export });
+    async ({ id }) => {
+      const outcome = await tf.offboard(id);
+      return json({ tenant: outcome.tenant, archive: outcome.archive });
     },
   );
 
