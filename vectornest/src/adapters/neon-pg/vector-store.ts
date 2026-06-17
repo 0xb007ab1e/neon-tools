@@ -9,6 +9,7 @@ import type {
   QueryHit,
   Vector,
 } from '../../core/domain.js';
+import { isUuid } from '../../core/identifiers.js';
 import { cosineDistanceToScore } from '../../core/ranking.js';
 import type {
   ChunkText,
@@ -274,7 +275,35 @@ export function createNeonPgVectorStore(options: NeonPgOptions): VectorStore {
       return rowCount ?? 0;
     },
 
+    async ensureHnswIndex(modelId: string, dim: number): Promise<void> {
+      // model id + dim are interpolated into DDL (which can't be parameterized); validate strictly.
+      if (!isUuid(modelId)) throw new Error(`invalid model id: ${modelId}`);
+      if (!Number.isInteger(dim) || dim <= 0)
+        throw new RangeError('dim must be a positive integer');
+      const name = `vn_emb_hnsw_${modelId.replace(/-/g, '_')}`;
+      // Per-model partial index over the dimension-cast vectors (pgvector supports expression
+      // indexes); a non-CONCURRENT build is fine at this scale.
+      await pool.query(
+        `CREATE INDEX IF NOT EXISTS ${name} ON vn_embeddings
+         USING hnsw ((embedding::vector(${dim})) vector_cosine_ops)
+         WHERE model_id = '${modelId}'`,
+      );
+    },
+
+    async dropHnswIndex(modelId: string): Promise<void> {
+      if (!isUuid(modelId)) throw new Error(`invalid model id: ${modelId}`);
+      await pool.query(`DROP INDEX IF EXISTS vn_emb_hnsw_${modelId.replace(/-/g, '_')}`);
+    },
+
     async query(modelId: string, queryVector: Vector, options: QueryOptions): Promise<QueryHit[]> {
+      const { dim } = options;
+      if (dim !== undefined && (!Number.isInteger(dim) || dim <= 0)) {
+        throw new RangeError('dim must be a positive integer');
+      }
+      // Cast to a fixed dimension so the per-model HNSW index (an expression index) is usable.
+      const vecExpr = dim !== undefined ? `(e.embedding::vector(${dim}))` : 'e.embedding';
+      const qParam = dim !== undefined ? `$2::vector(${dim})` : '$2::vector';
+
       const params: unknown[] = [modelId, formatVector(queryVector)];
       let collectionFilter = '';
       if (options.collectionId !== undefined) {
@@ -294,12 +323,12 @@ export function createNeonPgVectorStore(options: NeonPgOptions): VectorStore {
         distance: number;
       }>(
         `SELECT c.id AS chunk_id, d.id AS document_id, d.source_uri, c.ordinal, c.text, c.metadata,
-                (e.embedding <=> $2::vector) AS distance
+                (${vecExpr} <=> ${qParam}) AS distance
          FROM vn_embeddings e
          JOIN vn_chunks c ON c.id = e.chunk_id
          JOIN vn_documents d ON d.id = c.document_id
          WHERE e.model_id = $1 ${collectionFilter}
-         ORDER BY e.embedding <=> $2::vector
+         ORDER BY ${vecExpr} <=> ${qParam}
          LIMIT ${limitParam}`,
         params,
       );

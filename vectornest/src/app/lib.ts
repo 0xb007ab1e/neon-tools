@@ -527,6 +527,7 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
         await store.upsertEmbeddings(model.id, rows);
         summary.chunks += chunks.length;
       }
+      await store.ensureHnswIndex(model.id, model.dim);
       return summary;
     },
 
@@ -559,13 +560,13 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
       }
 
       if (mode === 'vector') {
-        return store.query(model.id, vector, scoped(k));
+        return store.query(model.id, vector, { ...scoped(k), dim: model.dim });
       }
 
       // Hybrid: retrieve deeper from each method, then fuse by chunk id (RRF) and take top-k.
       const fanout = Math.max(k, 20);
       const [vectorHits, keywordHits] = await Promise.all([
-        store.query(model.id, vector, scoped(fanout)),
+        store.query(model.id, vector, { ...scoped(fanout), dim: model.dim }),
         store.keywordSearch(text, scoped(fanout)),
       ]);
       const fused = reciprocalRankFusion([
@@ -609,6 +610,7 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
 
       // Production re-embed: vectors land alongside the active model — no downtime.
       const result = await reembedInto(store, createEmbedder, embedBatchSize, modelName, dim);
+      await store.ensureHnswIndex(result.modelId, dim);
       let activated = false;
       if (options.activate) {
         assertActivatable(modelName, { total: result.total, embedded: result.coverage });
@@ -681,6 +683,7 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
       if (model.isActive) {
         throw new Error(`refusing to drop embeddings for the active model "${modelName}"`);
       }
+      await store.dropHnswIndex(model.id);
       return store.deleteEmbeddings(model.id);
     },
 
