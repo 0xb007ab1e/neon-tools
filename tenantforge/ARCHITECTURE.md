@@ -37,7 +37,8 @@ a managed primitive.
 - **Fleet migration orchestration:** apply a versioned schema migration across all tenant projects —
   batched, idempotent, resumable, with per-tenant success/failure tracking and rollback guidance
   (the "noisy migration" risk is the hard part; treat it as first-class).
-- **Lifecycle:** suspend / resume / **offboard** (export + delete a tenant's project — privacy).
+- **Lifecycle:** suspend / resume / **offboard** (archive: retain the project scaled-to-zero,
+  reversible during retention) → **purge** (irreversible delete) — privacy / data-lifecycle.
 - Entrypoints: **library + CLI** (core), **HTTP control-plane API** + **MCP server** (management).
 
 **Out (deferred / other tools):**
@@ -109,7 +110,8 @@ retention/erasure obligations.
   secrets stored/handled with least privilege.
 - **Neon API as untrusted upstream:** timeouts, bounded retries, validate responses
   (`@rules/topic-api-consumption.md`). Account is **org-scoped** → operations need `NEON_ORG_ID`.
-- **Privacy/residency:** per-tenant region; offboard = export + irreversible delete
+- **Privacy/residency:** per-tenant region; offboard = archive (retain, scaled-to-zero) then purge
+  (irreversible delete + crypto-shred the connection secret) after retention
   (`@rules/std-privacy.md`). No tenant data in the control-plane DB; no real tenant data in non-prod.
 - **Fleet-migration safety:** idempotent, resumable, rollback-aware; a fleet change is a release
   (threat-model + runbook it).

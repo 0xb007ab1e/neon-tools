@@ -17,7 +17,9 @@ const TRANSITIONS: Readonly<Record<TenantStatus, readonly TenantStatus[]>> = {
   provisioning: ['active', 'deleted'],
   active: ['suspended', 'offboarding'],
   suspended: ['active', 'offboarding'],
-  offboarding: ['deleted'],
+  // `offboarding` = archived (retained, scaled to zero): restorable to `active` during the
+  // retention window, or `deleted` by a purge.
+  offboarding: ['active', 'deleted'],
   // Terminal.
   deleted: [],
 };

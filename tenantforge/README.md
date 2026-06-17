@@ -49,7 +49,8 @@ painful to build correctly.
   server-side — never from the client).
 - **Migrate the fleet** — apply a versioned, backward-compatible schema change across all tenants,
   batched/resumable with per-tenant status + rollback.
-- **Lifecycle** — suspend / resume / **offboard** (export + delete the tenant's project).
+- **Lifecycle** — suspend / resume / **offboard** (archive: retain the project scaled-to-zero,
+  reversible) → **purge** (irreversible delete after retention).
 - Use it as a **library**, a **CLI**, an **HTTP control-plane API**, or an **MCP server**.
 
 ## Composition

@@ -124,31 +124,38 @@ const resume = defineCommand({
 const offboard = defineCommand({
   meta: {
     name: 'offboard',
-    description: 'Offboard a tenant: export then IRREVERSIBLY delete its Neon project',
+    description: 'Offboard a tenant: archive (retain, scale-to-zero), reversible until purge',
+  },
+  args: { id: { type: 'positional', description: 'Tenant id (UUID)', required: true } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const { tenant, archive } = await tf.offboard(args.id);
+      process.stdout.write(`${formatTenant(tenant)}\n`);
+      process.stdout.write(
+        `archived (retained, pending purge): ${archive ? archive.location : 'n/a'}\n`,
+      );
+    });
+  },
+});
+
+const purge = defineCommand({
+  meta: {
+    name: 'purge',
+    description: 'IRREVERSIBLY delete an offboarded tenant (project + connection secret)',
   },
   args: {
     id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
     yes: { type: 'boolean', description: 'Confirm the irreversible deletion', default: false },
-    'skip-export': {
-      type: 'boolean',
-      description: 'Skip the export-before-delete step (no exporter wired yet in this build)',
-      default: false,
-    },
-    reason: { type: 'string', description: 'Why export was skipped (required with --skip-export)' },
   },
   async run({ args }) {
     if (!args.yes) {
-      process.stdout.write('refusing to offboard without --yes (this deletes the tenant DB)\n');
+      process.stdout.write('refusing to purge without --yes (this deletes the tenant DB)\n');
       process.exitCode = 1;
       return;
     }
     await withTenantForge(async (tf) => {
-      const { tenant, export: exported } = await tf.offboard(args.id, {
-        skipExport: args['skip-export'],
-        ...(args.reason ? { reason: args.reason } : {}),
-      });
+      const tenant = await tf.purge(args.id);
       process.stdout.write(`${formatTenant(tenant)}\n`);
-      process.stdout.write(exported ? `exported to ${exported.location}\n` : 'export skipped\n');
     });
   },
 });
@@ -203,6 +210,7 @@ const main = defineCommand({
     suspend,
     resume,
     offboard,
+    purge,
     'migrate-fleet': migrateFleet,
   },
 });

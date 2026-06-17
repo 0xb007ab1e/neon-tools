@@ -23,11 +23,9 @@ const ProvisionSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
-const OffboardSchema = z.object({
-  // Defense in depth: an irreversible delete must be explicitly confirmed in the body.
+const PurgeSchema = z.object({
+  // Defense in depth: the irreversible hard-delete must be explicitly confirmed in the body.
   confirm: z.literal(true),
-  skipExport: z.boolean().optional(),
-  reason: z.string().min(1).optional(),
 });
 
 /** Return an RFC 9457 problem+json response. */
@@ -164,15 +162,20 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
   });
 
   app.post('/v1/tenants/:id/offboard', async (c) => {
-    const parsed = await readJson(c, OffboardSchema);
-    if (!parsed.ok) return parsed.res;
-    const { skipExport, reason } = parsed.data;
+    // Reversible: archives (retains, scaled to zero) — no confirmation needed.
     try {
-      const outcome = await tf.offboard(c.req.param('id'), {
-        ...(skipExport !== undefined ? { skipExport } : {}),
-        ...(reason !== undefined ? { reason } : {}),
-      });
-      return c.json({ tenant: outcome.tenant, export: outcome.export });
+      const outcome = await tf.offboard(c.req.param('id'));
+      return c.json({ tenant: outcome.tenant, archive: outcome.archive });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  app.post('/v1/tenants/:id/purge', async (c) => {
+    const parsed = await readJson(c, PurgeSchema);
+    if (!parsed.ok) return parsed.res;
+    try {
+      return c.json({ tenant: await tf.purge(c.req.param('id')) });
     } catch (error) {
       return handleError(c, error);
     }

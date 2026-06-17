@@ -75,33 +75,26 @@ describe('MCP server', () => {
     await client.close();
   });
 
-  it('tf_offboard refuses without confirm=true (no delete attempted)', async () => {
-    let called = false;
+  it('tf_offboard archives (reversible) and returns the archive ref — no hard-delete via MCP', async () => {
     const client = await connect(
       fakeTf({
-        offboard: async () => {
-          called = true;
-          return { tenant: { ...tenant, status: 'deleted' }, export: null };
-        },
+        offboard: async () => ({
+          tenant: { ...tenant, status: 'offboarding' },
+          archive: { location: 'neon-project:proj-1' },
+        }),
       }),
     );
     const result = await client.callTool({ name: 'tf_offboard', arguments: { id: 't1' } });
-    expect(body(result)).toContain('confirm=true');
-    expect(called).toBe(false);
+    const out = body(result);
+    expect(out).toContain('"status": "offboarding"');
+    expect(out).toContain('neon-project:proj-1');
     await client.close();
   });
 
-  it('tf_offboard proceeds with confirm=true', async () => {
-    const client = await connect(
-      fakeTf({
-        offboard: async () => ({ tenant: { ...tenant, status: 'deleted' }, export: null }),
-      }),
-    );
-    const result = await client.callTool({
-      name: 'tf_offboard',
-      arguments: { id: 't1', confirm: true, skipExport: true, reason: 'never activated' },
-    });
-    expect(body(result)).toContain('"status": "deleted"');
+  it('does not expose an irreversible purge tool to agents (LLM08)', async () => {
+    const client = await connect(fakeTf({}));
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name)).not.toContain('tf_purge');
     await client.close();
   });
 });

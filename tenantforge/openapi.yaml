@@ -137,29 +137,42 @@ paths:
     post:
       tags: [tenants]
       summary: >
-        Offboard a tenant — export then IRREVERSIBLY delete its Neon project. Requires
-        `confirm: true`.
+        Offboard a tenant — archive it: retain the Neon project (scaled to zero), stop serving.
+        REVERSIBLE via resume until purged; no confirmation needed.
       parameters:
         - { $ref: '#/components/parameters/TenantId' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/OffboardRequest' }
       responses:
         '200':
-          description: Offboarded (tenant deleted).
+          description: Archived (tenant is `offboarding`, pending purge).
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   tenant: { $ref: '#/components/schemas/Tenant' }
-                  export:
+                  archive:
                     oneOf:
                       - { $ref: '#/components/schemas/ExportResult' }
                       - { type: 'null' }
-                required: [tenant, export]
+                required: [tenant, archive]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/tenants/{id}/purge:
+    post:
+      tags: [tenants]
+      summary: >
+        Purge an offboarded tenant — IRREVERSIBLY delete its Neon project and crypto-shred its
+        connection secret. Requires `confirm: true`. The deferred hard-delete after retention.
+      parameters:
+        - { $ref: '#/components/parameters/TenantId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PurgeRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/TenantEnvelope' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -204,24 +217,19 @@ components:
           description: Neon region id; defaults to the server's configured region when omitted.
         metadata: { type: object, additionalProperties: true }
       required: [slug]
-    OffboardRequest:
+    PurgeRequest:
       type: object
       properties:
         confirm:
           type: boolean
           const: true
-          description: Must be true — confirms the irreversible deletion (defense in depth).
-        skipExport:
-          type: boolean
-          description: Skip export-before-delete; only safe with no exportable data. Needs a reason.
-        reason:
-          type: string
-          description: Why export was skipped (recorded for audit).
+          description: Must be true — confirms the irreversible hard-delete (defense in depth).
       required: [confirm]
     ExportResult:
       type: object
+      description: A reference to a tenant's retained archive.
       properties:
-        location: { type: string, description: Where the export was written (a reference). }
+        location: { type: string, description: 'e.g. neon-project:<id> for the retained project.' }
         bytes: { type: integer }
       required: [location]
     Problem:
