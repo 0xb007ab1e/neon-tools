@@ -15,7 +15,7 @@ import type {
   ProvisionRequest,
 } from '../../src/ports/provisioning-provider.js';
 import { createInMemorySecretStore } from '../../src/adapters/secret-store.js';
-import { createTenantForge } from '../../src/app/lib.js';
+import { createLifecycleHandler, createTenantForge } from '../../src/app/lib.js';
 
 /** Minimal in-memory tenant registry for hermetic unit tests. */
 function fakeRegistry(): TenantRegistry & { seed(record: TenantRecord): void } {
@@ -673,5 +673,25 @@ describe('createTenantForge.provision residency', () => {
       residency: 'eu',
     });
     expect(tenant.region).toBe('aws-eu-central-1');
+  });
+});
+
+describe('createLifecycleHandler', () => {
+  it('maps each queue command to its TenantForge operation', async () => {
+    const calls: string[] = [];
+    const tf = {
+      provision: (i: { slug: string }) => (calls.push(`provision:${i.slug}`), Promise.resolve({})),
+      suspend: (id: string) => (calls.push(`suspend:${id}`), Promise.resolve({})),
+      resume: (id: string) => (calls.push(`resume:${id}`), Promise.resolve({})),
+      offboard: (id: string) => (calls.push(`offboard:${id}`), Promise.resolve({})),
+    } as unknown as import('../../src/app/lib.js').TenantForge;
+    const handle = createLifecycleHandler(tf);
+
+    await handle({ id: '1', type: 'provision', slug: 'acme', residency: 'eu' });
+    await handle({ id: '2', type: 'suspend', tenantId: 't1' });
+    await handle({ id: '3', type: 'resume', tenantId: 't1' });
+    await handle({ id: '4', type: 'offboard', tenantId: 't1' });
+
+    expect(calls).toEqual(['provision:acme', 'suspend:t1', 'resume:t1', 'offboard:t1']);
   });
 });

@@ -12,5 +12,6 @@ export type { TenantExporter, ExportResult } from './tenant-exporter.js';
 export type { SecretStore } from './secret-store.js';
 export type { EventSink } from './event-sink.js';
 export type { UsageProvider } from './usage-provider.js';
+export type { MessageQueue, QueueMessage } from './message-queue.js';
 export type { MigrationRunner, MigrationExecution } from './migration-runner.js';
 export type { ConnectionRouter, TenantConnection } from './connection-router.js';

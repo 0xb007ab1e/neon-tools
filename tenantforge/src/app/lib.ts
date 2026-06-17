@@ -31,6 +31,7 @@ import {
 } from '../adapters/fleet-orchestrator.js';
 import { createPgMigrationRunner } from '../adapters/neon-pg/migration-runner.js';
 import { createNeonUsageProvider } from '../adapters/neon-api/usage-provider.js';
+import type { LifecycleCommand } from '../adapters/lifecycle-command.js';
 import type { ProvisioningProvider } from '../ports/provisioning-provider.js';
 import type { TenantRegistry } from '../ports/tenant-registry.js';
 import type { ExportResult, TenantExporter } from '../ports/tenant-exporter.js';
@@ -591,6 +592,40 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
  */
 export function tenantForgeFromEnv(env: NodeJS.ProcessEnv = process.env): TenantForge {
   return tenantForgeFromConfig(loadConfig(env));
+}
+
+/**
+ * Build a handler that applies a queue-delivered {@link LifecycleCommand} to a {@link TenantForge}
+ * (for the queue-driven lifecycle consumer). Maps each command to its lib operation; `purge` is not
+ * a queue command, so the irreversible hard-delete is never triggered by a message.
+ *
+ * @param tf - The control-plane API.
+ * @returns An async handler suitable for `createLifecycleConsumer({ handle })`.
+ */
+export function createLifecycleHandler(
+  tf: TenantForge,
+): (command: LifecycleCommand) => Promise<void> {
+  return async (command: LifecycleCommand): Promise<void> => {
+    switch (command.type) {
+      case 'provision':
+        await tf.provision({
+          slug: command.slug,
+          ...(command.region !== undefined ? { region: command.region } : {}),
+          ...(command.residency !== undefined ? { residency: command.residency } : {}),
+          ...(command.metadata !== undefined ? { metadata: command.metadata as JsonObject } : {}),
+        });
+        return;
+      case 'suspend':
+        await tf.suspend(command.tenantId);
+        return;
+      case 'resume':
+        await tf.resume(command.tenantId);
+        return;
+      case 'offboard':
+        await tf.offboard(command.tenantId);
+        return;
+    }
+  };
 }
 
 export { loadConfig } from './config.js';
