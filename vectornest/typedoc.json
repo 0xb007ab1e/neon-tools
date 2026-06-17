@@ -1,0 +1,9 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/app/lib.ts", "src/core/index.ts", "src/ports/index.ts"],
+  "out": "docs/api",
+  "name": "VectorNest API",
+  "readme": "none",
+  "excludeInternal": true,
+  "includeVersion": true
+}

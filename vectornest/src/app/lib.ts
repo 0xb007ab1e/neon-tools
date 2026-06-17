@@ -27,6 +27,13 @@ import type { EmbeddingProvider } from '../ports/embedding-provider.js';
 import type { EmbeddingRow, QueryOptions, VectorStore } from '../ports/vector-store.js';
 import type { Config } from './config.js';
 
+// Re-exports so the package entry (`@neon-tools/vectornest`) is a complete public API for
+// integrators: configuration loader + the domain types returned by the service.
+export { loadConfig } from './config.js';
+export type { Config } from './config.js';
+export type { Collection, EmbeddingModel, JsonObject, QueryHit, Vector } from '../core/domain.js';
+export type { EvalCase, EvalReport } from '../core/index.js';
+
 /** Options for an ingest run. */
 export interface IngestOptions {
   /** Target collection name. */

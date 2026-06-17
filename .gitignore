@@ -17,3 +17,6 @@ tools.lock.json
 # OS / editor
 .DS_Store
 *.log
+
+# Generated API docs (TypeDoc) — build in CI / on release
+**/docs/api/

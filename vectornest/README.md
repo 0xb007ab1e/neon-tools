@@ -28,7 +28,18 @@ rollback.
 - **Rehearse** a model on a throwaway Neon branch (re-embed + eval there) before touching prod.
 - **Eval** a labeled query set (recall@k, MRR) and **gate** a swap on quality.
 - **Zero-downtime swap** + instant **rollback** (old vectors are never removed until you drop them).
-- Three entrypoints: **library**, **CLI**, and **MCP server** (agent-discoverable).
+- **Per-model HNSW indexes** for approximate nearest-neighbor search at scale.
+- Four entrypoints: **library**, **CLI**, **MCP server** (agent-discoverable), and **HTTP API**.
+
+## Documentation
+
+Full guides live in [`docs/`](./docs/):
+
+- [Getting started](./docs/getting-started.md) — install → configure → first ingest + query.
+- [Configuration](./docs/configuration.md) — every env var + Neon/Cloudflare/Ollama/Gemini setup.
+- [CLI reference](./docs/cli-reference.md) · [Integration](./docs/integration.md) (library/HTTP/MCP) ·
+  [Re-embedding & swaps](./docs/re-embedding.md) · [Troubleshooting](./docs/troubleshooting.md).
+- API reference: `pnpm --filter vectornest run docs` → `docs/api/`. Design: [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Requirements
 
