@@ -1,0 +1,155 @@
+import { describe, expect, it } from 'vitest';
+import { createHttpServer } from '../../src/app/http-server.js';
+import type { TenantRecord } from '../../src/core/domain.js';
+import type { TenantForge } from '../../src/app/lib.js';
+
+const TOKEN = 'test-token';
+const fakeTf = (overrides: Partial<TenantForge>): TenantForge =>
+  overrides as unknown as TenantForge;
+const app = (overrides: Partial<TenantForge> = {}) =>
+  createHttpServer(fakeTf(overrides), { token: TOKEN });
+const auth = { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' };
+
+const tenant: TenantRecord = {
+  id: 't1',
+  slug: 'acme',
+  region: 'aws-us-east-1',
+  status: 'active',
+  neonProjectId: 'proj-1',
+  metadata: {},
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+};
+
+// How the record looks after JSON serialization over the wire (Date -> ISO string).
+const tenantJson = JSON.parse(JSON.stringify(tenant)) as unknown;
+
+describe('HTTP control-plane', () => {
+  it('serves /health without auth', async () => {
+    const res = await app().request('/health');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'ok', tool: 'tenantforge' });
+  });
+
+  it('rejects /v1 routes without a bearer token (401)', async () => {
+    const res = await app().request('/v1/tenants');
+    expect(res.status).toBe(401);
+  });
+
+  it('provisions a tenant (201) and returns the connection secret to the authed caller', async () => {
+    const res = await app({
+      provision: async () => ({ tenant, connectionUri: 'postgresql://secret@host/db' }),
+    }).request('/v1/tenants', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ slug: 'acme' }),
+    });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({
+      tenant: tenantJson,
+      connectionUri: 'postgresql://secret@host/db',
+    });
+  });
+
+  it('returns RFC 9457 problem+json on validation failure (400)', async () => {
+    const res = await app().request('/v1/tenants', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ region: 'aws-us-east-1' }), // missing slug
+    });
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toContain('application/problem+json');
+    expect(await res.json()).toMatchObject({ title: 'Validation failed', status: 400 });
+  });
+
+  it('maps an invalid slug to 400', async () => {
+    const res = await app({
+      provision: async () => {
+        throw new Error('invalid tenant slug "a": must be 3–63 chars');
+      },
+    }).request('/v1/tenants', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ slug: 'a' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('lists tenants and rejects an unknown status filter (400)', async () => {
+    const list = await app({ listTenants: async () => [tenant] }).request('/v1/tenants', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual({ tenants: [tenantJson] });
+
+    const bad = await app().request('/v1/tenants?status=bogus', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(bad.status).toBe(400);
+  });
+
+  it('gets a tenant, 404 when missing', async () => {
+    const ok = await app({ getTenant: async () => tenant }).request('/v1/tenants/t1', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+
+    const missing = await app({ getTenant: async () => null }).request('/v1/tenants/nope', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(missing.status).toBe(404);
+  });
+
+  it('suspends; maps an illegal transition to 409', async () => {
+    const ok = await app({ suspend: async () => ({ ...tenant, status: 'suspended' }) }).request(
+      '/v1/tenants/t1/suspend',
+      { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` } },
+    );
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ tenant: { status: 'suspended' } });
+
+    const conflict = await app({
+      suspend: async () => {
+        throw new Error('illegal tenant status transition: deleted → suspended');
+      },
+    }).request('/v1/tenants/t1/suspend', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(conflict.status).toBe(409);
+  });
+
+  it('requires confirm:true to offboard (400 without it)', async () => {
+    const res = await app().request('/v1/tenants/t1/offboard', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ skipExport: true, reason: 'x' }), // no confirm
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('offboards with confirm + export skipped', async () => {
+    const res = await app({
+      offboard: async () => ({ tenant: { ...tenant, status: 'deleted' }, export: null }),
+    }).request('/v1/tenants/t1/offboard', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ confirm: true, skipExport: true, reason: 'never activated' }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ tenant: { status: 'deleted' }, export: null });
+  });
+
+  it('maps a missing tenant to 404 on offboard', async () => {
+    const res = await app({
+      offboard: async () => {
+        throw new Error('tenant nope not found');
+      },
+    }).request('/v1/tenants/nope/offboard', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ confirm: true, skipExport: true, reason: 'x' }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
