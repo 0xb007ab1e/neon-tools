@@ -7,3 +7,5 @@ export {
   type NeonProvisioningOptions,
 } from './neon-api/provisioning-provider.js';
 export { createPgTenantRegistry, type PgRegistryOptions } from './neon-pg/registry.js';
+export { createInMemorySecretStore } from './secret-store.js';
+export { createConnectionRouter, type ConnectionRouterDeps } from './connection-router.js';

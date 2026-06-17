@@ -5,6 +5,7 @@ import type {
   ProvisioningProvider,
   ProvisionRequest,
 } from '../../src/ports/provisioning-provider.js';
+import { createInMemorySecretStore } from '../../src/adapters/secret-store.js';
 import { createTenantForge } from '../../src/app/lib.js';
 
 /** Minimal in-memory tenant registry for hermetic unit tests. */
@@ -86,13 +87,16 @@ function fakeProvisioning(): ProvisioningProvider & {
 describe('createTenantForge.provision', () => {
   let registry: ReturnType<typeof fakeRegistry>;
   let provisioning: ReturnType<typeof fakeProvisioning>;
+  let secretStore: ReturnType<typeof createInMemorySecretStore>;
 
   beforeEach(() => {
     registry = fakeRegistry();
     provisioning = fakeProvisioning();
+    secretStore = createInMemorySecretStore();
   });
 
-  const make = () => createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+  const make = () =>
+    createTenantForge({ registry, provisioning, secretStore, defaultRegion: 'aws-us-east-1' });
 
   it('provisions a new tenant: creates the project, attaches it, and activates', async () => {
     const tf = make();
@@ -167,6 +171,7 @@ describe('createTenantForge.provision', () => {
 describe('createTenantForge lifecycle', () => {
   let registry: ReturnType<typeof fakeRegistry>;
   let provisioning: ReturnType<typeof fakeProvisioning>;
+  let secretStore: ReturnType<typeof createInMemorySecretStore>;
   const exporter = {
     exportTenant: () => Promise.resolve({ location: 's3://exports/t', bytes: 1 }),
   };
@@ -174,17 +179,28 @@ describe('createTenantForge lifecycle', () => {
   beforeEach(() => {
     registry = fakeRegistry();
     provisioning = fakeProvisioning();
+    secretStore = createInMemorySecretStore();
   });
 
   it('suspends then resumes an active tenant', async () => {
-    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
     const { tenant } = await tf.provision({ slug: 'acme' });
     expect((await tf.suspend(tenant.id)).status).toBe('suspended');
     expect((await tf.resume(tenant.id)).status).toBe('active');
   });
 
   it('rejects an illegal transition (suspending an already-suspended tenant)', async () => {
-    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
     const { tenant } = await tf.provision({ slug: 'acme' });
     await tf.suspend(tenant.id);
     await expect(tf.suspend(tenant.id)).rejects.toThrow(/illegal tenant status transition/);
@@ -194,6 +210,7 @@ describe('createTenantForge lifecycle', () => {
     const tf = createTenantForge({
       registry,
       provisioning,
+      secretStore,
       defaultRegion: 'aws-us-east-1',
       exporter,
     });
@@ -205,20 +222,35 @@ describe('createTenantForge lifecycle', () => {
   });
 
   it('fails closed: no exporter and export not skipped → throws BEFORE deleting', async () => {
-    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
     const { tenant } = await tf.provision({ slug: 'acme' });
     await expect(tf.offboard(tenant.id)).rejects.toThrow(/no exporter configured/);
     expect(provisioning.deletes).toEqual([]); // irreversible delete never ran
   });
 
   it('requires a reason when export is skipped', async () => {
-    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
     const { tenant } = await tf.provision({ slug: 'acme' });
     await expect(tf.offboard(tenant.id, { skipExport: true })).rejects.toThrow(/requires a reason/);
   });
 
   it('offboards with export skipped when a reason is given', async () => {
-    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
     const { tenant } = await tf.provision({ slug: 'acme' });
     const outcome = await tf.offboard(tenant.id, { skipExport: true, reason: 'never activated' });
     expect(outcome.tenant.status).toBe('deleted');
@@ -227,7 +259,12 @@ describe('createTenantForge lifecycle', () => {
   });
 
   it('throws when offboarding an unknown tenant', async () => {
-    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
     await expect(tf.offboard('missing')).rejects.toThrow(/not found/);
   });
 });
@@ -236,11 +273,65 @@ describe('createTenantForge queries', () => {
   it('lists and gets tenants', async () => {
     const registry = fakeRegistry();
     const provisioning = fakeProvisioning();
-    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const secretStore = createInMemorySecretStore();
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
     const { tenant } = await tf.provision({ slug: 'acme' });
     expect(await tf.getTenant(tenant.id)).not.toBeNull();
     expect(await tf.getTenant('missing')).toBeNull();
     expect(await tf.listTenants()).toHaveLength(1);
     expect(await tf.listTenants({ status: 'suspended' })).toHaveLength(0);
+  });
+});
+
+describe('createTenantForge connection secrets', () => {
+  let registry: ReturnType<typeof fakeRegistry>;
+  let provisioning: ReturnType<typeof fakeProvisioning>;
+  let secretStore: ReturnType<typeof createInMemorySecretStore>;
+
+  beforeEach(() => {
+    registry = fakeRegistry();
+    provisioning = fakeProvisioning();
+    secretStore = createInMemorySecretStore();
+  });
+
+  const make = () =>
+    createTenantForge({ registry, provisioning, secretStore, defaultRegion: 'aws-us-east-1' });
+
+  it('stores the connection secret on provision (keyed by tenant id, not in the registry)', async () => {
+    const tf = make();
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    expect(await secretStore.get(tenant.id)).toBe('postgresql://secret@host/db');
+    // The registry record never carries the secret.
+    expect(JSON.stringify(await tf.getTenant(tenant.id))).not.toContain('postgresql://');
+  });
+
+  it('getConnection resolves an active tenant to its connection', async () => {
+    const tf = make();
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    const conn = await tf.getConnection(tenant.id);
+    expect(conn).toEqual({ tenantId: tenant.id, connectionUri: 'postgresql://secret@host/db' });
+  });
+
+  it('getConnection fails closed for a suspended tenant', async () => {
+    const tf = make();
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await tf.suspend(tenant.id);
+    await expect(tf.getConnection(tenant.id)).rejects.toThrow(/not routable/);
+  });
+
+  it('getConnection throws for an unknown tenant', async () => {
+    await expect(make().getConnection('missing')).rejects.toThrow(/not found/);
+  });
+
+  it('offboard crypto-shreds the connection secret', async () => {
+    const tf = make();
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await tf.offboard(tenant.id, { skipExport: true, reason: 'test' });
+    expect(await secretStore.get(tenant.id)).toBeNull();
   });
 });
