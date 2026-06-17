@@ -5,10 +5,10 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  vitest: '>=3.2.6'
-  '@vitest/coverage-v8': '>=3.2.6'
-  vite: '>=6.4.3'
-  esbuild: '>=0.28.1'
+  vitest: ^3.2.6
+  '@vitest/coverage-v8': ^3.2.6
+  vite: ^8.0.16
+  esbuild: ^0.28.1
 
 importers:
 
@@ -45,7 +45,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=3.2.6'
+        specifier: ^3.2.6
         version: 3.2.6(vitest@3.2.6(@types/node@22.19.21)(esbuild@0.28.1)(tsx@4.22.4)(yaml@2.9.0))
       eslint:
         specifier: ^9.17.0
@@ -72,7 +72,7 @@ importers:
         specifier: ^8.19.0
         version: 8.61.0(eslint@9.39.4)(typescript@5.9.3)
       vitest:
-        specifier: '>=3.2.6'
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@22.19.21)(esbuild@0.28.1)(tsx@4.22.4)(yaml@2.9.0)
 
 packages:
@@ -591,7 +591,7 @@ packages:
     resolution: {integrity: sha512-LsAdmUapA0qSN306d8+zOyawM0hFm2m2Hg9IwVNIKBm+qJV8cijiq2c+gxKZcB1HCfIWAy+0qEZDCUQA58A1cw==}
     peerDependencies:
       '@vitest/browser': 3.2.6
-      vitest: '>=3.2.6'
+      vitest: ^3.2.6
     peerDependenciesMeta:
       '@vitest/browser':
         optional: true
@@ -603,7 +603,7 @@ packages:
     resolution: {integrity: sha512-EZOrpDbkKotFAP7wPAQV1UIyoGOk4oX7ynWhBhLB7v+meMHbQhU16oPpIYGTTe4oFlhpryGpgpcZP/sin3hYuw==}
     peerDependencies:
       msw: ^2.4.9
-      vite: '>=6.4.3'
+      vite: ^8.0.16
     peerDependenciesMeta:
       msw:
         optional: true
@@ -1707,7 +1707,7 @@ packages:
     peerDependencies:
       '@types/node': ^20.19.0 || >=22.12.0
       '@vitejs/devtools': ^0.1.18
-      esbuild: '>=0.28.1'
+      esbuild: ^0.28.1
       jiti: '>=1.21.0'
       less: ^4.0.0
       sass: ^1.70.0
