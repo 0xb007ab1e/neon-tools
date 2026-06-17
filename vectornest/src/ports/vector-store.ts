@@ -37,6 +37,11 @@ export interface QueryOptions {
   k: number;
   /** Optional collection scope; when omitted, searches across all collections. */
   collectionId?: string;
+  /**
+   * The model's embedding dimension. When set, the query casts to `vector(dim)` so it can use the
+   * per-model HNSW index. Ignored by keyword search.
+   */
+  dim?: number;
 }
 
 /**
@@ -173,6 +178,21 @@ export interface VectorStore {
    * @returns The number of rows deleted.
    */
   deleteEmbeddings(modelId: string): Promise<number>;
+
+  /**
+   * Create the per-model HNSW (approximate nearest-neighbor) index if absent. Idempotent.
+   *
+   * @param modelId - The model whose embeddings to index.
+   * @param dim - The model's embedding dimension.
+   */
+  ensureHnswIndex(modelId: string, dim: number): Promise<void>;
+
+  /**
+   * Drop a model's HNSW index if present (cleanup alongside {@link VectorStore.deleteEmbeddings}).
+   *
+   * @param modelId - The model whose index to drop.
+   */
+  dropHnswIndex(modelId: string): Promise<void>;
 
   /**
    * Semantic kNN search against a model's embeddings for a query vector.

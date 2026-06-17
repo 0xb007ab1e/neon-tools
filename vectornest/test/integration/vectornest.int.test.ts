@@ -113,4 +113,16 @@ describe.skipIf(!hasCreds)('VectorNest integration (live Neon + embeddings endpo
     expect(hybrid.length).toBeGreaterThan(0);
     expect(hybrid.some((h) => h.sourceUri.includes('pgvector'))).toBe(true);
   });
+
+  it('creates a per-model HNSW index for embedded models', async () => {
+    const pool = new pg.Pool(buildPoolConfig(process.env.DATABASE_URL ?? ''));
+    try {
+      const { rows } = await pool.query(
+        "SELECT indexname FROM pg_indexes WHERE tablename = 'vn_embeddings' AND indexname LIKE 'vn_emb_hnsw_%'",
+      );
+      expect(rows.length).toBeGreaterThan(0);
+    } finally {
+      await pool.end();
+    }
+  });
 });
