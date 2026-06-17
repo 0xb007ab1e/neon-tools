@@ -59,11 +59,16 @@ function fakeRegistry(): TenantRegistry & { seed(record: TenantRecord): void } {
   };
 }
 
-/** Provisioning provider fake that records calls. */
-function fakeProvisioning(): ProvisioningProvider & { calls: ProvisionRequest[] } {
+/** Provisioning provider fake that records create + delete calls. */
+function fakeProvisioning(): ProvisioningProvider & {
+  calls: ProvisionRequest[];
+  deletes: string[];
+} {
   const calls: ProvisionRequest[] = [];
+  const deletes: string[] = [];
   return {
     calls,
+    deletes,
     createTenantProject(request) {
       calls.push(request);
       return Promise.resolve({
@@ -71,7 +76,10 @@ function fakeProvisioning(): ProvisioningProvider & { calls: ProvisionRequest[] 
         connectionUri: 'postgresql://secret@host/db',
       });
     },
-    deleteTenantProject: () => Promise.resolve(),
+    deleteTenantProject(neonProjectId) {
+      deletes.push(neonProjectId);
+      return Promise.resolve();
+    },
   };
 }
 
@@ -153,6 +161,74 @@ describe('createTenantForge.provision', () => {
     const spy = vi.spyOn(registry, 'getBySlug');
     await expect(tf.provision({ slug: 'a' })).rejects.toThrow(/invalid tenant slug/);
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('createTenantForge lifecycle', () => {
+  let registry: ReturnType<typeof fakeRegistry>;
+  let provisioning: ReturnType<typeof fakeProvisioning>;
+  const exporter = {
+    exportTenant: () => Promise.resolve({ location: 's3://exports/t', bytes: 1 }),
+  };
+
+  beforeEach(() => {
+    registry = fakeRegistry();
+    provisioning = fakeProvisioning();
+  });
+
+  it('suspends then resumes an active tenant', async () => {
+    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    expect((await tf.suspend(tenant.id)).status).toBe('suspended');
+    expect((await tf.resume(tenant.id)).status).toBe('active');
+  });
+
+  it('rejects an illegal transition (suspending an already-suspended tenant)', async () => {
+    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await tf.suspend(tenant.id);
+    await expect(tf.suspend(tenant.id)).rejects.toThrow(/illegal tenant status transition/);
+  });
+
+  it('offboards: exports, then deletes the project, then marks deleted', async () => {
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      defaultRegion: 'aws-us-east-1',
+      exporter,
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    const outcome = await tf.offboard(tenant.id);
+    expect(outcome.tenant.status).toBe('deleted');
+    expect(outcome.export?.location).toBe('s3://exports/t');
+    expect(provisioning.deletes).toEqual(['proj-1']);
+  });
+
+  it('fails closed: no exporter and export not skipped → throws BEFORE deleting', async () => {
+    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await expect(tf.offboard(tenant.id)).rejects.toThrow(/no exporter configured/);
+    expect(provisioning.deletes).toEqual([]); // irreversible delete never ran
+  });
+
+  it('requires a reason when export is skipped', async () => {
+    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await expect(tf.offboard(tenant.id, { skipExport: true })).rejects.toThrow(/requires a reason/);
+  });
+
+  it('offboards with export skipped when a reason is given', async () => {
+    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    const outcome = await tf.offboard(tenant.id, { skipExport: true, reason: 'never activated' });
+    expect(outcome.tenant.status).toBe('deleted');
+    expect(outcome.export).toBeNull();
+    expect(provisioning.deletes).toEqual(['proj-1']);
+  });
+
+  it('throws when offboarding an unknown tenant', async () => {
+    const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+    await expect(tf.offboard('missing')).rejects.toThrow(/not found/);
   });
 });
 
