@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { defineCommand, runMain } from 'citty';
 import type { TenantRecord } from '../core/index.js';
+import { parseLifecycleCommand } from '../adapters/lifecycle-command.js';
+import { createPgMessageQueue } from '../adapters/neon-pg/message-queue.js';
 import { loadConfig } from './config.js';
 import { type TenantForge, tenantForgeFromConfig } from './lib.js';
 
@@ -263,6 +266,44 @@ const migrateFleet = defineCommand({
   },
 });
 
+const enqueue = defineCommand({
+  meta: {
+    name: 'enqueue',
+    description: 'Enqueue a lifecycle command for the worker to apply asynchronously',
+  },
+  args: {
+    type: {
+      type: 'positional',
+      description: 'Command: provision | suspend | resume | offboard',
+      required: true,
+    },
+    slug: { type: 'string', description: 'Tenant slug (provision)' },
+    'tenant-id': { type: 'string', description: 'Tenant id (suspend/resume/offboard)' },
+    region: { type: 'string', description: 'Neon region id (provision)' },
+    residency: { type: 'string', description: 'Required residency jurisdiction (provision)' },
+  },
+  async run({ args }) {
+    // Validate before enqueuing — never put a malformed command on the queue (fail closed).
+    const command = parseLifecycleCommand({
+      id: randomUUID(),
+      type: args.type,
+      ...(args.slug ? { slug: args.slug } : {}),
+      ...(args['tenant-id'] ? { tenantId: args['tenant-id'] } : {}),
+      ...(args.region ? { region: args.region } : {}),
+      ...(args.residency ? { residency: args.residency } : {}),
+    });
+    const queue = createPgMessageQueue({ connectionString: loadConfig().databaseUrl });
+    try {
+      const messageId = await queue.enqueue(command);
+      process.stdout.write(
+        `enqueued ${command.type} (command ${command.id}, message ${messageId})\n`,
+      );
+    } finally {
+      await queue.close();
+    }
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -277,6 +318,7 @@ const main = defineCommand({
     suspend,
     resume,
     offboard,
+    enqueue,
     purge,
     'purge-expired': purgeExpired,
     'migrate-fleet': migrateFleet,

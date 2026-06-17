@@ -81,6 +81,12 @@
       "required": false,
       "secret": false,
       "description": "Base URL when calling the HTTP control-plane API."
+    },
+    {
+      "name": "TENANTFORGE_QUEUE_POLL_MS",
+      "required": false,
+      "secret": false,
+      "description": "Async lifecycle worker poll interval (ms) between drains of the Postgres-backed queue (default 5000)."
     }
   ],
   "provides": ["tenant.provision", "tenant.route", "tenant.lifecycle", "tenant.migrate"],

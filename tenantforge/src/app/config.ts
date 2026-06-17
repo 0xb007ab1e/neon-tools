@@ -35,6 +35,8 @@ const EnvSchema = z.object({
     }),
   // Retention window (days) an archived (offboarding) tenant is kept before the purge sweep.
   TENANTFORGE_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(30),
+  // Worker poll interval (ms) between lifecycle-queue drains.
+  TENANTFORGE_QUEUE_POLL_MS: z.coerce.number().int().positive().default(5000),
   // HTTP entrypoint (required only when running the HTTP server — a later milestone).
   TENANTFORGE_HTTP_TOKEN: z.string().optional(),
   TENANTFORGE_PORT: z.coerce.number().int().positive().default(3000),
@@ -58,6 +60,8 @@ export interface Config {
   secretKey: string;
   /** Retention window (days) before an archived tenant is purged. */
   retentionDays: number;
+  /** Worker poll interval (ms) between lifecycle-queue drains. */
+  queuePollMs: number;
   /** Bearer token for the HTTP entrypoint (required only when serving HTTP). */
   httpToken?: string;
   /** Port for the HTTP entrypoint. */
@@ -81,6 +85,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowedRegions: parsed.TENANTFORGE_ALLOWED_REGIONS,
     secretKey: parsed.TENANTFORGE_SECRET_KEY,
     retentionDays: parsed.TENANTFORGE_RETENTION_DAYS,
+    queuePollMs: parsed.TENANTFORGE_QUEUE_POLL_MS,
     port: parsed.TENANTFORGE_PORT,
   };
   if (parsed.NEON_API_BASE_URL !== undefined) {
