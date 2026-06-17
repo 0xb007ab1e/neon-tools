@@ -12,6 +12,10 @@ const EnvSchema = z.object({
   VECTORNEST_MODEL: z.string().min(1).default('@cf/baai/bge-base-en-v1.5'),
   VECTORNEST_EMBED_DIM: z.coerce.number().int().positive().optional(),
   VECTORNEST_EMBED_BATCH_SIZE: z.coerce.number().int().positive().default(64),
+  // Optional — only needed for branch rehearsal (creating/deleting Neon branches).
+  NEON_API_KEY: z.string().optional(),
+  NEON_PROJECT_ID: z.string().optional(),
+  NEON_API_BASE_URL: z.string().url().optional(),
 });
 
 /** Resolved, validated configuration. */
@@ -28,6 +32,12 @@ export interface Config {
   dim: number;
   /** Max texts per embedding request. */
   embedBatchSize: number;
+  /** Neon API key — enables branch rehearsal when set with a project id. */
+  neonApiKey?: string;
+  /** Neon project id for branch operations. */
+  neonProjectId?: string;
+  /** Neon API base URL (defaults to the public API). */
+  neonApiBaseUrl?: string;
 }
 
 /**
@@ -54,6 +64,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   };
   if (parsed.EMBEDDINGS_API_KEY !== undefined && parsed.EMBEDDINGS_API_KEY !== '') {
     config.embeddingsApiKey = parsed.EMBEDDINGS_API_KEY;
+  }
+  if (parsed.NEON_API_KEY !== undefined && parsed.NEON_API_KEY !== '') {
+    config.neonApiKey = parsed.NEON_API_KEY;
+  }
+  if (parsed.NEON_PROJECT_ID !== undefined && parsed.NEON_PROJECT_ID !== '') {
+    config.neonProjectId = parsed.NEON_PROJECT_ID;
+  }
+  if (parsed.NEON_API_BASE_URL !== undefined) {
+    config.neonApiBaseUrl = parsed.NEON_API_BASE_URL;
   }
   return config;
 }

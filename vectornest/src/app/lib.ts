@@ -5,12 +5,15 @@ import {
   type ChunkOptions,
   assertActivatable,
   chunkText,
+  isFullyEmbedded,
   knownDimension,
   parseModelName,
 } from '../core/index.js';
 import { createOpenAiCompatibleEmbeddingProvider } from '../adapters/openai-compatible/embedding-provider.js';
 import { createFsLoader } from '../adapters/loaders/fs-loader.js';
+import { createNeonBranchManager } from '../adapters/neon-api/branch-manager.js';
 import { createNeonPgVectorStore } from '../adapters/neon-pg/vector-store.js';
+import type { BranchManager } from '../ports/branch-manager.js';
 import type { DocumentLoader } from '../ports/document-loader.js';
 import type { EmbeddingProvider } from '../ports/embedding-provider.js';
 import type { EmbeddingRow, VectorStore } from '../ports/vector-store.js';
@@ -50,6 +53,32 @@ export interface ReembedOptions {
   dim?: number;
   /** Activate the model once fully embedded (the zero-downtime swap). Default false. */
   activate?: boolean;
+  /** Rehearse on a throwaway Neon branch first; abort if it doesn't fully embed. Default false. */
+  rehearse?: boolean;
+}
+
+/** Options for a rehearsal run. */
+export interface RehearseOptions {
+  /** Embedding dimension; defaults to the known dimension for the model. */
+  dim?: number;
+}
+
+/** Result of a branch rehearsal. */
+export interface RehearseSummary {
+  /** The model that was rehearsed. */
+  model: string;
+  /** The ephemeral branch id used (already deleted by the time this returns). */
+  branchId: string;
+  /** Chunks embedded on the branch. */
+  embedded: number;
+  /** Total chunks on the branch. */
+  total: number;
+  /** Chunks the model covered on the branch. */
+  coverage: number;
+  /** Whether the model fully embedded the corpus (the pass/fail signal). */
+  complete: boolean;
+  /** Wall-clock duration of the rehearsal in milliseconds. */
+  elapsedMs: number;
 }
 
 /** Result of a re-embed run. */
@@ -104,6 +133,16 @@ export interface VectorNest {
    */
   reembed(modelName: string, options?: ReembedOptions): Promise<ReembedSummary>;
   /**
+   * Rehearse a model on a throwaway, copy-on-write Neon branch — re-embed the corpus there to
+   * validate dimensions/coverage and estimate time, without touching production. The branch is
+   * always deleted afterward. Requires Neon API credentials.
+   *
+   * @param modelName - The provider/model string to rehearse.
+   * @param options - Dimension override.
+   * @returns The rehearsal report (coverage, completeness, elapsed time).
+   */
+  rehearse(modelName: string, options?: RehearseOptions): Promise<RehearseSummary>;
+  /**
    * Activate a fully-embedded registered model (the swap; also used to roll back to a prior model).
    *
    * @param modelName - The model to make active.
@@ -136,6 +175,10 @@ export interface VectorNestDeps {
   loader: DocumentLoader;
   /** Build an embedding provider for an arbitrary model + dim (used by re-embed). */
   createEmbedder: (model: string, dim: number) => EmbeddingProvider;
+  /** Build a vector store for an arbitrary connection string (used by branch rehearsal). */
+  createStore?: (connectionString: string) => VectorStore;
+  /** Manages ephemeral Neon branches (enables rehearsal). */
+  branchManager?: BranchManager;
   /** Max texts per embedding request. */
   embedBatchSize: number;
 }
@@ -196,6 +239,66 @@ async function ensureActiveModel(
   return registered;
 }
 
+/** Outcome of embedding a corpus under a model in a given store. */
+interface ReembedResult {
+  /** The model's id. */
+  modelId: string;
+  /** Chunks embedded this run. */
+  embedded: number;
+  /** Total chunks in the store. */
+  total: number;
+  /** Chunks the model now covers. */
+  coverage: number;
+}
+
+/**
+ * Register `modelName` in `store` and embed every chunk it lacks (idempotent, resumable). Shared by
+ * production re-embed and branch rehearsal — only the store differs.
+ *
+ * @param store - Target store (production or a branch).
+ * @param createEmbedder - Embedding provider factory.
+ * @param embedBatchSize - Max texts per embedding request.
+ * @param modelName - The model to embed under.
+ * @param dim - The model's embedding dimension.
+ * @returns The model id and coverage counts.
+ */
+async function reembedInto(
+  store: VectorStore,
+  createEmbedder: (model: string, dim: number) => EmbeddingProvider,
+  embedBatchSize: number,
+  modelName: string,
+  dim: number,
+): Promise<ReembedResult> {
+  const model = await store.registerModel({
+    name: modelName,
+    provider: providerOf(modelName),
+    dim,
+  });
+  const target = createEmbedder(modelName, dim);
+
+  let embedded = 0;
+  for (;;) {
+    const batch = await store.getUnembeddedChunks(model.id, embedBatchSize);
+    if (batch.length === 0) break;
+    const vectors = await target.embed(batch.map((chunk) => chunk.text));
+    const rows: EmbeddingRow[] = [];
+    for (let i = 0; i < batch.length; i += 1) {
+      const chunk = batch[i];
+      const vector = vectors[i];
+      if (!chunk || !vector) {
+        throw new Error('internal: chunk/embedding count mismatch during re-embed');
+      }
+      rows.push({ chunkId: chunk.chunkId, vector });
+    }
+    await store.upsertEmbeddings(model.id, rows);
+    embedded += batch.length;
+  }
+
+  const total = await store.countChunks();
+  const coverage = await store.countEmbeddings(model.id);
+  return { modelId: model.id, embedded, total, coverage };
+}
+
 /**
  * Create a {@link VectorNest} from injected collaborators (the use-case layer).
  *
@@ -203,7 +306,8 @@ async function ensureActiveModel(
  * @returns The application service.
  */
 export function createVectorNest(deps: VectorNestDeps): VectorNest {
-  const { store, embedder, loader, createEmbedder, embedBatchSize } = deps;
+  const { store, embedder, loader, createEmbedder, createStore, branchManager, embedBatchSize } =
+    deps;
 
   // Always embed with the *active* model's provider: after a swap the active model may differ
   // (and have a different dimension) from the configured default. Reuse the default when it matches.
@@ -211,6 +315,46 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
     model.name === embedder.model && model.dim === embedder.dim
       ? embedder
       : createEmbedder(model.name, model.dim);
+
+  /** Re-embed `modelName` on a throwaway branch and report, always deleting the branch. */
+  const runRehearsal = async (modelName: string, dim: number): Promise<RehearseSummary> => {
+    if (!branchManager || !createStore) {
+      throw new Error(
+        'rehearsal requires Neon API credentials (set NEON_API_KEY and NEON_PROJECT_ID)',
+      );
+    }
+    const safeName = modelName.replace(/[^a-zA-Z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    const branch = await branchManager.createBranch(
+      `vectornest-rehearse-${safeName}-${Date.now()}`,
+    );
+    const start = Date.now();
+    try {
+      const branchStore = createStore(branch.connectionUri);
+      try {
+        await branchStore.migrate(); // branch is copy-on-write; migrate is idempotent.
+        const result = await reembedInto(
+          branchStore,
+          createEmbedder,
+          embedBatchSize,
+          modelName,
+          dim,
+        );
+        return {
+          model: modelName,
+          branchId: branch.branchId,
+          embedded: result.embedded,
+          total: result.total,
+          coverage: result.coverage,
+          complete: isFullyEmbedded({ total: result.total, embedded: result.coverage }),
+          elapsedMs: Date.now() - start,
+        };
+      } finally {
+        await branchStore.close();
+      }
+    } finally {
+      await branchManager.deleteBranch(branch.branchId);
+    }
+  };
 
   return {
     migrate() {
@@ -285,42 +429,40 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
       if (dim === undefined) {
         throw new Error(`unknown embedding dimension for "${modelName}"; pass options.dim`);
       }
-      const model = await store.registerModel({
-        name: modelName,
-        provider: providerOf(modelName),
-        dim,
-      });
-      const target = createEmbedder(modelName, dim);
 
-      // Embed only chunks this model lacks; persisting each batch shrinks the set, so this is
-      // idempotent and resumable. Vectors are added alongside the active model — no downtime.
-      let embedded = 0;
-      for (;;) {
-        const batch = await store.getUnembeddedChunks(model.id, embedBatchSize);
-        if (batch.length === 0) break;
-        const vectors = await target.embed(batch.map((chunk) => chunk.text));
-        const rows: EmbeddingRow[] = [];
-        for (let i = 0; i < batch.length; i += 1) {
-          const chunk = batch[i];
-          const vector = vectors[i];
-          if (!chunk || !vector) {
-            throw new Error('internal: chunk/embedding count mismatch during re-embed');
-          }
-          rows.push({ chunkId: chunk.chunkId, vector });
+      // Optionally validate on a throwaway branch before touching production.
+      if (options.rehearse) {
+        const rehearsal = await runRehearsal(modelName, dim);
+        if (!rehearsal.complete) {
+          throw new Error(
+            `rehearsal for "${modelName}" only embedded ${rehearsal.coverage}/${rehearsal.total} chunks — aborting production re-embed`,
+          );
         }
-        await store.upsertEmbeddings(model.id, rows);
-        embedded += batch.length;
       }
 
-      const total = await store.countChunks();
-      const coverage = await store.countEmbeddings(model.id);
+      // Production re-embed: vectors land alongside the active model — no downtime.
+      const result = await reembedInto(store, createEmbedder, embedBatchSize, modelName, dim);
       let activated = false;
       if (options.activate) {
-        assertActivatable(modelName, { total, embedded: coverage });
-        await store.setActiveModel(model.id);
+        assertActivatable(modelName, { total: result.total, embedded: result.coverage });
+        await store.setActiveModel(result.modelId);
         activated = true;
       }
-      return { model: modelName, embedded, total, coverage, activated };
+      return {
+        model: modelName,
+        embedded: result.embedded,
+        total: result.total,
+        coverage: result.coverage,
+        activated,
+      };
+    },
+
+    async rehearse(modelName: string, options: RehearseOptions = {}): Promise<RehearseSummary> {
+      const dim = options.dim ?? knownDimension(modelName);
+      if (dim === undefined) {
+        throw new Error(`unknown embedding dimension for "${modelName}"; pass options.dim`);
+      }
+      return runRehearsal(modelName, dim);
     },
 
     async activateModel(modelName: string): Promise<void> {
@@ -369,10 +511,10 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
  * @returns A ready VectorNest backed by Neon + the embeddings endpoint + the filesystem loader.
  */
 export function vectorNestFromConfig(config: Config): VectorNest {
-  const store = createNeonPgVectorStore({
-    connectionString: config.databaseUrl,
-    migrationsDir,
-  });
+  const createStore = (connectionString: string): VectorStore =>
+    createNeonPgVectorStore({ connectionString, migrationsDir });
+  const store = createStore(config.databaseUrl);
+
   const createEmbedder = (model: string, dim: number): EmbeddingProvider =>
     createOpenAiCompatibleEmbeddingProvider({
       baseUrl: config.embeddingsBaseUrl,
@@ -383,11 +525,24 @@ export function vectorNestFromConfig(config: Config): VectorNest {
     });
   const embedder = createEmbedder(config.model, config.dim);
   const loader = createFsLoader();
+
+  // Branch rehearsal is available only when Neon API credentials are configured.
+  const branchManager =
+    config.neonApiKey !== undefined && config.neonProjectId !== undefined
+      ? createNeonBranchManager({
+          apiKey: config.neonApiKey,
+          projectId: config.neonProjectId,
+          ...(config.neonApiBaseUrl !== undefined ? { baseUrl: config.neonApiBaseUrl } : {}),
+        })
+      : undefined;
+
   return createVectorNest({
     store,
     embedder,
     createEmbedder,
+    createStore,
     loader,
     embedBatchSize: config.embedBatchSize,
+    ...(branchManager !== undefined ? { branchManager } : {}),
   });
 }

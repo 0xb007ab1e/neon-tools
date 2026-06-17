@@ -12,3 +12,4 @@ export {
   type OpenAiCompatibleOptions,
 } from './openai-compatible/embedding-provider.js';
 export { createFsLoader, type FsLoaderOptions } from './loaders/fs-loader.js';
+export { createNeonBranchManager, type NeonApiOptions } from './neon-api/branch-manager.js';

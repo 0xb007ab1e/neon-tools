@@ -87,14 +87,43 @@ const reembed = defineCommand({
       description: 'activate the model once fully embedded (zero-downtime swap)',
       default: false,
     },
+    rehearse: {
+      type: 'boolean',
+      description: 'rehearse on a throwaway Neon branch first; abort if incomplete',
+      default: false,
+    },
   },
   async run({ args }) {
-    const options = { activate: args.activate, ...(args.dim ? { dim: Number(args.dim) } : {}) };
+    const options = {
+      activate: args.activate,
+      rehearse: args.rehearse,
+      ...(args.dim ? { dim: Number(args.dim) } : {}),
+    };
     await withVectorNest(async (vn) => {
       await vn.migrate();
       const s = await vn.reembed(args.model, options);
       process.stdout.write(
         `re-embedded ${s.embedded} chunk(s); coverage ${s.coverage}/${s.total}; ${s.activated ? 'ACTIVATED' : 'not activated'}\n`,
+      );
+    });
+  },
+});
+
+const rehearse = defineCommand({
+  meta: {
+    name: 'rehearse',
+    description: 'Rehearse a model on a throwaway Neon branch (no production changes)',
+  },
+  args: {
+    model: { type: 'positional', description: 'provider/model string to rehearse', required: true },
+    dim: { type: 'string', description: 'embedding dimension (only if the model is unknown)' },
+  },
+  async run({ args }) {
+    const options = args.dim ? { dim: Number(args.dim) } : {};
+    await withVectorNest(async (vn) => {
+      const r = await vn.rehearse(args.model, options);
+      process.stdout.write(
+        `rehearsed ${r.model} on branch ${r.branchId}: ${r.coverage}/${r.total} embedded in ${r.elapsedMs}ms — ${r.complete ? 'PASS' : 'INCOMPLETE'}\n`,
       );
     });
   },
@@ -147,7 +176,16 @@ const main = defineCommand({
     name: 'vectornest',
     description: 'RAG vector store on the Neon Postgres you already run',
   },
-  subCommands: { migrate, ingest, query, reembed, activate, models, 'drop-model': dropModel },
+  subCommands: {
+    migrate,
+    ingest,
+    query,
+    reembed,
+    rehearse,
+    activate,
+    models,
+    'drop-model': dropModel,
+  },
 });
 
 void runMain(main);
