@@ -58,6 +58,13 @@ export interface VectorStore {
   ensureCollection(name: string): Promise<Collection>;
 
   /**
+   * List all collections.
+   *
+   * @returns All collections.
+   */
+  listCollections(): Promise<Collection[]>;
+
+  /**
    * Register an embedding model (idempotent by name), returning the stored record.
    *
    * @param model - The model's name, provider, and dimension.

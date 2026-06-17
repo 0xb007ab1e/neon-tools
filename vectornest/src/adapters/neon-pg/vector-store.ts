@@ -106,6 +106,13 @@ export function createNeonPgVectorStore(options: NeonPgOptions): VectorStore {
       return { id: row.id, name: row.name, metadata: row.metadata };
     },
 
+    async listCollections(): Promise<Collection[]> {
+      const { rows } = await pool.query<{ id: string; name: string; metadata: JsonObject }>(
+        'SELECT id, name, metadata FROM vn_collections ORDER BY created_at',
+      );
+      return rows.map((row) => ({ id: row.id, name: row.name, metadata: row.metadata }));
+    },
+
     async registerModel(model: {
       name: string;
       provider: string;

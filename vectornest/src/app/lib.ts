@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { EmbeddingModel, QueryHit, Vector } from '../core/domain.js';
+import type { Collection, EmbeddingModel, QueryHit, Vector } from '../core/domain.js';
 import {
   type ChunkOptions,
   type EvalCase,
@@ -218,6 +218,12 @@ export interface VectorNest {
    * @returns Model info records.
    */
   models(): Promise<ModelInfo[]>;
+  /**
+   * List all collections.
+   *
+   * @returns The collections.
+   */
+  collections(): Promise<Collection[]>;
   /** Release underlying resources. */
   close(): Promise<void>;
 }
@@ -647,6 +653,10 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
         result.push({ ...model, coverage, total });
       }
       return result;
+    },
+
+    collections(): Promise<Collection[]> {
+      return store.listCollections();
     },
 
     close() {
