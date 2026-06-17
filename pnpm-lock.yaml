@@ -14,6 +14,58 @@ importers:
 
   .: {}
 
+  tenantforge:
+    dependencies:
+      citty:
+        specifier: ^0.1.6
+        version: 0.1.6
+      pg:
+        specifier: ^8.13.1
+        version: 8.21.0
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.17.0
+        version: 9.39.4
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.21
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.0
+      '@vitest/coverage-v8':
+        specifier: ^3.2.6
+        version: 3.2.6(vitest@3.2.6(@types/node@22.19.21)(esbuild@0.28.1)(tsx@4.22.4)(yaml@2.9.0))
+      eslint:
+        specifier: ^9.17.0
+        version: 9.39.4
+      eslint-config-prettier:
+        specifier: ^9.1.0
+        version: 9.1.2(eslint@9.39.4)
+      eslint-plugin-jsdoc:
+        specifier: ^50.6.1
+        version: 50.8.0(eslint@9.39.4)
+      prettier:
+        specifier: ^3.4.2
+        version: 3.8.4
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
+      typedoc:
+        specifier: ^0.28.19
+        version: 0.28.19(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.19.0
+        version: 8.61.0(eslint@9.39.4)(typescript@5.9.3)
+      vitest:
+        specifier: ^3.2.6
+        version: 3.2.6(@types/node@22.19.21)(esbuild@0.28.1)(tsx@4.22.4)(yaml@2.9.0)
+
   vectornest:
     dependencies:
       '@hono/node-server':
