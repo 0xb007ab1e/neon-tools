@@ -629,3 +629,49 @@ describe('createTenantForge.usage', () => {
     await expect(tf.usage('half', period)).rejects.toThrow(/no provisioned project/);
   });
 });
+
+describe('createTenantForge.provision residency', () => {
+  const make = (allowedRegions?: string[]) => {
+    const provisioning = fakeProvisioning();
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning,
+      secretStore: createInMemorySecretStore(),
+      ...(allowedRegions ? { allowedRegions } : {}),
+      defaultRegion: 'aws-us-east-1',
+    });
+    return { tf, provisioning };
+  };
+
+  it('rejects a region outside the org allow-list (before any project is created)', async () => {
+    const { tf, provisioning } = make(['aws-eu-central-1']);
+    await expect(tf.provision({ slug: 'acme', region: 'aws-us-east-1' })).rejects.toThrow(
+      /not in the allowed set/,
+    );
+    expect(provisioning.calls).toHaveLength(0);
+  });
+
+  it('allows a region within the allow-list', async () => {
+    const { tf } = make(['aws-eu-central-1']);
+    const { tenant } = await tf.provision({ slug: 'acme', region: 'aws-eu-central-1' });
+    expect(tenant.status).toBe('active');
+  });
+
+  it('enforces a per-tenant residency jurisdiction (fail closed on mismatch)', async () => {
+    const { tf, provisioning } = make();
+    await expect(
+      tf.provision({ slug: 'acme', region: 'aws-us-east-1', residency: 'eu' }),
+    ).rejects.toThrow(/does not satisfy required residency/);
+    expect(provisioning.calls).toHaveLength(0);
+  });
+
+  it('accepts a region that satisfies the required residency', async () => {
+    const { tf } = make();
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      region: 'aws-eu-central-1',
+      residency: 'eu',
+    });
+    expect(tenant.region).toBe('aws-eu-central-1');
+  });
+});

@@ -65,6 +65,12 @@
       "description": "Days an archived (offboarding) tenant is retained before purge-expired deletes it (default 30)."
     },
     {
+      "name": "TENANTFORGE_ALLOWED_REGIONS",
+      "required": false,
+      "secret": false,
+      "description": "Comma-separated allow-list of regions tenants may be provisioned in (residency enforcement); empty = all known regions."
+    },
+    {
       "name": "TENANTFORGE_HTTP_TOKEN",
       "required": false,
       "secret": true,

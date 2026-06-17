@@ -6,6 +6,13 @@
 export * from './domain.js';
 export { isUuid, isValidSlug, normalizeSlug, assertSlug } from './identifiers.js';
 export { KNOWN_REGIONS, isValidRegion, assertRegion } from './regions.js';
+export {
+  regionJurisdiction,
+  assertResidency,
+  assertRegionAllowed,
+  KNOWN_JURISDICTIONS,
+  type Jurisdiction,
+} from './residency.js';
 export { isTerminal, canTransition, assertTransition } from './lifecycle.js';
 export { assertRoutable, type RoutableTenant } from './routing.js';
 export { retentionCutoff, isPurgeable, type RetainableTenant } from './retention.js';

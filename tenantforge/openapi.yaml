@@ -215,6 +215,10 @@ components:
         region:
           type: string
           description: Neon region id; defaults to the server's configured region when omitted.
+        residency:
+          type: string
+          enum: [us, eu, apac]
+          description: Required data-residency jurisdiction; the region must belong to it (else 409).
         metadata: { type: object, additionalProperties: true }
       required: [slug]
     PurgeRequest:

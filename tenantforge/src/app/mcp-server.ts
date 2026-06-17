@@ -34,13 +34,15 @@ export function createMcpServer(tf: TenantForge): McpServer {
       inputSchema: {
         slug: z.string(),
         region: z.string().optional(),
+        residency: z.enum(['us', 'eu', 'apac']).optional(),
         metadata: z.record(z.string(), z.unknown()).optional(),
       },
     },
-    async ({ slug, region, metadata }) => {
+    async ({ slug, region, residency, metadata }) => {
       const outcome = await tf.provision({
         slug,
         ...(region ? { region } : {}),
+        ...(residency ? { residency } : {}),
         ...(metadata ? { metadata: metadata as JsonObject } : {}),
       });
       // Deliberately omit outcome.connectionUri (a secret) from the model-visible result.

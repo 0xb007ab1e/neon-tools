@@ -84,6 +84,10 @@ secrets always redacted. Plug a metrics/SIEM backend via the `EventSink` port.
 (compute/active seconds, bytes written, peak storage) over a period for billing — pulled on demand
 from Neon's consumption API via the `UsageProvider` port (no usage data stored in the control plane).
 
+**Data residency:** provisioning is fail-closed on residency. A deployment can pin the regions
+tenants may use via `TENANTFORGE_ALLOWED_REGIONS` (e.g. EU-only), and each provision may require a
+jurisdiction (`--residency us|eu|apac`) that the chosen region must satisfy (std-privacy).
+
 ## Discoverability & rules
 
 Publishes [`neon-tool.json`](./neon-tool.json) per the collection's
