@@ -22,8 +22,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "cli": "tsx src/app/cli.ts",
-    "mcp": "tsx src/app/mcp.ts",
+    "cli": "node --env-file-if-exists=.env --import tsx src/app/cli.ts",
+    "mcp": "node --env-file-if-exists=.env --import tsx src/app/mcp.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
