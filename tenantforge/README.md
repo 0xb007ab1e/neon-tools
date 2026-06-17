@@ -65,6 +65,13 @@ Secrets come from the environment (never committed). See [`.env.example`](./.env
 `NEON_API_KEY` + `NEON_ORG_ID` (provision projects — the account is org-scoped), `DATABASE_URL` (the
 control-plane registry DB), and `TENANTFORGE_HTTP_TOKEN` (HTTP server).
 
+## Operations
+
+Runbooks live in [`docs/runbooks/`](./docs/runbooks/). A fleet migration is a release —
+see [**fleet-migration rollback**](./docs/runbooks/fleet-migration-rollback.md) for halting,
+assessing per-tenant state, and reverting safely (app rollback / compensating down migration /
+resume). The HTTP API contract is [`openapi.yaml`](./openapi.yaml).
+
 ## Discoverability & rules
 
 Publishes [`neon-tool.json`](./neon-tool.json) per the collection's
