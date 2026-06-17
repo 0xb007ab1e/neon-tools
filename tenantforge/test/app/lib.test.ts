@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { JsonObject, TenantRecord, TenantStatus } from '../../src/core/domain.js';
+import type {
+  FleetMigration,
+  JsonObject,
+  MigrationStatus,
+  TenantMigrationState,
+  TenantRecord,
+  TenantStatus,
+} from '../../src/core/domain.js';
+import type { MigrationRunner } from '../../src/ports/migration-runner.js';
 import type { NewTenant, TenantRegistry } from '../../src/ports/tenant-registry.js';
 import type {
   ProvisioningProvider,
@@ -11,11 +19,39 @@ import { createTenantForge } from '../../src/app/lib.js';
 /** Minimal in-memory tenant registry for hermetic unit tests. */
 function fakeRegistry(): TenantRegistry & { seed(record: TenantRecord): void } {
   const byId = new Map<string, TenantRecord>();
+  const migrations = new Map<string, FleetMigration>();
+  const migStates = new Map<string, TenantMigrationState>();
   let seq = 0;
+  let migSeq = 0;
   const clone = (r: TenantRecord): TenantRecord => ({ ...r, metadata: { ...r.metadata } });
   return {
     seed(record) {
       byId.set(record.id, record);
+    },
+    registerMigration(m: { version: string; checksum: string }) {
+      let rec = migrations.get(m.version);
+      if (!rec) {
+        rec = { id: `mig-${++migSeq}`, version: m.version, checksum: m.checksum };
+        migrations.set(m.version, rec);
+      }
+      return Promise.resolve(rec);
+    },
+    listTenantMigrationStates(migrationId: string) {
+      return Promise.resolve([...migStates.values()].filter((s) => s.migrationId === migrationId));
+    },
+    recordTenantMigration(
+      tenantId: string,
+      migrationId: string,
+      status: MigrationStatus,
+      error?: string,
+    ) {
+      migStates.set(`${tenantId}|${migrationId}`, {
+        tenantId,
+        migrationId,
+        status,
+        ...(error !== undefined ? { error } : {}),
+      });
+      return Promise.resolve();
     },
     migrate: () => Promise.resolve(),
     create(tenant: NewTenant) {
@@ -333,5 +369,47 @@ describe('createTenantForge connection secrets', () => {
     const { tenant } = await tf.provision({ slug: 'acme' });
     await tf.offboard(tenant.id, { skipExport: true, reason: 'test' });
     expect(await secretStore.get(tenant.id)).toBeNull();
+  });
+});
+
+describe('createTenantForge.migrateFleet', () => {
+  it('fails closed when no migration runner is configured', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    await expect(tf.migrateFleet({ version: '0002', sql: 'SELECT 1' })).rejects.toThrow(
+      /no migration runner configured/,
+    );
+  });
+
+  it('runs a fleet migration across provisioned tenants (lib → orchestrator → router)', async () => {
+    const applied: string[] = [];
+    const migrationRunner: MigrationRunner = {
+      applyToTenant: (uri) => {
+        applied.push(uri);
+        return Promise.resolve();
+      },
+    };
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      migrationRunner,
+      defaultRegion: 'aws-us-east-1',
+    });
+    await tf.provision({ slug: 'acme' });
+    await tf.provision({ slug: 'beta' });
+    const report = await tf.migrateFleet({ version: '0002', sql: 'SELECT 1' });
+    expect(report.succeeded).toHaveLength(2);
+    expect(report.failed).toEqual([]);
+    expect(applied).toHaveLength(2); // the runner was driven for each active tenant
+
+    // Re-running is idempotent: both already applied, nothing re-applied.
+    const second = await tf.migrateFleet({ version: '0002', sql: 'SELECT 1' });
+    expect(second.alreadyApplied).toBe(2);
+    expect(second.succeeded).toEqual([]);
   });
 });

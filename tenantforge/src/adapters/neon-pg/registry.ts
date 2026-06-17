@@ -1,7 +1,14 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
-import type { JsonObject, TenantRecord, TenantStatus } from '../../core/domain.js';
+import type {
+  FleetMigration,
+  JsonObject,
+  MigrationStatus,
+  TenantMigrationState,
+  TenantRecord,
+  TenantStatus,
+} from '../../core/domain.js';
 import type { NewTenant, TenantRegistry } from '../../ports/tenant-registry.js';
 
 /** A raw `tf_tenants` row as returned by pg. */
@@ -140,6 +147,58 @@ export function createPgTenantRegistry(options: PgRegistryOptions): TenantRegist
         id,
         status,
       ]);
+    },
+
+    async registerMigration(migration: {
+      version: string;
+      checksum: string;
+    }): Promise<FleetMigration> {
+      // Idempotent by version: insert if absent, then return the stored record (existing wins, so
+      // the caller can detect checksum drift).
+      await pool.query(
+        `INSERT INTO tf_migrations (version, checksum) VALUES ($1, $2)
+         ON CONFLICT (version) DO NOTHING`,
+        [migration.version, migration.checksum],
+      );
+      const { rows } = await pool.query<{ id: string; version: string; checksum: string }>(
+        'SELECT id, version, checksum FROM tf_migrations WHERE version = $1',
+        [migration.version],
+      );
+      const row = rows[0]!;
+      return { id: row.id, version: row.version, checksum: row.checksum };
+    },
+
+    async listTenantMigrationStates(migrationId: string): Promise<TenantMigrationState[]> {
+      const { rows } = await pool.query<{
+        tenant_id: string;
+        migration_id: string;
+        status: MigrationStatus;
+        error: string | null;
+      }>(
+        'SELECT tenant_id, migration_id, status, error FROM tf_tenant_migrations WHERE migration_id = $1',
+        [migrationId],
+      );
+      return rows.map((r) => ({
+        tenantId: r.tenant_id,
+        migrationId: r.migration_id,
+        status: r.status,
+        ...(r.error !== null ? { error: r.error } : {}),
+      }));
+    },
+
+    async recordTenantMigration(
+      tenantId: string,
+      migrationId: string,
+      status: MigrationStatus,
+      error?: string,
+    ): Promise<void> {
+      await pool.query(
+        `INSERT INTO tf_tenant_migrations (tenant_id, migration_id, status, error, applied_at)
+         VALUES ($1, $2, $3, $4, CASE WHEN $3 = 'applied' THEN now() ELSE NULL END)
+         ON CONFLICT (tenant_id, migration_id)
+         DO UPDATE SET status = EXCLUDED.status, error = EXCLUDED.error, applied_at = EXCLUDED.applied_at`,
+        [tenantId, migrationId, status, error ?? null],
+      );
     },
 
     async close(): Promise<void> {
