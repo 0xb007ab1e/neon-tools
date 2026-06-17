@@ -16,6 +16,9 @@ const EnvSchema = z.object({
   NEON_API_KEY: z.string().optional(),
   NEON_PROJECT_ID: z.string().optional(),
   NEON_API_BASE_URL: z.string().url().optional(),
+  // HTTP entrypoint (required only when running the HTTP server).
+  VECTORNEST_HTTP_TOKEN: z.string().optional(),
+  VECTORNEST_PORT: z.coerce.number().int().positive().default(3000),
 });
 
 /** Resolved, validated configuration. */
@@ -38,6 +41,10 @@ export interface Config {
   neonProjectId?: string;
   /** Neon API base URL (defaults to the public API). */
   neonApiBaseUrl?: string;
+  /** Bearer token for the HTTP entrypoint (required only when serving HTTP). */
+  httpToken?: string;
+  /** Port for the HTTP entrypoint. */
+  port: number;
 }
 
 /**
@@ -61,7 +68,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     model: parsed.VECTORNEST_MODEL,
     dim,
     embedBatchSize: parsed.VECTORNEST_EMBED_BATCH_SIZE,
+    port: parsed.VECTORNEST_PORT,
   };
+  if (parsed.VECTORNEST_HTTP_TOKEN !== undefined && parsed.VECTORNEST_HTTP_TOKEN !== '') {
+    config.httpToken = parsed.VECTORNEST_HTTP_TOKEN;
+  }
   if (parsed.EMBEDDINGS_API_KEY !== undefined && parsed.EMBEDDINGS_API_KEY !== '') {
     config.embeddingsApiKey = parsed.EMBEDDINGS_API_KEY;
   }
