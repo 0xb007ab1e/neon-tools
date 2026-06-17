@@ -1,9 +1,15 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { EvalCase } from '../../src/core/index.js';
 import { buildPoolConfig } from '../../src/adapters/neon-pg/connection.js';
 import { loadConfig } from '../../src/app/config.js';
 import { type VectorNest, vectorNestFromConfig } from '../../src/app/lib.js';
+
+const evalSet = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./eval.json', import.meta.url)), 'utf8'),
+) as EvalCase[];
 
 // Rehearsal additionally needs the Neon API (to create/delete branches).
 const hasCreds =
@@ -44,12 +50,17 @@ describe.skipIf(!hasCreds)('VectorNest branch rehearsal (live Neon API)', () => 
     const beforeNames = before.map((m) => m.name).sort();
     const beforeActive = before.find((m) => m.isActive)?.name;
 
-    const report = await vn.rehearse(LARGE);
+    // Rehearse WITH an eval gate: re-embed on the branch, then score retrieval there.
+    const report = await vn.rehearse(LARGE, { k: 3, evalSet, thresholds: { minRecall: 1 } });
     expect(report.total).toBeGreaterThan(0);
     expect(report.coverage).toBe(report.total); // fully embedded the corpus on the branch
     expect(report.complete).toBe(true);
     expect(report.branchId.length).toBeGreaterThan(0);
     expect(report.elapsedMs).toBeGreaterThan(0);
+    // Eval ran on the branch and the gate passed.
+    expect(report.eval?.cases).toBe(evalSet.length);
+    expect(report.eval?.recallAtK).toBe(1);
+    expect(report.passed).toBe(true);
 
     // Production is untouched: rehearsal registered nothing new and did not change the active model.
     const after = await vn.models();

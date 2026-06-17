@@ -1,0 +1,8 @@
+[
+  { "query": "How does Neon make idle databases cost nothing?", "relevant": ["neon.md"] },
+  {
+    "query": "What does pgvector add to Postgres for similarity search?",
+    "relevant": ["pgvector.md"]
+  },
+  { "query": "How do I cook pasta until al dente?", "relevant": ["pasta.md"] }
+]

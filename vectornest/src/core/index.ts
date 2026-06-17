@@ -7,3 +7,12 @@ export { chunkText, DEFAULT_CHUNK_OPTIONS, type ChunkOptions } from './chunking.
 export { parseModelName, knownDimension, type ParsedModel } from './model-registry.js';
 export { cosineDistanceToScore, rankByScore } from './ranking.js';
 export { isFullyEmbedded, assertActivatable, type ModelCoverage } from './reembed.js';
+export {
+  scoreRanking,
+  aggregate,
+  meetsThresholds,
+  type EvalCase,
+  type QueryOutcome,
+  type EvalReport,
+  type EvalThresholds,
+} from './eval.js';

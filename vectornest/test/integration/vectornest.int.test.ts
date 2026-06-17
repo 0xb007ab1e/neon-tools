@@ -1,9 +1,15 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { EvalCase } from '../../src/core/index.js';
 import { buildPoolConfig } from '../../src/adapters/neon-pg/connection.js';
 import { loadConfig } from '../../src/app/config.js';
 import { type VectorNest, vectorNestFromConfig } from '../../src/app/lib.js';
+
+const evalSet = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./eval.json', import.meta.url)), 'utf8'),
+) as EvalCase[];
 
 const hasCreds = Boolean(process.env.DATABASE_URL) && Boolean(process.env.EMBEDDINGS_BASE_URL);
 const fixturesDir = fileURLToPath(new URL('./fixtures', import.meta.url));
@@ -81,5 +87,16 @@ describe.skipIf(!hasCreds)('VectorNest integration (live Neon + embeddings endpo
 
     // Cleanup: drop the (now inactive) large model's embeddings.
     expect(await vn.dropModel(LARGE)).toBe(total);
+  });
+
+  it('evaluates a model against a labeled query set (recall@k / MRR)', async () => {
+    const result = await vn.evaluate('@cf/baai/bge-base-en-v1.5', evalSet, {
+      k: 3,
+      thresholds: { minRecall: 1 },
+    });
+    expect(result.report.cases).toBe(3);
+    expect(result.report.recallAtK).toBe(1); // each distinct doc is the top hit for its query
+    expect(result.report.mrr).toBeGreaterThan(0);
+    expect(result.passed).toBe(true);
   });
 });

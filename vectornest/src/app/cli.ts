@@ -1,6 +1,39 @@
+import { readFileSync } from 'node:fs';
 import { defineCommand, runMain } from 'citty';
+import { z } from 'zod';
+import type { EvalCase, EvalThresholds } from '../core/index.js';
 import { loadConfig } from './config.js';
 import { type VectorNest, vectorNestFromConfig } from './lib.js';
+
+/** Schema for a JSON eval set: a non-empty array of {query, relevant[]} cases. */
+const EvalSetSchema = z
+  .array(z.object({ query: z.string().min(1), relevant: z.array(z.string().min(1)).min(1) }))
+  .min(1);
+
+/**
+ * Load and validate a labeled eval set from a JSON file.
+ *
+ * @param path - Path to the eval set JSON.
+ * @returns The validated eval cases.
+ */
+function loadEvalSet(path: string): EvalCase[] {
+  const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  return EvalSetSchema.parse(parsed);
+}
+
+/**
+ * Build eval thresholds from optional CLI string flags.
+ *
+ * @param recall - Minimum recall@k, as a string, or undefined.
+ * @param mrr - Minimum MRR, as a string, or undefined.
+ * @returns The thresholds object.
+ */
+function buildThresholds(recall?: string, mrr?: string): EvalThresholds {
+  const thresholds: EvalThresholds = {};
+  if (recall) thresholds.minRecall = Number(recall);
+  if (mrr) thresholds.minMrr = Number(mrr);
+  return thresholds;
+}
 
 /**
  * Build a configured VectorNest, run an operation against it, and always close the pool.
@@ -89,15 +122,23 @@ const reembed = defineCommand({
     },
     rehearse: {
       type: 'boolean',
-      description: 'rehearse on a throwaway Neon branch first; abort if incomplete',
+      description: 'rehearse on a throwaway Neon branch first; abort if it does not pass',
       default: false,
     },
+    eval: {
+      type: 'string',
+      description: 'path to an eval set to run on the rehearsal branch (implies --rehearse)',
+    },
+    recall: { type: 'string', description: 'min recall@k for the rehearsal eval gate' },
+    mrr: { type: 'string', description: 'min MRR for the rehearsal eval gate' },
   },
   async run({ args }) {
     const options = {
       activate: args.activate,
       rehearse: args.rehearse,
       ...(args.dim ? { dim: Number(args.dim) } : {}),
+      ...(args.eval ? { evalSet: loadEvalSet(args.eval) } : {}),
+      ...(args.recall || args.mrr ? { thresholds: buildThresholds(args.recall, args.mrr) } : {}),
     };
     await withVectorNest(async (vn) => {
       await vn.migrate();
@@ -125,6 +166,36 @@ const rehearse = defineCommand({
       process.stdout.write(
         `rehearsed ${r.model} on branch ${r.branchId}: ${r.coverage}/${r.total} embedded in ${r.elapsedMs}ms — ${r.complete ? 'PASS' : 'INCOMPLETE'}\n`,
       );
+    });
+  },
+});
+
+const evaluate = defineCommand({
+  meta: {
+    name: 'eval',
+    description:
+      'Evaluate a model against a labeled query set (recall@k, MRR); exits 1 if below thresholds',
+  },
+  args: {
+    model: { type: 'positional', description: 'model to evaluate', required: true },
+    set: {
+      type: 'positional',
+      description: 'path to a JSON eval set: [{ "query": "...", "relevant": ["uri-substr"] }]',
+      required: true,
+    },
+    k: { type: 'string', description: 'retrieval depth', default: '5' },
+    recall: { type: 'string', description: 'fail if recall@k is below this (0..1)' },
+    mrr: { type: 'string', description: 'fail if MRR is below this (0..1)' },
+  },
+  async run({ args }) {
+    const evalSet = loadEvalSet(args.set);
+    const thresholds = buildThresholds(args.recall, args.mrr);
+    await withVectorNest(async (vn) => {
+      const r = await vn.evaluate(args.model, evalSet, { k: Number(args.k), thresholds });
+      process.stdout.write(
+        `eval ${r.model}: recall@${r.report.k}=${r.report.recallAtK.toFixed(3)} mrr=${r.report.mrr.toFixed(3)} over ${r.report.cases} case(s) in ${r.elapsedMs}ms — ${r.passed ? 'PASS' : 'FAIL'}\n`,
+      );
+      if (!r.passed) process.exitCode = 1;
     });
   },
 });
@@ -182,6 +253,7 @@ const main = defineCommand({
     query,
     reembed,
     rehearse,
+    eval: evaluate,
     activate,
     models,
     'drop-model': dropModel,

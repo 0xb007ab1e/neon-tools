@@ -3,11 +3,18 @@ import { fileURLToPath } from 'node:url';
 import type { EmbeddingModel, QueryHit, Vector } from '../core/domain.js';
 import {
   type ChunkOptions,
+  type EvalCase,
+  type EvalReport,
+  type EvalThresholds,
+  type QueryOutcome,
+  aggregate,
   assertActivatable,
   chunkText,
   isFullyEmbedded,
   knownDimension,
+  meetsThresholds,
   parseModelName,
+  scoreRanking,
 } from '../core/index.js';
 import { createOpenAiCompatibleEmbeddingProvider } from '../adapters/openai-compatible/embedding-provider.js';
 import { createFsLoader } from '../adapters/loaders/fs-loader.js';
@@ -53,14 +60,46 @@ export interface ReembedOptions {
   dim?: number;
   /** Activate the model once fully embedded (the zero-downtime swap). Default false. */
   activate?: boolean;
-  /** Rehearse on a throwaway Neon branch first; abort if it doesn't fully embed. Default false. */
+  /** Rehearse on a throwaway Neon branch first; abort if it doesn't pass. Default false. */
   rehearse?: boolean;
+  /** Retrieval depth for the rehearsal eval. Default 5. */
+  k?: number;
+  /** Eval cases run on the rehearsal branch (implies rehearse). */
+  evalSet?: EvalCase[];
+  /** Quality thresholds the rehearsal eval must meet to proceed. */
+  thresholds?: EvalThresholds;
 }
 
 /** Options for a rehearsal run. */
 export interface RehearseOptions {
   /** Embedding dimension; defaults to the known dimension for the model. */
   dim?: number;
+  /** Retrieval depth for the eval. Default 5. */
+  k?: number;
+  /** Eval cases to run on the branch after re-embedding. */
+  evalSet?: EvalCase[];
+  /** Quality thresholds the eval must meet for the rehearsal to pass. */
+  thresholds?: EvalThresholds;
+}
+
+/** Options for an evaluation run. */
+export interface EvaluateOptions {
+  /** Retrieval depth. Default 5. */
+  k?: number;
+  /** Quality thresholds; the result's `passed` reflects these. */
+  thresholds?: EvalThresholds;
+}
+
+/** Result of an evaluation run. */
+export interface EvalRunResult {
+  /** The evaluated model. */
+  model: string;
+  /** The metrics. */
+  report: EvalReport;
+  /** Wall-clock duration in milliseconds. */
+  elapsedMs: number;
+  /** Whether the metrics met the supplied thresholds. */
+  passed: boolean;
 }
 
 /** Result of a branch rehearsal. */
@@ -75,8 +114,12 @@ export interface RehearseSummary {
   total: number;
   /** Chunks the model covered on the branch. */
   coverage: number;
-  /** Whether the model fully embedded the corpus (the pass/fail signal). */
+  /** Whether the model fully embedded the corpus on the branch. */
   complete: boolean;
+  /** Eval metrics from the branch, if an eval set was provided. */
+  eval?: EvalReport;
+  /** Overall pass: fully embedded AND (no eval, or eval met thresholds). */
+  passed: boolean;
   /** Wall-clock duration of the rehearsal in milliseconds. */
   elapsedMs: number;
 }
@@ -142,6 +185,20 @@ export interface VectorNest {
    * @returns The rehearsal report (coverage, completeness, elapsed time).
    */
   rehearse(modelName: string, options?: RehearseOptions): Promise<RehearseSummary>;
+  /**
+   * Evaluate a registered model's retrieval quality against a labeled query set (recall@k, MRR).
+   * Queries the model's own embeddings, so it works on an inactive candidate before a swap.
+   *
+   * @param modelName - The model to evaluate.
+   * @param evalSet - Labeled query cases.
+   * @param options - Retrieval depth and pass thresholds.
+   * @returns The metrics and whether thresholds were met.
+   */
+  evaluate(
+    modelName: string,
+    evalSet: EvalCase[],
+    options?: EvaluateOptions,
+  ): Promise<EvalRunResult>;
   /**
    * Activate a fully-embedded registered model (the swap; also used to roll back to a prior model).
    *
@@ -262,6 +319,41 @@ interface ReembedResult {
  * @param dim - The model's embedding dimension.
  * @returns The model id and coverage counts.
  */
+/**
+ * Evaluate a model's retrieval quality in a given store against a labeled query set.
+ *
+ * @param store - Target store (production or a branch).
+ * @param createEmbedder - Embedding provider factory.
+ * @param model - The model to query (id, name, dim).
+ * @param evalSet - Labeled query cases.
+ * @param k - Retrieval depth.
+ * @returns The aggregate recall@k / MRR report.
+ */
+async function evaluateStore(
+  store: VectorStore,
+  createEmbedder: (model: string, dim: number) => EmbeddingProvider,
+  model: { id: string; name: string; dim: number },
+  evalSet: readonly EvalCase[],
+  k: number,
+): Promise<EvalReport> {
+  const embedder = createEmbedder(model.name, model.dim);
+  const outcomes: QueryOutcome[] = [];
+  for (const evalCase of evalSet) {
+    const [vector] = await embedder.embed([evalCase.query]);
+    if (!vector) {
+      throw new Error('failed to embed eval query');
+    }
+    const hits = await store.query(model.id, vector, { k });
+    outcomes.push(
+      scoreRanking(
+        hits.map((hit) => hit.sourceUri),
+        evalCase.relevant,
+      ),
+    );
+  }
+  return aggregate(outcomes, k);
+}
+
 async function reembedInto(
   store: VectorStore,
   createEmbedder: (model: string, dim: number) => EmbeddingProvider,
@@ -316,8 +408,12 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
       ? embedder
       : createEmbedder(model.name, model.dim);
 
-  /** Re-embed `modelName` on a throwaway branch and report, always deleting the branch. */
-  const runRehearsal = async (modelName: string, dim: number): Promise<RehearseSummary> => {
+  /** Re-embed `modelName` on a throwaway branch, optionally eval, and report — always deleting it. */
+  const runRehearsal = async (
+    modelName: string,
+    dim: number,
+    options: { k?: number; evalSet?: EvalCase[]; thresholds?: EvalThresholds },
+  ): Promise<RehearseSummary> => {
     if (!branchManager || !createStore) {
       throw new Error(
         'rehearsal requires Neon API credentials (set NEON_API_KEY and NEON_PROJECT_ID)',
@@ -339,14 +435,32 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
           modelName,
           dim,
         );
+        const complete = isFullyEmbedded({ total: result.total, embedded: result.coverage });
+
+        let evalReport: EvalReport | undefined;
+        if (options.evalSet && options.evalSet.length > 0) {
+          evalReport = await evaluateStore(
+            branchStore,
+            createEmbedder,
+            { id: result.modelId, name: modelName, dim },
+            options.evalSet,
+            options.k ?? 5,
+          );
+        }
+        const passed =
+          complete &&
+          (evalReport === undefined || meetsThresholds(evalReport, options.thresholds ?? {}));
+
         return {
           model: modelName,
           branchId: branch.branchId,
           embedded: result.embedded,
           total: result.total,
           coverage: result.coverage,
-          complete: isFullyEmbedded({ total: result.total, embedded: result.coverage }),
+          complete,
+          passed,
           elapsedMs: Date.now() - start,
+          ...(evalReport ? { eval: evalReport } : {}),
         };
       } finally {
         await branchStore.close();
@@ -431,11 +545,18 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
       }
 
       // Optionally validate on a throwaway branch before touching production.
-      if (options.rehearse) {
-        const rehearsal = await runRehearsal(modelName, dim);
-        if (!rehearsal.complete) {
+      if (options.rehearse || (options.evalSet && options.evalSet.length > 0)) {
+        const rehearsal = await runRehearsal(modelName, dim, {
+          ...(options.k !== undefined ? { k: options.k } : {}),
+          ...(options.evalSet ? { evalSet: options.evalSet } : {}),
+          ...(options.thresholds ? { thresholds: options.thresholds } : {}),
+        });
+        if (!rehearsal.passed) {
+          const evalNote = rehearsal.eval
+            ? `, recall@${rehearsal.eval.k}=${rehearsal.eval.recallAtK.toFixed(2)} mrr=${rehearsal.eval.mrr.toFixed(2)}`
+            : '';
           throw new Error(
-            `rehearsal for "${modelName}" only embedded ${rehearsal.coverage}/${rehearsal.total} chunks — aborting production re-embed`,
+            `rehearsal for "${modelName}" did not pass (coverage ${rehearsal.coverage}/${rehearsal.total}${evalNote}) — aborting production re-embed`,
           );
         }
       }
@@ -462,7 +583,37 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
       if (dim === undefined) {
         throw new Error(`unknown embedding dimension for "${modelName}"; pass options.dim`);
       }
-      return runRehearsal(modelName, dim);
+      return runRehearsal(modelName, dim, {
+        ...(options.k !== undefined ? { k: options.k } : {}),
+        ...(options.evalSet ? { evalSet: options.evalSet } : {}),
+        ...(options.thresholds ? { thresholds: options.thresholds } : {}),
+      });
+    },
+
+    async evaluate(
+      modelName: string,
+      evalSet: EvalCase[],
+      options: EvaluateOptions = {},
+    ): Promise<EvalRunResult> {
+      const k = options.k ?? 5;
+      const model = await store.getModelByName(modelName);
+      if (!model) {
+        throw new Error(`model "${modelName}" is not registered`);
+      }
+      const start = Date.now();
+      const report = await evaluateStore(
+        store,
+        createEmbedder,
+        { id: model.id, name: model.name, dim: model.dim },
+        evalSet,
+        k,
+      );
+      return {
+        model: modelName,
+        report,
+        elapsedMs: Date.now() - start,
+        passed: meetsThresholds(report, options.thresholds ?? {}),
+      };
     },
 
     async activateModel(modelName: string): Promise<void> {
