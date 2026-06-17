@@ -18,6 +18,14 @@ export { deriveKey, seal, open } from './secret-crypto.js';
 export { createConnectionRouter, type ConnectionRouterDeps } from './connection-router.js';
 export { createNeonArchiveExporter } from './neon-archive-exporter.js';
 export { createJsonEventSink, createNoopEventSink } from './event-sink.js';
+export { parseLifecycleCommand, type LifecycleCommand } from './lifecycle-command.js';
+export { createInMemoryQueue, type InMemoryQueue } from './in-memory-queue.js';
+export {
+  createLifecycleConsumer,
+  type LifecycleConsumer,
+  type LifecycleConsumerDeps,
+  type ConsumeReport,
+} from './lifecycle-consumer.js';
 export {
   createFleetOrchestrator,
   type FleetOrchestrator,

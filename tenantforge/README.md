@@ -88,6 +88,12 @@ from Neon's consumption API via the `UsageProvider` port (no usage data stored i
 tenants may use via `TENANTFORGE_ALLOWED_REGIONS` (e.g. EU-only), and each provision may require a
 jurisdiction (`--residency us|eu|apac`) that the chosen region must satisfy (std-privacy).
 
+**Queue-driven lifecycle (optional):** lifecycle commands (provision / suspend / resume / offboard)
+can be consumed from a queue via the `MessageQueue` port + `createLifecycleConsumer` —
+at-least-once-safe (dedupe by command id), poison/failure messages dead-lettered, failure-isolated.
+The irreversible `purge` is intentionally not a queue command. A real broker adapter (SQS/NATS/…) +
+worker entrypoint plug in behind the port; an in-memory adapter backs tests/dev.
+
 ## Discoverability & rules
 
 Publishes [`neon-tool.json`](./neon-tool.json) per the collection's

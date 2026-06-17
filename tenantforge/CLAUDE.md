@@ -28,7 +28,7 @@
 @~/.claude/rules/workflow-runbooks.md
 @~/.claude/rules/topic-testing.md
 
-# @~/.claude/rules/topic-event-driven.md # enable if fleet migration / lifecycle goes queue-driven
+@~/.claude/rules/topic-event-driven.md # queue-driven lifecycle: MessageQueue port + idempotent, DLQ-on-poison consumer
 
 # @~/.claude/rules/std-soc2.md / std-hitrust.md # enable under the relevant compliance scope
 
