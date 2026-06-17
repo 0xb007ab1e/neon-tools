@@ -184,6 +184,15 @@ export interface VectorStore {
    */
   query(modelId: string, queryVector: Vector, options: QueryOptions): Promise<QueryHit[]>;
 
+  /**
+   * Full-text keyword search over chunk text (Postgres FTS). Model-independent.
+   *
+   * @param queryText - The raw query (parsed by `websearch_to_tsquery`).
+   * @param options - k and optional collection scope.
+   * @returns Hits ordered by descending text rank (score is the `ts_rank`).
+   */
+  keywordSearch(queryText: string, options: QueryOptions): Promise<QueryHit[]>;
+
   /** Release underlying resources (connection pool). */
   close(): Promise<void>;
 }

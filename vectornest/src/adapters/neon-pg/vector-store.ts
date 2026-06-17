@@ -315,6 +315,46 @@ export function createNeonPgVectorStore(options: NeonPgOptions): VectorStore {
       }));
     },
 
+    async keywordSearch(queryText: string, options: QueryOptions): Promise<QueryHit[]> {
+      const params: unknown[] = [queryText];
+      let collectionFilter = '';
+      if (options.collectionId !== undefined) {
+        params.push(options.collectionId);
+        collectionFilter = `AND d.collection_id = $${params.length}`;
+      }
+      params.push(options.k);
+      const limitParam = `$${params.length}`;
+
+      const { rows } = await pool.query<{
+        chunk_id: string;
+        document_id: string;
+        source_uri: string;
+        ordinal: number;
+        text: string;
+        metadata: JsonObject;
+        rank: number;
+      }>(
+        `SELECT c.id AS chunk_id, d.id AS document_id, d.source_uri, c.ordinal, c.text, c.metadata,
+                ts_rank(c.tsv, websearch_to_tsquery('english', $1)) AS rank
+         FROM vn_chunks c
+         JOIN vn_documents d ON d.id = c.document_id
+         WHERE c.tsv @@ websearch_to_tsquery('english', $1) ${collectionFilter}
+         ORDER BY rank DESC
+         LIMIT ${limitParam}`,
+        params,
+      );
+
+      return rows.map((row) => ({
+        chunkId: row.chunk_id,
+        documentId: row.document_id,
+        sourceUri: row.source_uri,
+        ordinal: row.ordinal,
+        text: row.text,
+        metadata: row.metadata,
+        score: Number(row.rank),
+      }));
+    },
+
     async close(): Promise<void> {
       await pool.end();
     },

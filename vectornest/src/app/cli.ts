@@ -83,11 +83,16 @@ const query = defineCommand({
     text: { type: 'positional', description: 'Query text', required: true },
     collection: { type: 'string', description: 'Collection name', default: 'default' },
     k: { type: 'string', description: 'Number of results', default: '5' },
+    mode: { type: 'string', description: 'vector | keyword | hybrid', default: 'vector' },
   },
   async run({ args }) {
     const k = Number(args.k);
+    const mode = args.mode;
+    if (mode !== 'vector' && mode !== 'keyword' && mode !== 'hybrid') {
+      throw new Error('--mode must be one of: vector, keyword, hybrid');
+    }
     await withVectorNest(async (vn) => {
-      const hits = await vn.query(args.text, { collection: args.collection, k });
+      const hits = await vn.query(args.text, { collection: args.collection, k, mode });
       if (hits.length === 0) {
         process.stdout.write('no results\n');
         return;

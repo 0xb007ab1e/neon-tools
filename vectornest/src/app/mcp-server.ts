@@ -34,17 +34,20 @@ export function createMcpServer(vn: VectorNest): McpServer {
   server.registerTool(
     'vn_query',
     {
-      description: 'Semantic search over a collection; returns ranked chunks with scores.',
+      description:
+        'Semantic search over a collection; returns ranked chunks. mode: vector | keyword | hybrid.',
       inputSchema: {
         text: z.string(),
         collection: z.string().optional(),
         k: z.number().int().min(1).max(100).optional(),
+        mode: z.enum(['vector', 'keyword', 'hybrid']).optional(),
       },
     },
-    async ({ text: queryText, collection, k }) => {
+    async ({ text: queryText, collection, k, mode }) => {
       const hits = await vn.query(queryText, {
         ...(collection ? { collection } : {}),
         ...(k ? { k } : {}),
+        ...(mode ? { mode } : {}),
       });
       return text(JSON.stringify(hits, null, 2));
     },

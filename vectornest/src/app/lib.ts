@@ -14,6 +14,7 @@ import {
   knownDimension,
   meetsThresholds,
   parseModelName,
+  reciprocalRankFusion,
   scoreRanking,
 } from '../core/index.js';
 import { createOpenAiCompatibleEmbeddingProvider } from '../adapters/openai-compatible/embedding-provider.js';
@@ -23,7 +24,7 @@ import { createNeonPgVectorStore } from '../adapters/neon-pg/vector-store.js';
 import type { BranchManager } from '../ports/branch-manager.js';
 import type { DocumentLoader } from '../ports/document-loader.js';
 import type { EmbeddingProvider } from '../ports/embedding-provider.js';
-import type { EmbeddingRow, VectorStore } from '../ports/vector-store.js';
+import type { EmbeddingRow, QueryOptions, VectorStore } from '../ports/vector-store.js';
 import type { Config } from './config.js';
 
 /** Options for an ingest run. */
@@ -46,12 +47,17 @@ export interface IngestSummary {
   skipped: number;
 }
 
+/** Retrieval mode: vector kNN, Postgres full-text, or RRF fusion of both. */
+export type QueryMode = 'vector' | 'keyword' | 'hybrid';
+
 /** Options for a query. */
 export interface QueryRequest {
   /** Optional collection scope. */
   collection?: string;
   /** Number of hits to return (1..100, default 5). */
   k?: number;
+  /** Retrieval mode (default `vector`). */
+  mode?: QueryMode;
 }
 
 /** Options for a re-embed run. */
@@ -529,6 +535,20 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
       if (!Number.isInteger(k) || k < 1 || k > 100) {
         throw new RangeError('k must be an integer in 1..100');
       }
+      const mode = request.mode ?? 'vector';
+
+      let collectionId: string | undefined;
+      if (request.collection !== undefined) {
+        collectionId = (await store.ensureCollection(request.collection)).id;
+      }
+      const scoped = (limit: number): QueryOptions =>
+        collectionId !== undefined ? { k: limit, collectionId } : { k: limit };
+
+      // Keyword-only search is model-independent.
+      if (mode === 'keyword') {
+        return store.keywordSearch(text, scoped(k));
+      }
+
       const model = await store.getActiveModel();
       if (!model) {
         throw new Error('no active embedding model; run ingest first');
@@ -537,11 +557,31 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
       if (!vector) {
         throw new Error('failed to embed query');
       }
-      if (request.collection !== undefined) {
-        const collection = await store.ensureCollection(request.collection);
-        return store.query(model.id, vector, { k, collectionId: collection.id });
+
+      if (mode === 'vector') {
+        return store.query(model.id, vector, scoped(k));
       }
-      return store.query(model.id, vector, { k });
+
+      // Hybrid: retrieve deeper from each method, then fuse by chunk id (RRF) and take top-k.
+      const fanout = Math.max(k, 20);
+      const [vectorHits, keywordHits] = await Promise.all([
+        store.query(model.id, vector, scoped(fanout)),
+        store.keywordSearch(text, scoped(fanout)),
+      ]);
+      const fused = reciprocalRankFusion([
+        vectorHits.map((hit) => hit.chunkId),
+        keywordHits.map((hit) => hit.chunkId),
+      ]);
+      const byId = new Map<string, QueryHit>();
+      for (const hit of [...vectorHits, ...keywordHits]) {
+        if (!byId.has(hit.chunkId)) byId.set(hit.chunkId, hit);
+      }
+      const fusedHits: QueryHit[] = [];
+      for (const { id, score } of fused.slice(0, k)) {
+        const hit = byId.get(id);
+        if (hit) fusedHits.push({ ...hit, score });
+      }
+      return fusedHits;
     },
 
     async reembed(modelName: string, options: ReembedOptions = {}): Promise<ReembedSummary> {

@@ -99,4 +99,18 @@ describe.skipIf(!hasCreds)('VectorNest integration (live Neon + embeddings endpo
     expect(result.report.mrr).toBeGreaterThan(0);
     expect(result.passed).toBe(true);
   });
+
+  it('supports keyword and hybrid retrieval modes', async () => {
+    const q = 'pgvector HNSW index for similarity search';
+
+    // Keyword (Postgres FTS) should surface the doc containing the exact terms.
+    const keyword = await vn.query(q, { collection, k: 3, mode: 'keyword' });
+    expect(keyword.length).toBeGreaterThan(0);
+    expect(keyword[0]?.sourceUri).toContain('pgvector');
+
+    // Hybrid (RRF of vector + keyword) should also rank the pgvector doc among the results.
+    const hybrid = await vn.query(q, { collection, k: 3, mode: 'hybrid' });
+    expect(hybrid.length).toBeGreaterThan(0);
+    expect(hybrid.some((h) => h.sourceUri.includes('pgvector'))).toBe(true);
+  });
 });
