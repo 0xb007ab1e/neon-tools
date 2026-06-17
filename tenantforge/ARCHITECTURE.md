@@ -1,7 +1,9 @@
 # TenantForge — v1 Architecture & Scope
 
-_Design sketch. Status: **scaffold** — directory + design + manifest + CLAUDE.md laid down, no code
-yet. Decisions trace to [`../research/product-concepts.md`](../research/product-concepts.md) (#2) and
+_Status: **alpha** — the Week-1 walking skeleton (§10) is implemented: pure core, Neon-API
+provisioning + Postgres registry adapters, and `provision`/`list`/`get` via library + CLI, with the
+core at 100% coverage. Decisions trace to
+[`../research/product-concepts.md`](../research/product-concepts.md) (#2) and
 [`../research/teardown-finalists.md`](../research/teardown-finalists.md)._
 
 ## 1. Positioning
@@ -25,6 +27,7 @@ a managed primitive.
 ## 2. v1 scope
 
 **In (v1):**
+
 - **Provision** a tenant: create a Neon project (region-selectable), capture its connection URI,
   record it in the control-plane **tenant registry**. Idempotent + resumable.
 - **Tenant registry** (the control plane's own Postgres): tenant id, slug, region, status, project
@@ -38,6 +41,7 @@ a managed primitive.
 - Entrypoints: **library + CLI** (core), **HTTP control-plane API** + **MCP server** (management).
 
 **Out (deferred / other tools):**
+
 - Cross-tenant analytics / fan-in reporting (a separate read-side concern).
 - Per-tenant billing/usage metering (graduates into its own concern; v1 emits the events).
 - Data-residency policy engine → **ResidencyRouter (#16)**; automated erasure → **ErasureEngine (#17)**.
@@ -50,6 +54,7 @@ validation, migration plan/state machine, routing decisions) has no I/O and is u
 mocks; all I/O lives behind injected adapters.
 
 **Ports (interfaces the core owns):**
+
 - `ProvisioningProvider` — create/delete a tenant database (Neon API adapter: projects + branches).
 - `TenantRegistry` — persist/lookup tenant records (Postgres adapter, control-plane DB).
 - `MigrationRunner` — apply a migration to one tenant connection; the orchestrator fans out over the
@@ -61,11 +66,11 @@ Adapters injected at a composition root per entrypoint. The **Neon API is an unt
 
 ## 4. Data model (control-plane registry — NOT tenant data)
 
-| Table | Key columns |
-|---|---|
-| `tf_tenants` | `id`, `slug` (unique), `region`, `status` (provisioning/active/suspended/offboarding/deleted), `neon_project_id`, `metadata jsonb`, timestamps |
-| `tf_migrations` | `id`, `version`, `checksum`, `applied_at` — the fleet migration catalog |
-| `tf_tenant_migrations` | `tenant_id`, `migration_id`, `status`, `error`, `applied_at` — per-tenant fleet-migration state (PK `(tenant_id, migration_id)`) |
+| Table                  | Key columns                                                                                                                                    |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tf_tenants`           | `id`, `slug` (unique), `region`, `status` (provisioning/active/suspended/offboarding/deleted), `neon_project_id`, `metadata jsonb`, timestamps |
+| `tf_migrations`        | `id`, `version`, `checksum`, `applied_at` — the fleet migration catalog                                                                        |
+| `tf_tenant_migrations` | `tenant_id`, `migration_id`, `status`, `error`, `applied_at` — per-tenant fleet-migration state (PK `(tenant_id, migration_id)`)               |
 
 Tenant **content** never lives here — only the metadata to provision, route, and orchestrate.
 

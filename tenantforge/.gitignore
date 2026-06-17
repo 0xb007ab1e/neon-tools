@@ -1,0 +1,17 @@
+# Build output
+dist
+*.tsbuildinfo
+
+# Test / coverage artifacts
+coverage
+
+# Generated API docs (built in CI / on release — master §1: committing generated HTML is optional)
+docs/api
+
+# Local env — never commit real secrets (workflow-secrets); .env.example is committed
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules

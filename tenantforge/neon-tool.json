@@ -4,29 +4,52 @@
   "id": "tenantforge",
   "name": "TenantForge",
   "version": "0.0.0",
-  "status": "scaffold",
+  "status": "alpha",
   "summary": "Control plane for database-per-tenant SaaS on Neon: provision an isolated project per customer, route connections, orchestrate fleet-wide migrations, and manage tenant lifecycle (suspend/offboard/residency).",
   "category": "infra",
   "tags": ["multi-tenancy", "provisioning", "control-plane", "compliance", "neon", "postgres"],
   "entrypoints": {
     "library": { "packageName": "@neon-tools/tenantforge", "import": "@neon-tools/tenantforge" },
-    "cli": { "bin": "tenantforge", "install": "pnpm --filter tenantforge cli" },
-    "http": { "openapi": "openapi.yaml", "baseUrlEnv": "TENANTFORGE_BASE_URL" },
-    "mcp": {
-      "transport": "stdio",
-      "command": "pnpm",
-      "args": ["--filter", "tenantforge", "mcp"],
-      "tools": ["tf_provision", "tf_tenant", "tf_list_tenants", "tf_migrate_fleet", "tf_suspend", "tf_offboard"]
-    }
+    "cli": { "bin": "tenantforge", "install": "pnpm --filter tenantforge cli" }
   },
   "neon": { "features": ["neon-api", "branching", "scale-to-zero", "project-per-tenant"] },
   "env": [
-    { "name": "DATABASE_URL", "required": true, "secret": true, "description": "Control-plane registry Postgres (tenant metadata only — not tenant data)." },
-    { "name": "NEON_API_KEY", "required": true, "secret": true, "description": "Neon API key used to provision/delete a project per tenant." },
-    { "name": "NEON_ORG_ID", "required": true, "secret": false, "description": "Neon organization id (the account is org-scoped) for project operations." },
-    { "name": "NEON_API_BASE_URL", "required": false, "secret": false, "description": "Override for the Neon API base URL (defaults to the public API)." },
-    { "name": "TENANTFORGE_HTTP_TOKEN", "required": false, "secret": true, "description": "Bearer token required to run the HTTP control-plane API." },
-    { "name": "TENANTFORGE_BASE_URL", "required": false, "secret": false, "description": "Base URL when calling the HTTP control-plane API." }
+    {
+      "name": "DATABASE_URL",
+      "required": true,
+      "secret": true,
+      "description": "Control-plane registry Postgres (tenant metadata only — not tenant data)."
+    },
+    {
+      "name": "NEON_API_KEY",
+      "required": true,
+      "secret": true,
+      "description": "Neon API key used to provision/delete a project per tenant."
+    },
+    {
+      "name": "NEON_ORG_ID",
+      "required": true,
+      "secret": false,
+      "description": "Neon organization id (the account is org-scoped) for project operations."
+    },
+    {
+      "name": "NEON_API_BASE_URL",
+      "required": false,
+      "secret": false,
+      "description": "Override for the Neon API base URL (defaults to the public API)."
+    },
+    {
+      "name": "TENANTFORGE_HTTP_TOKEN",
+      "required": false,
+      "secret": true,
+      "description": "Bearer token required to run the HTTP control-plane API."
+    },
+    {
+      "name": "TENANTFORGE_BASE_URL",
+      "required": false,
+      "secret": false,
+      "description": "Base URL when calling the HTTP control-plane API."
+    }
   ],
   "provides": ["tenant.provision", "tenant.route", "tenant.lifecycle", "tenant.migrate"],
   "consumes": ["rag.ingest", "rag.query"],

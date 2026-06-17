@@ -5,8 +5,32 @@
 > the whole fleet, and handle suspend / offboard / residency — so you get hard data isolation and a
 > clean compliance story without building tenant provisioning, routing, and lifecycle yourself.
 
-**Status:** `scaffold` — directory, design, manifest, and project rules are laid down; no
-implementation yet. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the design, scope, and milestones.
+**Status:** `alpha` — the walking skeleton is in: the pure core (slug/region validation, the
+tenant-lifecycle state machine, the fleet-migration planner), the Neon-API provisioning + Postgres
+registry adapters, and **`provision` / `list` / `get`** via the **library** and **CLI**, with the
+core enforced at 100% test coverage. Connection routing, fleet-migration orchestration, lifecycle
+(suspend/offboard), and the HTTP + MCP entrypoints are the next milestone. See
+[`ARCHITECTURE.md`](./ARCHITECTURE.md) for the design, scope, and milestones.
+
+## Quickstart
+
+```bash
+cp .env.example .env            # fill in DATABASE_URL, NEON_API_KEY, NEON_ORG_ID
+pnpm --filter tenantforge cli migrate          # create the control-plane registry schema
+pnpm --filter tenantforge cli provision acme   # provision an isolated Neon project for tenant "acme"
+pnpm --filter tenantforge cli list             # list tenants
+```
+
+As a library:
+
+```ts
+import { tenantForgeFromEnv } from '@neon-tools/tenantforge';
+
+const tf = tenantForgeFromEnv();
+await tf.migrate();
+const { tenant } = await tf.provision({ slug: 'acme', region: 'aws-eu-central-1' });
+await tf.close();
+```
 
 ## Why
 
