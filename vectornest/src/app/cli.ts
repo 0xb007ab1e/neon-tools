@@ -69,12 +69,85 @@ const query = defineCommand({
   },
 });
 
+const reembed = defineCommand({
+  meta: {
+    name: 'reembed',
+    description:
+      'Re-embed the corpus under a model, alongside the active one (optionally activate)',
+  },
+  args: {
+    model: {
+      type: 'positional',
+      description: 'provider/model string to embed with',
+      required: true,
+    },
+    dim: { type: 'string', description: 'embedding dimension (only if the model is unknown)' },
+    activate: {
+      type: 'boolean',
+      description: 'activate the model once fully embedded (zero-downtime swap)',
+      default: false,
+    },
+  },
+  async run({ args }) {
+    const options = { activate: args.activate, ...(args.dim ? { dim: Number(args.dim) } : {}) };
+    await withVectorNest(async (vn) => {
+      await vn.migrate();
+      const s = await vn.reembed(args.model, options);
+      process.stdout.write(
+        `re-embedded ${s.embedded} chunk(s); coverage ${s.coverage}/${s.total}; ${s.activated ? 'ACTIVATED' : 'not activated'}\n`,
+      );
+    });
+  },
+});
+
+const activate = defineCommand({
+  meta: { name: 'activate', description: 'Activate a fully-embedded model (swap / rollback)' },
+  args: { model: { type: 'positional', description: 'model to activate', required: true } },
+  async run({ args }) {
+    await withVectorNest(async (vn) => {
+      await vn.activateModel(args.model);
+      process.stdout.write(`active model is now ${args.model}\n`);
+    });
+  },
+});
+
+const models = defineCommand({
+  meta: { name: 'models', description: 'List registered models with coverage (* = active)' },
+  async run() {
+    await withVectorNest(async (vn) => {
+      const list = await vn.models();
+      if (list.length === 0) {
+        process.stdout.write('no models registered\n');
+        return;
+      }
+      for (const m of list) {
+        process.stdout.write(
+          `${m.isActive ? '*' : ' '} ${m.name}  dim=${m.dim}  coverage=${m.coverage}/${m.total}\n`,
+        );
+      }
+    });
+  },
+});
+
+const dropModel = defineCommand({
+  meta: { name: 'drop-model', description: "Delete a non-active model's embeddings (cleanup)" },
+  args: {
+    model: { type: 'positional', description: 'model whose embeddings to drop', required: true },
+  },
+  async run({ args }) {
+    await withVectorNest(async (vn) => {
+      const removed = await vn.dropModel(args.model);
+      process.stdout.write(`dropped ${removed} embedding row(s) for ${args.model}\n`);
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'vectornest',
     description: 'RAG vector store on the Neon Postgres you already run',
   },
-  subCommands: { migrate, ingest, query },
+  subCommands: { migrate, ingest, query, reembed, activate, models, 'drop-model': dropModel },
 });
 
 void runMain(main);

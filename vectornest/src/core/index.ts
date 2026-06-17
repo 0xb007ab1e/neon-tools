@@ -6,3 +6,4 @@ export * from './domain.js';
 export { chunkText, DEFAULT_CHUNK_OPTIONS, type ChunkOptions } from './chunking.js';
 export { parseModelName, knownDimension, type ParsedModel } from './model-registry.js';
 export { cosineDistanceToScore, rankByScore } from './ranking.js';
+export { isFullyEmbedded, assertActivatable, type ModelCoverage } from './reembed.js';

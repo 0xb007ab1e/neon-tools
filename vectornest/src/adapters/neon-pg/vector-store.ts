@@ -11,6 +11,7 @@ import type {
 } from '../../core/domain.js';
 import { cosineDistanceToScore } from '../../core/ranking.js';
 import type {
+  ChunkText,
   EmbeddingRow,
   QueryOptions,
   StoredChunk,
@@ -126,6 +127,21 @@ export function createNeonPgVectorStore(options: NeonPgOptions): VectorStore {
       return rows[0] ? mapModel(rows[0]) : null;
     },
 
+    async getModelByName(name: string): Promise<EmbeddingModel | null> {
+      const { rows } = await pool.query<ModelRow>(
+        'SELECT id, name, provider, dim, is_active FROM vn_embedding_models WHERE name = $1',
+        [name],
+      );
+      return rows[0] ? mapModel(rows[0]) : null;
+    },
+
+    async listModels(): Promise<EmbeddingModel[]> {
+      const { rows } = await pool.query<ModelRow>(
+        'SELECT id, name, provider, dim, is_active FROM vn_embedding_models ORDER BY created_at',
+      );
+      return rows.map(mapModel);
+    },
+
     async setActiveModel(modelId: string): Promise<void> {
       const client = await pool.connect();
       try {
@@ -213,6 +229,42 @@ export function createNeonPgVectorStore(options: NeonPgOptions): VectorStore {
       } finally {
         client.release();
       }
+    },
+
+    async countChunks(): Promise<number> {
+      const { rows } = await pool.query<{ count: string }>(
+        'SELECT count(*)::text AS count FROM vn_chunks',
+      );
+      return Number(rows[0]?.count ?? '0');
+    },
+
+    async countEmbeddings(modelId: string): Promise<number> {
+      const { rows } = await pool.query<{ count: string }>(
+        'SELECT count(*)::text AS count FROM vn_embeddings WHERE model_id = $1',
+        [modelId],
+      );
+      return Number(rows[0]?.count ?? '0');
+    },
+
+    async getUnembeddedChunks(modelId: string, limit: number): Promise<ChunkText[]> {
+      const { rows } = await pool.query<{ id: string; text: string }>(
+        `SELECT c.id, c.text
+         FROM vn_chunks c
+         WHERE NOT EXISTS (
+           SELECT 1 FROM vn_embeddings e WHERE e.chunk_id = c.id AND e.model_id = $1
+         )
+         ORDER BY c.id
+         LIMIT $2`,
+        [modelId, limit],
+      );
+      return rows.map((row) => ({ chunkId: row.id, text: row.text }));
+    },
+
+    async deleteEmbeddings(modelId: string): Promise<number> {
+      const { rowCount } = await pool.query('DELETE FROM vn_embeddings WHERE model_id = $1', [
+        modelId,
+      ]);
+      return rowCount ?? 0;
     },
 
     async query(modelId: string, queryVector: Vector, options: QueryOptions): Promise<QueryHit[]> {

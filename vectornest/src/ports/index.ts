@@ -5,4 +5,10 @@
 export type { EmbeddingProvider } from './embedding-provider.js';
 export type { DocumentLoader } from './document-loader.js';
 export type { BranchManager } from './branch-manager.js';
-export type { VectorStore, StoredChunk, EmbeddingRow, QueryOptions } from './vector-store.js';
+export type {
+  VectorStore,
+  StoredChunk,
+  ChunkText,
+  EmbeddingRow,
+  QueryOptions,
+} from './vector-store.js';

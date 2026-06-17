@@ -1,7 +1,13 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { EmbeddingModel, QueryHit, Vector } from '../core/domain.js';
-import { type ChunkOptions, chunkText, parseModelName } from '../core/index.js';
+import {
+  type ChunkOptions,
+  assertActivatable,
+  chunkText,
+  knownDimension,
+  parseModelName,
+} from '../core/index.js';
 import { createOpenAiCompatibleEmbeddingProvider } from '../adapters/openai-compatible/embedding-provider.js';
 import { createFsLoader } from '../adapters/loaders/fs-loader.js';
 import { createNeonPgVectorStore } from '../adapters/neon-pg/vector-store.js';
@@ -38,6 +44,36 @@ export interface QueryRequest {
   k?: number;
 }
 
+/** Options for a re-embed run. */
+export interface ReembedOptions {
+  /** Embedding dimension; defaults to the known dimension for the model. */
+  dim?: number;
+  /** Activate the model once fully embedded (the zero-downtime swap). Default false. */
+  activate?: boolean;
+}
+
+/** Result of a re-embed run. */
+export interface ReembedSummary {
+  /** The target model. */
+  model: string;
+  /** Chunks embedded during this run. */
+  embedded: number;
+  /** Total chunks in the corpus. */
+  total: number;
+  /** Chunks the model now has embeddings for. */
+  coverage: number;
+  /** Whether the model was activated (swapped in). */
+  activated: boolean;
+}
+
+/** A registered model annotated with its embedding coverage. */
+export interface ModelInfo extends EmbeddingModel {
+  /** Chunks this model has embeddings for. */
+  coverage: number;
+  /** Total chunks in the corpus. */
+  total: number;
+}
+
 /** The VectorNest application service: the high-level ingest/query API. */
 export interface VectorNest {
   /** Apply pending schema migrations. */
@@ -58,6 +94,34 @@ export interface VectorNest {
    * @returns Hits ordered by descending similarity.
    */
   query(text: string, request?: QueryRequest): Promise<QueryHit[]>;
+  /**
+   * Re-embed the corpus under a (possibly new) model, alongside the active one — idempotent and
+   * resumable. Optionally activate it once fully embedded (the zero-downtime swap).
+   *
+   * @param modelName - The provider/model string to embed with.
+   * @param options - Dimension and whether to activate.
+   * @returns A summary of the run.
+   */
+  reembed(modelName: string, options?: ReembedOptions): Promise<ReembedSummary>;
+  /**
+   * Activate a fully-embedded registered model (the swap; also used to roll back to a prior model).
+   *
+   * @param modelName - The model to make active.
+   */
+  activateModel(modelName: string): Promise<void>;
+  /**
+   * Delete a non-active model's embeddings (cleanup after a confirmed swap).
+   *
+   * @param modelName - The model whose embeddings to drop.
+   * @returns The number of embedding rows removed.
+   */
+  dropModel(modelName: string): Promise<number>;
+  /**
+   * List registered models with their coverage and active status.
+   *
+   * @returns Model info records.
+   */
+  models(): Promise<ModelInfo[]>;
   /** Release underlying resources. */
   close(): Promise<void>;
 }
@@ -70,6 +134,8 @@ export interface VectorNestDeps {
   embedder: EmbeddingProvider;
   /** The document loader. */
   loader: DocumentLoader;
+  /** Build an embedding provider for an arbitrary model + dim (used by re-embed). */
+  createEmbedder: (model: string, dim: number) => EmbeddingProvider;
   /** Max texts per embedding request. */
   embedBatchSize: number;
 }
@@ -98,6 +164,17 @@ async function embedAll(
 }
 
 /**
+ * Provider segment of a model name. Slash-delimited names (`openai/…`, `@cf/…`) yield a provider;
+ * bare names (Ollama, e.g. `nomic-embed-text`) use the whole name.
+ *
+ * @param modelName - The provider/model string.
+ * @returns The provider segment.
+ */
+function providerOf(modelName: string): string {
+  return modelName.includes('/') ? parseModelName(modelName).provider : modelName;
+}
+
+/**
  * Ensure the embedder's model is registered and active, returning it.
  *
  * @param store - The vector store.
@@ -110,13 +187,9 @@ async function ensureActiveModel(
 ): Promise<EmbeddingModel> {
   const active = await store.getActiveModel();
   if (active && active.name === embedder.model) return active;
-  // Slash-delimited names (openai/…, @cf/…) yield a provider segment; bare names (Ollama) don't.
-  const provider = embedder.model.includes('/')
-    ? parseModelName(embedder.model).provider
-    : embedder.model;
   const registered = await store.registerModel({
     name: embedder.model,
-    provider,
+    provider: providerOf(embedder.model),
     dim: embedder.dim,
   });
   await store.setActiveModel(registered.id);
@@ -130,7 +203,14 @@ async function ensureActiveModel(
  * @returns The application service.
  */
 export function createVectorNest(deps: VectorNestDeps): VectorNest {
-  const { store, embedder, loader, embedBatchSize } = deps;
+  const { store, embedder, loader, createEmbedder, embedBatchSize } = deps;
+
+  // Always embed with the *active* model's provider: after a swap the active model may differ
+  // (and have a different dimension) from the configured default. Reuse the default when it matches.
+  const embedderFor = (model: EmbeddingModel): EmbeddingProvider =>
+    model.name === embedder.model && model.dim === embedder.dim
+      ? embedder
+      : createEmbedder(model.name, model.dim);
 
   return {
     migrate() {
@@ -141,6 +221,7 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
       const skipUnchanged = options.skipUnchanged ?? true;
       const collection = await store.ensureCollection(options.collection);
       const model = await ensureActiveModel(store, embedder);
+      const activeEmbedder = embedderFor(model);
 
       const summary: IngestSummary = { documents: 0, chunks: 0, skipped: 0 };
       for await (const doc of loader.load(source)) {
@@ -159,7 +240,7 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
 
         const stored = await store.upsertChunks(documentId, chunks);
         const vectors = await embedAll(
-          embedder,
+          activeEmbedder,
           chunks.map((c) => c.text),
           embedBatchSize,
         );
@@ -188,7 +269,7 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
       if (!model) {
         throw new Error('no active embedding model; run ingest first');
       }
-      const [vector] = await embedder.embed([text]);
+      const [vector] = await embedderFor(model).embed([text]);
       if (!vector) {
         throw new Error('failed to embed query');
       }
@@ -197,6 +278,82 @@ export function createVectorNest(deps: VectorNestDeps): VectorNest {
         return store.query(model.id, vector, { k, collectionId: collection.id });
       }
       return store.query(model.id, vector, { k });
+    },
+
+    async reembed(modelName: string, options: ReembedOptions = {}): Promise<ReembedSummary> {
+      const dim = options.dim ?? knownDimension(modelName);
+      if (dim === undefined) {
+        throw new Error(`unknown embedding dimension for "${modelName}"; pass options.dim`);
+      }
+      const model = await store.registerModel({
+        name: modelName,
+        provider: providerOf(modelName),
+        dim,
+      });
+      const target = createEmbedder(modelName, dim);
+
+      // Embed only chunks this model lacks; persisting each batch shrinks the set, so this is
+      // idempotent and resumable. Vectors are added alongside the active model — no downtime.
+      let embedded = 0;
+      for (;;) {
+        const batch = await store.getUnembeddedChunks(model.id, embedBatchSize);
+        if (batch.length === 0) break;
+        const vectors = await target.embed(batch.map((chunk) => chunk.text));
+        const rows: EmbeddingRow[] = [];
+        for (let i = 0; i < batch.length; i += 1) {
+          const chunk = batch[i];
+          const vector = vectors[i];
+          if (!chunk || !vector) {
+            throw new Error('internal: chunk/embedding count mismatch during re-embed');
+          }
+          rows.push({ chunkId: chunk.chunkId, vector });
+        }
+        await store.upsertEmbeddings(model.id, rows);
+        embedded += batch.length;
+      }
+
+      const total = await store.countChunks();
+      const coverage = await store.countEmbeddings(model.id);
+      let activated = false;
+      if (options.activate) {
+        assertActivatable(modelName, { total, embedded: coverage });
+        await store.setActiveModel(model.id);
+        activated = true;
+      }
+      return { model: modelName, embedded, total, coverage, activated };
+    },
+
+    async activateModel(modelName: string): Promise<void> {
+      const model = await store.getModelByName(modelName);
+      if (!model) {
+        throw new Error(`model "${modelName}" is not registered`);
+      }
+      const total = await store.countChunks();
+      const coverage = await store.countEmbeddings(model.id);
+      assertActivatable(modelName, { total, embedded: coverage });
+      await store.setActiveModel(model.id);
+    },
+
+    async dropModel(modelName: string): Promise<number> {
+      const model = await store.getModelByName(modelName);
+      if (!model) {
+        throw new Error(`model "${modelName}" is not registered`);
+      }
+      if (model.isActive) {
+        throw new Error(`refusing to drop embeddings for the active model "${modelName}"`);
+      }
+      return store.deleteEmbeddings(model.id);
+    },
+
+    async models(): Promise<ModelInfo[]> {
+      const registered = await store.listModels();
+      const total = await store.countChunks();
+      const result: ModelInfo[] = [];
+      for (const model of registered) {
+        const coverage = await store.countEmbeddings(model.id);
+        result.push({ ...model, coverage, total });
+      }
+      return result;
     },
 
     close() {
@@ -216,13 +373,21 @@ export function vectorNestFromConfig(config: Config): VectorNest {
     connectionString: config.databaseUrl,
     migrationsDir,
   });
-  const embedder = createOpenAiCompatibleEmbeddingProvider({
-    baseUrl: config.embeddingsBaseUrl,
-    model: config.model,
-    dim: config.dim,
-    maxBatchSize: config.embedBatchSize,
-    ...(config.embeddingsApiKey !== undefined ? { apiKey: config.embeddingsApiKey } : {}),
-  });
+  const createEmbedder = (model: string, dim: number): EmbeddingProvider =>
+    createOpenAiCompatibleEmbeddingProvider({
+      baseUrl: config.embeddingsBaseUrl,
+      model,
+      dim,
+      maxBatchSize: config.embedBatchSize,
+      ...(config.embeddingsApiKey !== undefined ? { apiKey: config.embeddingsApiKey } : {}),
+    });
+  const embedder = createEmbedder(config.model, config.dim);
   const loader = createFsLoader();
-  return createVectorNest({ store, embedder, loader, embedBatchSize: config.embedBatchSize });
+  return createVectorNest({
+    store,
+    embedder,
+    createEmbedder,
+    loader,
+    embedBatchSize: config.embedBatchSize,
+  });
 }

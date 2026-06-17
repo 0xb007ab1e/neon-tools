@@ -15,6 +15,14 @@ export interface StoredChunk {
   ordinal: number;
 }
 
+/** A chunk's id and text, for (re-)embedding. */
+export interface ChunkText {
+  /** The chunk's id (UUID). */
+  chunkId: string;
+  /** The chunk's text. */
+  text: string;
+}
+
 /** One embedding row to persist: a chunk's vector under a given model. */
 export interface EmbeddingRow {
   /** The chunk this vector embeds. */
@@ -65,6 +73,21 @@ export interface VectorStore {
   getActiveModel(): Promise<EmbeddingModel | null>;
 
   /**
+   * Look up a registered model by name.
+   *
+   * @param name - The provider/model string.
+   * @returns The model, or null if not registered.
+   */
+  getModelByName(name: string): Promise<EmbeddingModel | null>;
+
+  /**
+   * List all registered models.
+   *
+   * @returns All models (active flag included).
+   */
+  listModels(): Promise<EmbeddingModel[]>;
+
+  /**
    * Atomically make the given model the single active model.
    *
    * @param modelId - The model to activate.
@@ -108,6 +131,41 @@ export interface VectorStore {
    * @param rows - Chunk/vector pairs to store.
    */
   upsertEmbeddings(modelId: string, rows: EmbeddingRow[]): Promise<void>;
+
+  /**
+   * Count chunks in the corpus.
+   *
+   * @returns The total number of chunks.
+   */
+  countChunks(): Promise<number>;
+
+  /**
+   * Count chunks that have an embedding under a model.
+   *
+   * @param modelId - The model to count coverage for.
+   * @returns The number of embedded chunks.
+   */
+  countEmbeddings(modelId: string): Promise<number>;
+
+  /**
+   * Fetch up to `limit` chunks that lack an embedding under the given model.
+   *
+   * Re-embedding is driven by calling this repeatedly and persisting each batch: storing a batch
+   * removes those chunks from the result set, so the loop is naturally idempotent and resumable.
+   *
+   * @param modelId - The target model.
+   * @param limit - Maximum chunks to return.
+   * @returns A batch of chunk id + text (empty when fully embedded).
+   */
+  getUnembeddedChunks(modelId: string, limit: number): Promise<ChunkText[]>;
+
+  /**
+   * Delete all embeddings for a model (cleanup after a swap).
+   *
+   * @param modelId - The model whose embeddings to drop.
+   * @returns The number of rows deleted.
+   */
+  deleteEmbeddings(modelId: string): Promise<number>;
 
   /**
    * Semantic kNN search against a model's embeddings for a query vector.
