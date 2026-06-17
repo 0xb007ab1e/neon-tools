@@ -50,7 +50,8 @@ painful to build correctly.
 - **Migrate the fleet** — apply a versioned, backward-compatible schema change across all tenants,
   batched/resumable with per-tenant status + rollback.
 - **Lifecycle** — suspend / resume / **offboard** (archive: retain the project scaled-to-zero,
-  reversible) → **purge** (irreversible delete after retention).
+  reversible) → **purge** (irreversible delete). `purge-expired` is the scheduled sweep that purges
+  archived tenants past `TENANTFORGE_RETENTION_DAYS` (run by a cron / K8s CronJob).
 - Use it as a **library**, a **CLI**, an **HTTP control-plane API**, or an **MCP server**.
 
 ## Composition

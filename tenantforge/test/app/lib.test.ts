@@ -420,3 +420,72 @@ describe('createTenantForge.migrateFleet', () => {
     expect(second.succeeded).toEqual([]);
   });
 });
+
+describe('createTenantForge.purgeExpired', () => {
+  let registry: ReturnType<typeof fakeRegistry>;
+  let provisioning: ReturnType<typeof fakeProvisioning>;
+  let secretStore: ReturnType<typeof createInMemorySecretStore>;
+  const NOW = new Date('2026-06-17T00:00:00Z');
+
+  beforeEach(() => {
+    registry = fakeRegistry();
+    provisioning = fakeProvisioning();
+    secretStore = createInMemorySecretStore();
+  });
+
+  const make = () =>
+    createTenantForge({ registry, provisioning, secretStore, defaultRegion: 'aws-us-east-1' });
+
+  /** An offboarding tenant archived at `updatedAt`. */
+  const archived = (id: string, updatedAt: Date): TenantRecord => ({
+    id,
+    slug: id,
+    region: 'aws-us-east-1',
+    status: 'offboarding',
+    neonProjectId: `proj-${id}`,
+    metadata: {},
+    createdAt: new Date(0),
+    updatedAt,
+  });
+
+  it('purges tenants past retention, spares those still within it', async () => {
+    registry.seed(archived('old', new Date('2026-01-01T00:00:00Z'))); // >30d ago → purge
+    registry.seed(archived('recent', new Date('2026-06-10T00:00:00Z'))); // <30d ago → keep
+    const report = await make().purgeExpired({ retentionDays: 30, now: NOW });
+    expect(report.scanned).toBe(2);
+    expect(report.purged).toEqual(['old']);
+    expect(report.failed).toEqual([]);
+    expect(provisioning.deletes).toEqual(['proj-old']); // only the expired one deleted
+    expect((await registry.getById('recent'))?.status).toBe('offboarding'); // recent untouched
+  });
+
+  it('ignores non-offboarding tenants entirely', async () => {
+    const tf = make();
+    await tf.provision({ slug: 'active-one' }); // stays active
+    const report = await tf.purgeExpired({ retentionDays: 0, now: NOW });
+    expect(report.scanned).toBe(0);
+    expect(report.purged).toEqual([]);
+    expect(provisioning.deletes).toEqual([]);
+  });
+
+  it('isolates a failure: one tenant erroring does not block the sweep', async () => {
+    registry.seed(archived('a', new Date('2026-01-01T00:00:00Z')));
+    registry.seed(archived('b', new Date('2026-01-01T00:00:00Z')));
+    const failing = {
+      ...provisioning,
+      deleteTenantProject: (projectId: string) =>
+        projectId === 'proj-a'
+          ? Promise.reject(new Error('neon delete failed'))
+          : Promise.resolve(),
+    };
+    const tf = createTenantForge({
+      registry,
+      provisioning: failing,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
+    const report = await tf.purgeExpired({ retentionDays: 30, now: NOW });
+    expect(report.purged).toEqual(['b']);
+    expect(report.failed).toEqual([{ tenantId: 'a', error: 'neon delete failed' }]);
+  });
+});
