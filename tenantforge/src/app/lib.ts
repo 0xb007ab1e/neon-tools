@@ -1,13 +1,17 @@
 import {
   assertRegion,
   assertSlug,
+  aggregateConsumption,
+  assertPeriod,
   assertTransition,
   isPurgeable,
   redactSecrets,
   retentionCutoff,
+  type BillingPeriod,
   type JsonObject,
   type TenantRecord,
   type TenantStatus,
+  type TenantUsage,
 } from '../core/index.js';
 import { createNeonProvisioningProvider } from '../adapters/neon-api/provisioning-provider.js';
 import { createPgTenantRegistry } from '../adapters/neon-pg/registry.js';
@@ -23,11 +27,13 @@ import {
   type MigrateFleetOptions,
 } from '../adapters/fleet-orchestrator.js';
 import { createPgMigrationRunner } from '../adapters/neon-pg/migration-runner.js';
+import { createNeonUsageProvider } from '../adapters/neon-api/usage-provider.js';
 import type { ProvisioningProvider } from '../ports/provisioning-provider.js';
 import type { TenantRegistry } from '../ports/tenant-registry.js';
 import type { ExportResult, TenantExporter } from '../ports/tenant-exporter.js';
 import type { SecretStore } from '../ports/secret-store.js';
 import type { EventSink } from '../ports/event-sink.js';
+import type { UsageProvider } from '../ports/usage-provider.js';
 import type { MigrationRunner } from '../ports/migration-runner.js';
 import type { TenantConnection } from '../ports/connection-router.js';
 import { loadConfig, type Config } from './config.js';
@@ -68,6 +74,11 @@ export interface TenantForgeDeps {
    * (events are dropped). Emission is best-effort and never breaks an operation.
    */
   eventSink?: EventSink;
+  /**
+   * Fetches per-tenant resource consumption (metering). Required only for {@link TenantForge.usage};
+   * when absent, that method fails closed.
+   */
+  usageProvider?: UsageProvider;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -226,6 +237,16 @@ export interface TenantForge {
     options?: MigrateFleetOptions,
   ): Promise<FleetMigrationReport>;
 
+  /**
+   * Meter a tenant's resource consumption over a period (for billing) — resolves the tenant's Neon
+   * project and aggregates its consumption. Requires a usage provider in the deps.
+   *
+   * @param id - The tenant id.
+   * @param period - The billing period.
+   * @returns The tenant's aggregated usage.
+   */
+  usage(id: string, period: BillingPeriod): Promise<TenantUsage>;
+
   /** Release underlying resources (the registry connection pool). */
   close(): Promise<void>;
 }
@@ -239,6 +260,7 @@ export interface TenantForge {
  */
 export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const { registry, provisioning, defaultRegion, secretStore, exporter, migrationRunner } = deps;
+  const usageProvider = deps.usageProvider;
   const router = createConnectionRouter({ registry, secretStore });
   const eventSink = deps.eventSink ?? createNoopEventSink();
 
@@ -460,6 +482,36 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return report;
     },
 
+    async usage(id: string, period: BillingPeriod): Promise<TenantUsage> {
+      if (!usageProvider) {
+        throw new Error('usage: no usage provider configured');
+      }
+      assertPeriod(period);
+      const tenant = await requireTenant(id);
+      if (tenant.neonProjectId === null) {
+        throw new Error(`tenant ${id} has no provisioned project to meter`);
+      }
+      const consumption = aggregateConsumption(
+        await usageProvider.getProjectConsumption(tenant.neonProjectId, period),
+      );
+      observe('tenant.metered', {
+        tenantId: id,
+        outcome: 'ok',
+        context: {
+          computeTimeSeconds: consumption.computeTimeSeconds,
+          activeTimeSeconds: consumption.activeTimeSeconds,
+          writtenDataBytes: consumption.writtenDataBytes,
+          syntheticStorageBytes: consumption.syntheticStorageBytes,
+        },
+      });
+      return {
+        tenantId: id,
+        neonProjectId: tenant.neonProjectId,
+        period: { from: period.from.toISOString(), to: period.to.toISOString() },
+        consumption,
+      };
+    },
+
     async listTenants(options?: {
       status?: TenantStatus;
       limit?: number;
@@ -501,6 +553,11 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
     migrationRunner: createPgMigrationRunner(),
     exporter: createNeonArchiveExporter(),
     eventSink: createJsonEventSink(),
+    usageProvider: createNeonUsageProvider({
+      apiKey: config.neonApiKey,
+      orgId: config.neonOrgId,
+      ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
+    }),
     defaultRegion: config.defaultRegion,
   });
 }
