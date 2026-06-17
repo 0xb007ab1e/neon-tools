@@ -10,14 +10,27 @@ import { createNeonProvisioningProvider } from '../adapters/neon-api/provisionin
 import { createPgTenantRegistry } from '../adapters/neon-pg/registry.js';
 import { createInMemorySecretStore } from '../adapters/secret-store.js';
 import { createConnectionRouter } from '../adapters/connection-router.js';
+import {
+  createFleetOrchestrator,
+  type FleetMigrationReport,
+  type FleetMigrationSpec,
+  type MigrateFleetOptions,
+} from '../adapters/fleet-orchestrator.js';
+import { createPgMigrationRunner } from '../adapters/neon-pg/migration-runner.js';
 import type { ProvisioningProvider } from '../ports/provisioning-provider.js';
 import type { TenantRegistry } from '../ports/tenant-registry.js';
 import type { ExportResult, TenantExporter } from '../ports/tenant-exporter.js';
 import type { SecretStore } from '../ports/secret-store.js';
+import type { MigrationRunner } from '../ports/migration-runner.js';
 import type { TenantConnection } from '../ports/connection-router.js';
 import { loadConfig, type Config } from './config.js';
 
 export type { Config } from './config.js';
+export type {
+  FleetMigrationSpec,
+  MigrateFleetOptions,
+  FleetMigrationReport,
+} from '../adapters/fleet-orchestrator.js';
 
 /** Collaborators injected into {@link createTenantForge} (ports & adapters). */
 export interface TenantForgeDeps {
@@ -37,6 +50,11 @@ export interface TenantForgeDeps {
    * unless an exporter is present or export is explicitly skipped (privacy — export-then-delete).
    */
   exporter?: TenantExporter;
+  /**
+   * Applies a migration to one tenant database. Required only for {@link TenantForge.migrateFleet};
+   * when absent, that method fails closed.
+   */
+  migrationRunner?: MigrationRunner;
 }
 
 /** Options for {@link TenantForge.offboard}. */
@@ -146,6 +164,20 @@ export interface TenantForge {
    */
   getConnection(id: string): Promise<TenantConnection>;
 
+  /**
+   * Apply a versioned, backward-compatible migration across all active tenants: batched,
+   * bounded-concurrency, failure-isolated, and idempotent/resumable. A fleet change is a release —
+   * runbook + rollback it. Requires a migration runner in the deps.
+   *
+   * @param spec - The migration version + SQL.
+   * @param options - Batch size.
+   * @returns A per-tenant report (succeeded / failed / already-applied).
+   */
+  migrateFleet(
+    spec: FleetMigrationSpec,
+    options?: MigrateFleetOptions,
+  ): Promise<FleetMigrationReport>;
+
   /** Release underlying resources (the registry connection pool). */
   close(): Promise<void>;
 }
@@ -158,7 +190,7 @@ export interface TenantForge {
  * @returns The control-plane API.
  */
 export function createTenantForge(deps: TenantForgeDeps): TenantForge {
-  const { registry, provisioning, defaultRegion, secretStore, exporter } = deps;
+  const { registry, provisioning, defaultRegion, secretStore, exporter, migrationRunner } = deps;
   const router = createConnectionRouter({ registry, secretStore });
 
   /** Load a tenant by id or throw (offboard/suspend operate on a known tenant). */
@@ -272,6 +304,21 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return router.resolve(id);
     },
 
+    async migrateFleet(
+      spec: FleetMigrationSpec,
+      options?: MigrateFleetOptions,
+    ): Promise<FleetMigrationReport> {
+      if (!migrationRunner) {
+        throw new Error('migrateFleet: no migration runner configured');
+      }
+      const orchestrator = createFleetOrchestrator({
+        registry,
+        connectionRouter: router,
+        migrationRunner,
+      });
+      return orchestrator.migrateFleet(spec, options);
+    },
+
     async listTenants(options?: {
       status?: TenantStatus;
       limit?: number;
@@ -306,6 +353,7 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
     registry,
     provisioning,
     secretStore,
+    migrationRunner: createPgMigrationRunner(),
     defaultRegion: config.defaultRegion,
   });
 }

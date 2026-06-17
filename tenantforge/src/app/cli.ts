@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { defineCommand, runMain } from 'citty';
 import type { TenantRecord } from '../core/index.js';
 import { loadConfig } from './config.js';
@@ -152,12 +153,58 @@ const offboard = defineCommand({
   },
 });
 
+const migrateFleet = defineCommand({
+  meta: {
+    name: 'migrate-fleet',
+    description: 'Apply a versioned SQL migration across all active tenants (batched, resumable)',
+  },
+  args: {
+    version: {
+      type: 'positional',
+      description: 'Migration version (e.g. 0002_add_audit)',
+      required: true,
+    },
+    file: { type: 'positional', description: 'Path to the migration .sql file', required: true },
+    batch: {
+      type: 'string',
+      description: 'Max tenants applied concurrently per batch',
+      default: '10',
+    },
+  },
+  async run({ args }) {
+    const sql = readFileSync(args.file, 'utf8');
+    await withTenantForge(async (tf) => {
+      await tf.migrate();
+      const report = await tf.migrateFleet(
+        { version: args.version, sql },
+        { batchSize: Number(args.batch) },
+      );
+      process.stdout.write(
+        `fleet migration ${report.version}: ${report.succeeded.length} applied, ` +
+          `${report.failed.length} failed, ${report.alreadyApplied} already-applied ` +
+          `of ${report.total} active tenant(s)\n`,
+      );
+      for (const f of report.failed) process.stdout.write(`  FAILED ${f.tenantId}: ${f.error}\n`);
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
     description: 'Control plane for database-per-tenant SaaS on Neon',
   },
-  subCommands: { migrate, provision, list, get, suspend, resume, offboard },
+  subCommands: {
+    migrate,
+    provision,
+    list,
+    get,
+    suspend,
+    resume,
+    offboard,
+    'migrate-fleet': migrateFleet,
+  },
 });
 
 void runMain(main);

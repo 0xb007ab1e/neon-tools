@@ -7,5 +7,18 @@ export {
   type NeonProvisioningOptions,
 } from './neon-api/provisioning-provider.js';
 export { createPgTenantRegistry, type PgRegistryOptions } from './neon-pg/registry.js';
+export {
+  createPgMigrationRunner,
+  type PgMigrationRunnerOptions,
+} from './neon-pg/migration-runner.js';
 export { createInMemorySecretStore } from './secret-store.js';
 export { createConnectionRouter, type ConnectionRouterDeps } from './connection-router.js';
+export {
+  createFleetOrchestrator,
+  type FleetOrchestrator,
+  type FleetOrchestratorDeps,
+  type FleetMigrationSpec,
+  type MigrateFleetOptions,
+  type FleetMigrationReport,
+  type TenantMigrationFailure,
+} from './fleet-orchestrator.js';
