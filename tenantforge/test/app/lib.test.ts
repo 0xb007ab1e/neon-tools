@@ -8,6 +8,7 @@ import type {
   TenantStatus,
 } from '../../src/core/domain.js';
 import type { MigrationRunner } from '../../src/ports/migration-runner.js';
+import type { TenantEvent } from '../../src/core/observability.js';
 import type { NewTenant, TenantRegistry } from '../../src/ports/tenant-registry.js';
 import type {
   ProvisioningProvider,
@@ -487,5 +488,63 @@ describe('createTenantForge.purgeExpired', () => {
     const report = await tf.purgeExpired({ retentionDays: 30, now: NOW });
     expect(report.purged).toEqual(['b']);
     expect(report.failed).toEqual([{ tenantId: 'a', error: 'neon delete failed' }]);
+  });
+});
+
+describe('createTenantForge observability', () => {
+  it('emits redacted, tenant-scoped events for the key operations', async () => {
+    const events: TenantEvent[] = [];
+    const eventSink = { emit: (e: TenantEvent) => events.push(e) };
+    const secretStore = createInMemorySecretStore();
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore,
+      eventSink,
+      defaultRegion: 'aws-us-east-1',
+    });
+
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await tf.getConnection(tenant.id);
+    await tf.suspend(tenant.id);
+
+    const names = events.map((e) => e.event);
+    expect(names).toContain('tenant.provisioned'); // provision
+    expect(names).toContain('tenant.transition'); // activate + suspend
+    expect(names).toContain('tenant.connection_resolved');
+
+    // Every event is tenant-scoped, timestamped, and carries NO secret.
+    for (const e of events) {
+      expect(e.tenantId).toBe(tenant.id);
+      expect(typeof e.at).toBe('string');
+      expect(JSON.stringify(e)).not.toContain('postgresql://'); // connection URI never leaks
+    }
+  });
+
+  it('emits a connection_denied event (no URI) when routing fails closed', async () => {
+    const events: TenantEvent[] = [];
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      eventSink: { emit: (e: TenantEvent) => events.push(e) },
+      defaultRegion: 'aws-us-east-1',
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await tf.suspend(tenant.id); // now not routable
+    await expect(tf.getConnection(tenant.id)).rejects.toThrow(/not routable/);
+    const denied = events.find((e) => e.event === 'tenant.connection_denied');
+    expect(denied?.outcome).toBe('error');
+    expect(denied?.tenantId).toBe(tenant.id);
+  });
+
+  it('defaults to a no-op sink (no eventSink injected) without error', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    await expect(tf.provision({ slug: 'acme' })).resolves.toBeDefined();
   });
 });
