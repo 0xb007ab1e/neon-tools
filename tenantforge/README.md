@@ -91,8 +91,20 @@ jurisdiction (`--residency us|eu|apac`) that the chosen region must satisfy (std
 **Queue-driven lifecycle (optional):** lifecycle commands (provision / suspend / resume / offboard)
 can be consumed from a queue via the `MessageQueue` port + `createLifecycleConsumer` —
 at-least-once-safe (dedupe by command id), poison/failure messages dead-lettered, failure-isolated.
-The irreversible `purge` is intentionally not a queue command. A real broker adapter (SQS/NATS/…) +
-worker entrypoint plug in behind the port; an in-memory adapter backs tests/dev.
+The irreversible `purge` is intentionally not a queue command. The default broker is **Neon-native**:
+a Postgres-backed queue (`tf_lifecycle_queue`, migration `0003`) that claims rows with
+`FOR UPDATE SKIP LOCKED` + a visibility timeout, so multiple workers consume without
+double-processing and a crashed worker's messages reappear. Run the worker and enqueue commands:
+
+```sh
+pnpm --filter tenantforge worker                          # poll-loop worker; drains the queue
+pnpm --filter tenantforge cli enqueue provision acme      # producer (validates before enqueuing)
+pnpm --filter tenantforge cli enqueue suspend --tenant-id <uuid>
+```
+
+The worker polls every `TENANTFORGE_QUEUE_POLL_MS` (default 5000) and shuts down gracefully on
+SIGINT/SIGTERM. A different broker (SQS/NATS/Pub/Sub) can implement the same `MessageQueue` port in
+its own branch; an in-memory adapter backs tests/dev.
 
 ## Discoverability & rules
 

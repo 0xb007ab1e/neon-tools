@@ -21,6 +21,11 @@ export { createJsonEventSink, createNoopEventSink } from './event-sink.js';
 export { parseLifecycleCommand, type LifecycleCommand } from './lifecycle-command.js';
 export { createInMemoryQueue, type InMemoryQueue } from './in-memory-queue.js';
 export {
+  createPgMessageQueue,
+  type PgMessageQueue,
+  type PgMessageQueueOptions,
+} from './neon-pg/message-queue.js';
+export {
   createLifecycleConsumer,
   type LifecycleConsumer,
   type LifecycleConsumerDeps,
