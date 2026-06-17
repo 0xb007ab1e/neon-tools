@@ -3,6 +3,7 @@ import {
   assertSlug,
   assertTransition,
   isPurgeable,
+  redactSecrets,
   retentionCutoff,
   type JsonObject,
   type TenantRecord,
@@ -14,6 +15,7 @@ import { createNeonPgSecretStore } from '../adapters/neon-pg/secret-store.js';
 import { deriveKey } from '../adapters/secret-crypto.js';
 import { createConnectionRouter } from '../adapters/connection-router.js';
 import { createNeonArchiveExporter } from '../adapters/neon-archive-exporter.js';
+import { createJsonEventSink, createNoopEventSink } from '../adapters/event-sink.js';
 import {
   createFleetOrchestrator,
   type FleetMigrationReport,
@@ -25,6 +27,7 @@ import type { ProvisioningProvider } from '../ports/provisioning-provider.js';
 import type { TenantRegistry } from '../ports/tenant-registry.js';
 import type { ExportResult, TenantExporter } from '../ports/tenant-exporter.js';
 import type { SecretStore } from '../ports/secret-store.js';
+import type { EventSink } from '../ports/event-sink.js';
 import type { MigrationRunner } from '../ports/migration-runner.js';
 import type { TenantConnection } from '../ports/connection-router.js';
 import { loadConfig, type Config } from './config.js';
@@ -60,6 +63,11 @@ export interface TenantForgeDeps {
    * when absent, that method fails closed.
    */
   migrationRunner?: MigrationRunner;
+  /**
+   * Receives structured, tenant-scoped events for observability. Optional; defaults to a no-op sink
+   * (events are dropped). Emission is best-effort and never breaks an operation.
+   */
+  eventSink?: EventSink;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -232,6 +240,29 @@ export interface TenantForge {
 export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const { registry, provisioning, defaultRegion, secretStore, exporter, migrationRunner } = deps;
   const router = createConnectionRouter({ registry, secretStore });
+  const eventSink = deps.eventSink ?? createNoopEventSink();
+
+  /** Emit a tenant-scoped event (best-effort, redacted; never throws / breaks the operation). */
+  const observe = (
+    event: string,
+    fields: {
+      outcome: 'ok' | 'error';
+      tenantId?: string;
+      durationMs?: number;
+      context?: JsonObject;
+      error?: string;
+    },
+  ): void => {
+    eventSink.emit({
+      event,
+      at: new Date().toISOString(),
+      outcome: fields.outcome,
+      ...(fields.tenantId !== undefined ? { tenantId: fields.tenantId } : {}),
+      ...(fields.durationMs !== undefined ? { durationMs: fields.durationMs } : {}),
+      ...(fields.context !== undefined ? { context: redactSecrets(fields.context) } : {}),
+      ...(fields.error !== undefined ? { error: fields.error } : {}),
+    });
+  };
 
   /** Load a tenant by id or throw (offboard/suspend operate on a known tenant). */
   const requireTenant = async (id: string): Promise<TenantRecord> => {
@@ -240,10 +271,25 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     return tenant;
   };
 
-  /** Validate + apply a status transition, returning the refreshed record. */
+  /** Validate + apply a status transition, returning the refreshed record. Emits a lifecycle event. */
   const transition = async (tenant: TenantRecord, to: TenantStatus): Promise<TenantRecord> => {
-    assertTransition(tenant.status, to);
+    try {
+      assertTransition(tenant.status, to);
+    } catch (error) {
+      observe('tenant.transition', {
+        tenantId: tenant.id,
+        outcome: 'error',
+        context: { from: tenant.status, to },
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
     await registry.setStatus(tenant.id, to);
+    observe('tenant.transition', {
+      tenantId: tenant.id,
+      outcome: 'ok',
+      context: { from: tenant.status, to },
+    });
     const updated = await registry.getById(tenant.id);
     return updated ?? { ...tenant, status: to };
   };
@@ -270,6 +316,11 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     await secretStore.set(tenant.id, result.connectionUri);
     assertTransition(tenant.status, 'active');
     await registry.setStatus(tenant.id, 'active');
+    observe('tenant.provisioned', {
+      tenantId: tenant.id,
+      outcome: 'ok',
+      context: { slug: tenant.slug, region: tenant.region },
+    });
     const active = await registry.getById(tenant.id);
     return {
       tenant: active ?? { ...tenant, status: 'active' },
@@ -354,11 +405,33 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
           });
         }
       }
+      observe('tenant.purge_sweep', {
+        outcome: failed.length > 0 ? 'error' : 'ok',
+        context: { scanned: offboarding.length, purged: purged.length, failed: failed.length },
+      });
       return { scanned: offboarding.length, purged, failed };
     },
 
     async getConnection(id: string): Promise<TenantConnection> {
-      return router.resolve(id);
+      const start = performance.now();
+      try {
+        const conn = await router.resolve(id);
+        // Emit the resolution outcome ONLY — never the connection URI (it is a secret).
+        observe('tenant.connection_resolved', {
+          tenantId: id,
+          outcome: 'ok',
+          durationMs: Math.round(performance.now() - start),
+        });
+        return conn;
+      } catch (error) {
+        observe('tenant.connection_denied', {
+          tenantId: id,
+          outcome: 'error',
+          durationMs: Math.round(performance.now() - start),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
     },
 
     async migrateFleet(
@@ -373,7 +446,18 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         connectionRouter: router,
         migrationRunner,
       });
-      return orchestrator.migrateFleet(spec, options);
+      const report = await orchestrator.migrateFleet(spec, options);
+      observe('fleet.migration', {
+        outcome: report.failed.length > 0 ? 'error' : 'ok',
+        context: {
+          version: report.version,
+          total: report.total,
+          succeeded: report.succeeded.length,
+          failed: report.failed.length,
+          alreadyApplied: report.alreadyApplied,
+        },
+      });
+      return report;
     },
 
     async listTenants(options?: {
@@ -416,6 +500,7 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
     secretStore,
     migrationRunner: createPgMigrationRunner(),
     exporter: createNeonArchiveExporter(),
+    eventSink: createJsonEventSink(),
     defaultRegion: config.defaultRegion,
   });
 }

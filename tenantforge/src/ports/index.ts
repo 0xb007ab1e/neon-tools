@@ -10,5 +10,6 @@ export type {
 export type { TenantRegistry, NewTenant } from './tenant-registry.js';
 export type { TenantExporter, ExportResult } from './tenant-exporter.js';
 export type { SecretStore } from './secret-store.js';
+export type { EventSink } from './event-sink.js';
 export type { MigrationRunner, MigrationExecution } from './migration-runner.js';
 export type { ConnectionRouter, TenantConnection } from './connection-router.js';

@@ -75,6 +75,11 @@ backup-restore, on-call, scaling, secret-rotation, and dependency-patch. A fleet
 release; a cross-tenant leak or Neon-API-key compromise is a SEV1. The HTTP API contract is
 [`openapi.yaml`](./openapi.yaml). _(Runbooks are drafted for the alpha and not yet drilled.)_
 
+**Per-tenant observability:** every control-plane operation emits a structured, tenant-scoped JSON
+event (provision / transition / connection-resolved-or-denied / fleet-migration / purge-sweep) to
+stdout as a 12-Factor event stream — carrying the tenant id, outcome, and timing, with connection
+secrets always redacted. Plug a metrics/SIEM backend via the `EventSink` port.
+
 ## Discoverability & rules
 
 Publishes [`neon-tool.json`](./neon-tool.json) per the collection's
