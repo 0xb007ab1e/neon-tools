@@ -12,6 +12,9 @@ const EnvSchema = z.object({
   NEON_API_KEY: z.string().min(1, 'NEON_API_KEY is required'),
   NEON_ORG_ID: z.string().min(1, 'NEON_ORG_ID is required'),
   NEON_API_BASE_URL: z.string().url().optional(),
+  // Encrypts per-tenant connection secrets at rest (AES-256-GCM). MUST be separate from
+  // DATABASE_URL's credential (separation of duties) and high-entropy. Min 16 chars.
+  TENANTFORGE_SECRET_KEY: z.string().min(16, 'TENANTFORGE_SECRET_KEY must be at least 16 chars'),
   // Default region for provisioning when a request omits one (validated against the allow-list).
   TENANTFORGE_DEFAULT_REGION: z
     .enum(KNOWN_REGIONS as [string, ...string[]])
@@ -33,6 +36,8 @@ export interface Config {
   neonApiBaseUrl?: string;
   /** Default Neon region for provisioning. */
   defaultRegion: string;
+  /** Passphrase used to encrypt per-tenant connection secrets at rest (separate from the DB cred). */
+  secretKey: string;
   /** Bearer token for the HTTP entrypoint (required only when serving HTTP). */
   httpToken?: string;
   /** Port for the HTTP entrypoint. */
@@ -53,6 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     neonApiKey: parsed.NEON_API_KEY,
     neonOrgId: parsed.NEON_ORG_ID,
     defaultRegion: parsed.TENANTFORGE_DEFAULT_REGION,
+    secretKey: parsed.TENANTFORGE_SECRET_KEY,
     port: parsed.TENANTFORGE_PORT,
   };
   if (parsed.NEON_API_BASE_URL !== undefined) {

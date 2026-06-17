@@ -53,6 +53,12 @@
       "description": "Override for the Neon API base URL (defaults to the public API)."
     },
     {
+      "name": "TENANTFORGE_SECRET_KEY",
+      "required": true,
+      "secret": true,
+      "description": "Passphrase that encrypts per-tenant connection secrets at rest (AES-256-GCM); separate from DATABASE_URL's credential (separation of duties)."
+    },
+    {
       "name": "TENANTFORGE_HTTP_TOKEN",
       "required": false,
       "secret": true,

@@ -8,7 +8,8 @@ import {
 } from '../core/index.js';
 import { createNeonProvisioningProvider } from '../adapters/neon-api/provisioning-provider.js';
 import { createPgTenantRegistry } from '../adapters/neon-pg/registry.js';
-import { createInMemorySecretStore } from '../adapters/secret-store.js';
+import { createNeonPgSecretStore } from '../adapters/neon-pg/secret-store.js';
+import { deriveKey } from '../adapters/secret-crypto.js';
 import { createConnectionRouter } from '../adapters/connection-router.js';
 import {
   createFleetOrchestrator,
@@ -346,9 +347,13 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
     orgId: config.neonOrgId,
     ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
   });
-  // NOTE: in-memory secret store is non-persistent (dev/alpha). Production must inject a
-  // persistent secret manager (Vault / cloud Secrets Manager) here — tracked follow-up.
-  const secretStore = createInMemorySecretStore();
+  // Persistent, AES-256-GCM-encrypted secret store in the control-plane DB (the Neon-prioritized
+  // production adapter). The encryption key is separate from the DB credential (separation of
+  // duties). Vault / cloud-SM / fetch-from-Neon-API backends can be swapped in behind the port.
+  const secretStore = createNeonPgSecretStore({
+    connectionString: config.databaseUrl,
+    key: deriveKey(config.secretKey),
+  });
   return createTenantForge({
     registry,
     provisioning,
