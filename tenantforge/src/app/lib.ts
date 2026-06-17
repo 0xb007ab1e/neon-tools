@@ -10,6 +10,7 @@ import { createNeonProvisioningProvider } from '../adapters/neon-api/provisionin
 import { createPgTenantRegistry } from '../adapters/neon-pg/registry.js';
 import type { ProvisioningProvider } from '../ports/provisioning-provider.js';
 import type { TenantRegistry } from '../ports/tenant-registry.js';
+import type { ExportResult, TenantExporter } from '../ports/tenant-exporter.js';
 import { loadConfig, type Config } from './config.js';
 
 export type { Config } from './config.js';
@@ -22,6 +23,30 @@ export interface TenantForgeDeps {
   provisioning: ProvisioningProvider;
   /** Default region when a provision request omits one (already validated). */
   defaultRegion: string;
+  /**
+   * Exports a tenant's data before deletion on offboard. Optional, but offboarding fails closed
+   * unless an exporter is present or export is explicitly skipped (privacy — export-then-delete).
+   */
+  exporter?: TenantExporter;
+}
+
+/** Options for {@link TenantForge.offboard}. */
+export interface OffboardInput {
+  /**
+   * Skip the export-before-delete step. Requires a `reason` and is only safe when the tenant holds
+   * no exportable data (e.g. a never-activated tenant). Without it, offboarding needs an exporter.
+   */
+  skipExport?: boolean;
+  /** Why export was skipped (recorded for audit). Required when `skipExport` is true. */
+  reason?: string;
+}
+
+/** The result of offboarding a tenant. */
+export interface OffboardOutcome {
+  /** The tenant record (deleted). */
+  tenant: TenantRecord;
+  /** The export reference, or null when export was skipped. */
+  export: ExportResult | null;
 }
 
 /** A request to provision a tenant. */
@@ -76,6 +101,32 @@ export interface TenantForge {
    */
   listTenants(options?: { status?: TenantStatus; limit?: number }): Promise<TenantRecord[]>;
 
+  /**
+   * Suspend an active tenant (e.g. non-payment). Reversible via {@link TenantForge.resume}.
+   *
+   * @param id - The tenant id.
+   * @returns The updated record.
+   */
+  suspend(id: string): Promise<TenantRecord>;
+
+  /**
+   * Resume a suspended tenant back to active.
+   *
+   * @param id - The tenant id.
+   * @returns The updated record.
+   */
+  resume(id: string): Promise<TenantRecord>;
+
+  /**
+   * Offboard a tenant: export its data, then **irreversibly** delete its Neon project, then mark it
+   * deleted. Export precedes deletion (privacy); fails closed if export is required but unavailable.
+   *
+   * @param id - The tenant id.
+   * @param input - Whether to skip export (with a reason).
+   * @returns The deleted tenant record and the export reference (null if skipped).
+   */
+  offboard(id: string, input?: OffboardInput): Promise<OffboardOutcome>;
+
   /** Release underlying resources (the registry connection pool). */
   close(): Promise<void>;
 }
@@ -88,7 +139,22 @@ export interface TenantForge {
  * @returns The control-plane API.
  */
 export function createTenantForge(deps: TenantForgeDeps): TenantForge {
-  const { registry, provisioning, defaultRegion } = deps;
+  const { registry, provisioning, defaultRegion, exporter } = deps;
+
+  /** Load a tenant by id or throw (offboard/suspend operate on a known tenant). */
+  const requireTenant = async (id: string): Promise<TenantRecord> => {
+    const tenant = await registry.getById(id);
+    if (!tenant) throw new Error(`tenant ${id} not found`);
+    return tenant;
+  };
+
+  /** Validate + apply a status transition, returning the refreshed record. */
+  const transition = async (tenant: TenantRecord, to: TenantStatus): Promise<TenantRecord> => {
+    assertTransition(tenant.status, to);
+    await registry.setStatus(tenant.id, to);
+    const updated = await registry.getById(tenant.id);
+    return updated ?? { ...tenant, status: to };
+  };
 
   /** Create the Neon project for a provisioning-state tenant and activate it. */
   const finishProvisioning = async (tenant: TenantRecord): Promise<ProvisionOutcome> => {
@@ -139,6 +205,44 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
 
     async getTenant(id: string): Promise<TenantRecord | null> {
       return registry.getById(id);
+    },
+
+    async suspend(id: string): Promise<TenantRecord> {
+      const tenant = await requireTenant(id);
+      return transition(tenant, 'suspended');
+    },
+
+    async resume(id: string): Promise<TenantRecord> {
+      const tenant = await requireTenant(id);
+      return transition(tenant, 'active');
+    },
+
+    async offboard(id: string, input: OffboardInput = {}): Promise<OffboardOutcome> {
+      const tenant = await requireTenant(id);
+      // Move into offboarding first (validates the transition; blocks routing).
+      const offboarding = await transition(tenant, 'offboarding');
+
+      // Export-then-delete (privacy). Fail closed if export is required but no exporter is wired.
+      let exported: ExportResult | null = null;
+      if (input.skipExport) {
+        if (!input.reason) {
+          throw new Error('offboard: skipExport requires a reason (recorded for audit)');
+        }
+      } else {
+        if (!exporter) {
+          throw new Error(
+            'offboard: no exporter configured; pass { skipExport: true, reason } only if the tenant has no exportable data',
+          );
+        }
+        exported = await exporter.exportTenant(offboarding);
+      }
+
+      // Irreversible: destroy the tenant's Neon project, then mark deleted.
+      if (offboarding.neonProjectId !== null) {
+        await provisioning.deleteTenantProject(offboarding.neonProjectId);
+      }
+      const deleted = await transition(offboarding, 'deleted');
+      return { tenant: deleted, export: exported };
     },
 
     async listTenants(options?: {

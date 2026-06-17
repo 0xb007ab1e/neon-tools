@@ -98,12 +98,66 @@ const get = defineCommand({
   },
 });
 
+const suspend = defineCommand({
+  meta: { name: 'suspend', description: 'Suspend an active tenant (reversible)' },
+  args: { id: { type: 'positional', description: 'Tenant id (UUID)', required: true } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const tenant = await tf.suspend(args.id);
+      process.stdout.write(`${formatTenant(tenant)}\n`);
+    });
+  },
+});
+
+const resume = defineCommand({
+  meta: { name: 'resume', description: 'Resume a suspended tenant back to active' },
+  args: { id: { type: 'positional', description: 'Tenant id (UUID)', required: true } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const tenant = await tf.resume(args.id);
+      process.stdout.write(`${formatTenant(tenant)}\n`);
+    });
+  },
+});
+
+const offboard = defineCommand({
+  meta: {
+    name: 'offboard',
+    description: 'Offboard a tenant: export then IRREVERSIBLY delete its Neon project',
+  },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    yes: { type: 'boolean', description: 'Confirm the irreversible deletion', default: false },
+    'skip-export': {
+      type: 'boolean',
+      description: 'Skip the export-before-delete step (no exporter wired yet in this build)',
+      default: false,
+    },
+    reason: { type: 'string', description: 'Why export was skipped (required with --skip-export)' },
+  },
+  async run({ args }) {
+    if (!args.yes) {
+      process.stdout.write('refusing to offboard without --yes (this deletes the tenant DB)\n');
+      process.exitCode = 1;
+      return;
+    }
+    await withTenantForge(async (tf) => {
+      const { tenant, export: exported } = await tf.offboard(args.id, {
+        skipExport: args['skip-export'],
+        ...(args.reason ? { reason: args.reason } : {}),
+      });
+      process.stdout.write(`${formatTenant(tenant)}\n`);
+      process.stdout.write(exported ? `exported to ${exported.location}\n` : 'export skipped\n');
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
     description: 'Control plane for database-per-tenant SaaS on Neon',
   },
-  subCommands: { migrate, provision, list, get },
+  subCommands: { migrate, provision, list, get, suspend, resume, offboard },
 });
 
 void runMain(main);
