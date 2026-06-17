@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createNeonProvisioningProvider } from '../../src/adapters/neon-api/provisioning-provider.js';
 import { createPgTenantRegistry } from '../../src/adapters/neon-pg/registry.js';
+import { createInMemorySecretStore } from '../../src/adapters/secret-store.js';
 import { createTenantForge } from '../../src/app/lib.js';
 
 // Non-hermetic: needs a live Neon control-plane DB + Neon API. Self-skips when creds are absent.
@@ -17,7 +18,12 @@ describe.skipIf(!ready)('provision round-trip (live Neon)', () => {
     orgId: neonOrgId!,
     ...(process.env.NEON_API_BASE_URL ? { baseUrl: process.env.NEON_API_BASE_URL } : {}),
   });
-  const tf = createTenantForge({ registry, provisioning, defaultRegion: 'aws-us-east-1' });
+  const tf = createTenantForge({
+    registry,
+    provisioning,
+    secretStore: createInMemorySecretStore(),
+    defaultRegion: 'aws-us-east-1',
+  });
   const cleanup = new Pool({ connectionString: databaseUrl! });
 
   // Unique per run so repeated runs don't collide on the slug.

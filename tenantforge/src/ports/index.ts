@@ -9,5 +9,6 @@ export type {
 } from './provisioning-provider.js';
 export type { TenantRegistry, NewTenant } from './tenant-registry.js';
 export type { TenantExporter, ExportResult } from './tenant-exporter.js';
+export type { SecretStore } from './secret-store.js';
 export type { MigrationRunner } from './migration-runner.js';
 export type { ConnectionRouter, TenantConnection } from './connection-router.js';

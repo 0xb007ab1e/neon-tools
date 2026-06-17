@@ -8,9 +8,13 @@ import {
 } from '../core/index.js';
 import { createNeonProvisioningProvider } from '../adapters/neon-api/provisioning-provider.js';
 import { createPgTenantRegistry } from '../adapters/neon-pg/registry.js';
+import { createInMemorySecretStore } from '../adapters/secret-store.js';
+import { createConnectionRouter } from '../adapters/connection-router.js';
 import type { ProvisioningProvider } from '../ports/provisioning-provider.js';
 import type { TenantRegistry } from '../ports/tenant-registry.js';
 import type { ExportResult, TenantExporter } from '../ports/tenant-exporter.js';
+import type { SecretStore } from '../ports/secret-store.js';
+import type { TenantConnection } from '../ports/connection-router.js';
 import { loadConfig, type Config } from './config.js';
 
 export type { Config } from './config.js';
@@ -23,6 +27,11 @@ export interface TenantForgeDeps {
   provisioning: ProvisioningProvider;
   /** Default region when a provision request omits one (already validated). */
   defaultRegion: string;
+  /**
+   * Dedicated store for per-tenant connection secrets (keyed by tenant id). The connection URI is
+   * stored here on provision and deleted on offboard — never persisted in the registry (master §5).
+   */
+  secretStore: SecretStore;
   /**
    * Exports a tenant's data before deletion on offboard. Optional, but offboarding fails closed
    * unless an exporter is present or export is explicitly skipped (privacy — export-then-delete).
@@ -127,6 +136,16 @@ export interface TenantForge {
    */
   offboard(id: string, input?: OffboardInput): Promise<OffboardOutcome>;
 
+  /**
+   * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
+   * tenant is active, provisioned, and has a stored connection secret. The id must be derived
+   * server-side from the authenticated principal, never client-supplied (BOLA).
+   *
+   * @param id - The server-derived tenant id.
+   * @returns The tenant-scoped connection (the URI is a secret — never log it).
+   */
+  getConnection(id: string): Promise<TenantConnection>;
+
   /** Release underlying resources (the registry connection pool). */
   close(): Promise<void>;
 }
@@ -139,7 +158,8 @@ export interface TenantForge {
  * @returns The control-plane API.
  */
 export function createTenantForge(deps: TenantForgeDeps): TenantForge {
-  const { registry, provisioning, defaultRegion, exporter } = deps;
+  const { registry, provisioning, defaultRegion, secretStore, exporter } = deps;
+  const router = createConnectionRouter({ registry, secretStore });
 
   /** Load a tenant by id or throw (offboard/suspend operate on a known tenant). */
   const requireTenant = async (id: string): Promise<TenantRecord> => {
@@ -163,6 +183,8 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       region: tenant.region,
     });
     await registry.attachProject(tenant.id, result.neonProjectId);
+    // Store the connection secret in the dedicated store (keyed by tenant id) — never the registry.
+    await secretStore.set(tenant.id, result.connectionUri);
     assertTransition(tenant.status, 'active');
     await registry.setStatus(tenant.id, 'active');
     const active = await registry.getById(tenant.id);
@@ -237,12 +259,17 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         exported = await exporter.exportTenant(offboarding);
       }
 
-      // Irreversible: destroy the tenant's Neon project, then mark deleted.
+      // Irreversible: destroy the tenant's Neon project, crypto-shred its secret, then mark deleted.
       if (offboarding.neonProjectId !== null) {
         await provisioning.deleteTenantProject(offboarding.neonProjectId);
       }
+      await secretStore.delete(offboarding.id);
       const deleted = await transition(offboarding, 'deleted');
       return { tenant: deleted, export: exported };
+    },
+
+    async getConnection(id: string): Promise<TenantConnection> {
+      return router.resolve(id);
     },
 
     async listTenants(options?: {
@@ -272,7 +299,15 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
     orgId: config.neonOrgId,
     ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
   });
-  return createTenantForge({ registry, provisioning, defaultRegion: config.defaultRegion });
+  // NOTE: in-memory secret store is non-persistent (dev/alpha). Production must inject a
+  // persistent secret manager (Vault / cloud Secrets Manager) here — tracked follow-up.
+  const secretStore = createInMemorySecretStore();
+  return createTenantForge({
+    registry,
+    provisioning,
+    secretStore,
+    defaultRegion: config.defaultRegion,
+  });
 }
 
 /**
