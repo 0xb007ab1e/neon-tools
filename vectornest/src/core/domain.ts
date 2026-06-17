@@ -31,7 +31,7 @@ export interface Collection {
 }
 
 /**
- * A source document as produced by a {@link DocumentLoader}, before chunking.
+ * A source document as produced by a `DocumentLoader`, before chunking.
  *
  * `contentHash` is computed by the loader from the raw bytes and drives ingest idempotency.
  */
