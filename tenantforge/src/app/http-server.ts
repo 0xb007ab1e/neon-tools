@@ -20,6 +20,7 @@ const TENANT_STATUSES = ['provisioning', 'active', 'suspended', 'offboarding', '
 const ProvisionSchema = z.object({
   slug: z.string().min(1),
   region: z.string().min(1).optional(),
+  residency: z.enum(['us', 'eu', 'apac']).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -100,11 +101,12 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
   app.post('/v1/tenants', async (c) => {
     const parsed = await readJson(c, ProvisionSchema);
     if (!parsed.ok) return parsed.res;
-    const { slug, region, metadata } = parsed.data;
+    const { slug, region, residency, metadata } = parsed.data;
     try {
       const outcome = await tf.provision({
         slug,
         ...(region !== undefined ? { region } : {}),
+        ...(residency !== undefined ? { residency } : {}),
         ...(metadata !== undefined ? { metadata: metadata as JsonObject } : {}),
       });
       // connectionUri is a secret delivered once to the authenticated caller; never logged.

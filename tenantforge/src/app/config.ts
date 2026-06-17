@@ -19,6 +19,20 @@ const EnvSchema = z.object({
   TENANTFORGE_DEFAULT_REGION: z
     .enum(KNOWN_REGIONS as [string, ...string[]])
     .default('aws-us-east-1'),
+  // Optional comma-separated allow-list of regions tenants may be provisioned in (residency
+  // enforcement). Empty/unset = all known regions allowed. Each entry must be a known region.
+  TENANTFORGE_ALLOWED_REGIONS: z
+    .string()
+    .optional()
+    .transform((s) =>
+      (s ?? '')
+        .split(',')
+        .map((r) => r.trim())
+        .filter((r) => r.length > 0),
+    )
+    .refine((regions) => regions.every((r) => KNOWN_REGIONS.includes(r)), {
+      message: `TENANTFORGE_ALLOWED_REGIONS may only contain known regions: ${KNOWN_REGIONS.join(', ')}`,
+    }),
   // Retention window (days) an archived (offboarding) tenant is kept before the purge sweep.
   TENANTFORGE_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(30),
   // HTTP entrypoint (required only when running the HTTP server — a later milestone).
@@ -38,6 +52,8 @@ export interface Config {
   neonApiBaseUrl?: string;
   /** Default Neon region for provisioning. */
   defaultRegion: string;
+  /** Allow-listed regions tenants may be provisioned in (empty = all known regions). */
+  allowedRegions: string[];
   /** Passphrase used to encrypt per-tenant connection secrets at rest (separate from the DB cred). */
   secretKey: string;
   /** Retention window (days) before an archived tenant is purged. */
@@ -62,6 +78,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     neonApiKey: parsed.NEON_API_KEY,
     neonOrgId: parsed.NEON_ORG_ID,
     defaultRegion: parsed.TENANTFORGE_DEFAULT_REGION,
+    allowedRegions: parsed.TENANTFORGE_ALLOWED_REGIONS,
     secretKey: parsed.TENANTFORGE_SECRET_KEY,
     retentionDays: parsed.TENANTFORGE_RETENTION_DAYS,
     port: parsed.TENANTFORGE_PORT,

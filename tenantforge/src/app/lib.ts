@@ -3,11 +3,14 @@ import {
   assertSlug,
   aggregateConsumption,
   assertPeriod,
+  assertRegionAllowed,
+  assertResidency,
   assertTransition,
   isPurgeable,
   redactSecrets,
   retentionCutoff,
   type BillingPeriod,
+  type Jurisdiction,
   type JsonObject,
   type TenantRecord,
   type TenantStatus,
@@ -53,6 +56,11 @@ export interface TenantForgeDeps {
   provisioning: ProvisioningProvider;
   /** Default region when a provision request omits one (already validated). */
   defaultRegion: string;
+  /**
+   * Allow-listed regions tenants may be provisioned in (residency enforcement). Empty/omitted =
+   * all known regions allowed.
+   */
+  allowedRegions?: readonly string[];
   /**
    * Dedicated store for per-tenant connection secrets (keyed by tenant id). The connection URI is
    * stored here on provision and deleted on offboard — never persisted in the registry (master §5).
@@ -118,6 +126,11 @@ export interface ProvisionInput {
   slug: string;
   /** Region override; defaults to the configured default region. */
   region?: string;
+  /**
+   * Required data-residency jurisdiction (e.g. `eu`). When set, the chosen region must belong to it
+   * or provisioning fails closed (std-privacy).
+   */
+  residency?: Jurisdiction;
   /** Optional non-sensitive metadata. */
   metadata?: JsonObject;
 }
@@ -261,6 +274,7 @@ export interface TenantForge {
 export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const { registry, provisioning, defaultRegion, secretStore, exporter, migrationRunner } = deps;
   const usageProvider = deps.usageProvider;
+  const allowedRegions = deps.allowedRegions ?? [];
   const router = createConnectionRouter({ registry, secretStore });
   const eventSink = deps.eventSink ?? createNoopEventSink();
 
@@ -358,6 +372,12 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     async provision(input: ProvisionInput): Promise<ProvisionOutcome> {
       const slug = assertSlug(input.slug);
       const region = assertRegion(input.region ?? defaultRegion);
+      // Residency enforcement (std-privacy): the region must be on the org allow-list and satisfy
+      // any required jurisdiction — both fail closed before any project is created.
+      assertRegionAllowed(region, allowedRegions);
+      if (input.residency !== undefined) {
+        assertResidency(region, input.residency);
+      }
 
       const existing = await registry.getBySlug(slug);
       if (existing) {
@@ -559,6 +579,7 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
       ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
     }),
     defaultRegion: config.defaultRegion,
+    allowedRegions: config.allowedRegions,
   });
 }
 

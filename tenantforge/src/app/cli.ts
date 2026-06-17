@@ -43,6 +43,7 @@ const provision = defineCommand({
       required: true,
     },
     region: { type: 'string', description: 'Neon region id (defaults to the configured region)' },
+    residency: { type: 'string', description: 'Required residency jurisdiction (us | eu | apac)' },
   },
   async run({ args }) {
     await withTenantForge(async (tf) => {
@@ -50,6 +51,7 @@ const provision = defineCommand({
       const { tenant, connectionUri } = await tf.provision({
         slug: args.slug,
         ...(args.region ? { region: args.region } : {}),
+        ...(args.residency ? { residency: args.residency as 'us' | 'eu' | 'apac' } : {}),
       });
       process.stdout.write(`${formatTenant(tenant)}\n`);
       // The connection URI is a secret: report only whether one was issued, never the value.
