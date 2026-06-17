@@ -19,6 +19,8 @@ const EnvSchema = z.object({
   TENANTFORGE_DEFAULT_REGION: z
     .enum(KNOWN_REGIONS as [string, ...string[]])
     .default('aws-us-east-1'),
+  // Retention window (days) an archived (offboarding) tenant is kept before the purge sweep.
+  TENANTFORGE_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(30),
   // HTTP entrypoint (required only when running the HTTP server — a later milestone).
   TENANTFORGE_HTTP_TOKEN: z.string().optional(),
   TENANTFORGE_PORT: z.coerce.number().int().positive().default(3000),
@@ -38,6 +40,8 @@ export interface Config {
   defaultRegion: string;
   /** Passphrase used to encrypt per-tenant connection secrets at rest (separate from the DB cred). */
   secretKey: string;
+  /** Retention window (days) before an archived tenant is purged. */
+  retentionDays: number;
   /** Bearer token for the HTTP entrypoint (required only when serving HTTP). */
   httpToken?: string;
   /** Port for the HTTP entrypoint. */
@@ -59,6 +63,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     neonOrgId: parsed.NEON_ORG_ID,
     defaultRegion: parsed.TENANTFORGE_DEFAULT_REGION,
     secretKey: parsed.TENANTFORGE_SECRET_KEY,
+    retentionDays: parsed.TENANTFORGE_RETENTION_DAYS,
     port: parsed.TENANTFORGE_PORT,
   };
   if (parsed.NEON_API_BASE_URL !== undefined) {

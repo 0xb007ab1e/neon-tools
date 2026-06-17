@@ -2,6 +2,8 @@ import {
   assertRegion,
   assertSlug,
   assertTransition,
+  isPurgeable,
+  retentionCutoff,
   type JsonObject,
   type TenantRecord,
   type TenantStatus,
@@ -58,6 +60,29 @@ export interface TenantForgeDeps {
    * when absent, that method fails closed.
    */
   migrationRunner?: MigrationRunner;
+}
+
+/** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
+const DEFAULT_RETENTION_DAYS = 30;
+/** Upper bound on offboarding tenants scanned per sweep. */
+const MAX_SWEEP = 100_000;
+
+/** Options for {@link TenantForge.purgeExpired}. */
+export interface PurgeSweepOptions {
+  /** Retention window in days; archived tenants older than this are purged. Defaults to 30. */
+  retentionDays?: number;
+  /** The current instant (injectable for testing); defaults to now. */
+  now?: Date;
+}
+
+/** The result of a retention purge sweep. */
+export interface PurgeSweepReport {
+  /** Number of `offboarding` tenants examined. */
+  scanned: number;
+  /** Tenant ids purged this sweep. */
+  purged: string[];
+  /** Tenants that failed to purge (isolated — they don't block the sweep; retried next run). */
+  failed: { tenantId: string; error: string }[];
 }
 
 /** The result of offboarding (archiving) a tenant. */
@@ -160,6 +185,16 @@ export interface TenantForge {
   purge(id: string): Promise<TenantRecord>;
 
   /**
+   * Purge every archived (`offboarding`) tenant past its retention window — the scheduled retention
+   * sweep (run by a cron / K8s CronJob). Failure-isolated and idempotent: a tenant that fails is
+   * reported and retried next run; already-purged tenants are gone so won't reappear.
+   *
+   * @param options - Retention window (days) and an injectable clock.
+   * @returns Per-tenant sweep report (scanned / purged / failed).
+   */
+  purgeExpired(options?: PurgeSweepOptions): Promise<PurgeSweepReport>;
+
+  /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
    * tenant is active, provisioned, and has a stored connection secret. The id must be derived
    * server-side from the authenticated principal, never client-supplied (BOLA).
@@ -211,6 +246,17 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     await registry.setStatus(tenant.id, to);
     const updated = await registry.getById(tenant.id);
     return updated ?? { ...tenant, status: to };
+  };
+
+  /** Irreversibly delete a tenant's project, crypto-shred its secret, and mark it deleted. */
+  const purgeTenant = async (tenant: TenantRecord): Promise<TenantRecord> => {
+    // Validate before the irreversible delete (rejects active/suspended — must offboard first).
+    assertTransition(tenant.status, 'deleted');
+    if (tenant.neonProjectId !== null) {
+      await provisioning.deleteTenantProject(tenant.neonProjectId);
+    }
+    await secretStore.delete(tenant.id);
+    return transition(tenant, 'deleted');
   };
 
   /** Create the Neon project for a provisioning-state tenant and activate it. */
@@ -286,15 +332,29 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     },
 
     async purge(id: string): Promise<TenantRecord> {
-      const tenant = await requireTenant(id);
-      // assertTransition(... 'deleted') rejects purging an active/suspended tenant (must offboard
-      // first) — fail closed. Irreversible from here.
-      assertTransition(tenant.status, 'deleted');
-      if (tenant.neonProjectId !== null) {
-        await provisioning.deleteTenantProject(tenant.neonProjectId);
+      return purgeTenant(await requireTenant(id));
+    },
+
+    async purgeExpired(options: PurgeSweepOptions = {}): Promise<PurgeSweepReport> {
+      const retentionDays = options.retentionDays ?? DEFAULT_RETENTION_DAYS;
+      const cutoff = retentionCutoff(options.now ?? new Date(), retentionDays);
+      const offboarding = await registry.list({ status: 'offboarding', limit: MAX_SWEEP });
+      const expired = offboarding.filter((t) => isPurgeable(t, cutoff));
+      const purged: string[] = [];
+      const failed: { tenantId: string; error: string }[] = [];
+      // Sequential + failure-isolated: one tenant's failure never blocks the rest of the sweep.
+      for (const tenant of expired) {
+        try {
+          await purgeTenant(tenant);
+          purged.push(tenant.id);
+        } catch (error) {
+          failed.push({
+            tenantId: tenant.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
-      await secretStore.delete(tenant.id);
-      return transition(tenant, 'deleted');
+      return { scanned: offboarding.length, purged, failed };
     },
 
     async getConnection(id: string): Promise<TenantConnection> {

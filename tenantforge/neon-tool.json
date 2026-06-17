@@ -59,6 +59,12 @@
       "description": "Passphrase that encrypts per-tenant connection secrets at rest (AES-256-GCM); separate from DATABASE_URL's credential (separation of duties)."
     },
     {
+      "name": "TENANTFORGE_RETENTION_DAYS",
+      "required": false,
+      "secret": false,
+      "description": "Days an archived (offboarding) tenant is retained before purge-expired deletes it (default 30)."
+    },
+    {
       "name": "TENANTFORGE_HTTP_TOKEN",
       "required": false,
       "secret": true,

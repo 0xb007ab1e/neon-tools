@@ -160,6 +160,41 @@ const purge = defineCommand({
   },
 });
 
+const purgeExpired = defineCommand({
+  meta: {
+    name: 'purge-expired',
+    description:
+      'Purge archived tenants past their retention window (the scheduled retention sweep)',
+  },
+  args: {
+    'retention-days': {
+      type: 'string',
+      description: 'Override the retention window in days (default: TENANTFORGE_RETENTION_DAYS)',
+    },
+    yes: { type: 'boolean', description: 'Confirm the irreversible deletions', default: false },
+  },
+  async run({ args }) {
+    if (!args.yes) {
+      process.stdout.write('refusing to sweep without --yes (this deletes tenant DBs)\n');
+      process.exitCode = 1;
+      return;
+    }
+    const retentionDays =
+      args['retention-days'] !== undefined
+        ? Number(args['retention-days'])
+        : loadConfig().retentionDays;
+    await withTenantForge(async (tf) => {
+      const report = await tf.purgeExpired({ retentionDays });
+      process.stdout.write(
+        `purge sweep: ${report.purged.length} purged, ${report.failed.length} failed ` +
+          `of ${report.scanned} archived tenant(s) (retention ${retentionDays}d)\n`,
+      );
+      for (const f of report.failed) process.stdout.write(`  FAILED ${f.tenantId}: ${f.error}\n`);
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+  },
+});
+
 const migrateFleet = defineCommand({
   meta: {
     name: 'migrate-fleet',
@@ -211,6 +246,7 @@ const main = defineCommand({
     resume,
     offboard,
     purge,
+    'purge-expired': purgeExpired,
     'migrate-fleet': migrateFleet,
   },
 });
