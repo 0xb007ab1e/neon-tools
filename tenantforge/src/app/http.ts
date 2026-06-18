@@ -62,6 +62,9 @@ function main(): void {
           jwksUri: config.oidc.jwksUri,
           subjectClaim: config.oidc.subjectClaim,
           roleClaim: config.oidc.roleClaim,
+          ...(config.oidc.permissionsClaim !== undefined
+            ? { permissionsClaim: config.oidc.permissionsClaim }
+            : {}),
         })
       : undefined;
   const app = createHttpServer(tf, {

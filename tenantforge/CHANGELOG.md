@@ -8,6 +8,19 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Fine-grained RBAC** (gap #12) — control-plane authorization moves from coarse admin/readonly to a
+  required **permission per operation**, evaluated server-side and **deny by default** (std-owasp-api
+  API5, topic-authn-authz). A pure core module (`src/core/authz.ts`, 100% covered) defines the
+  permissions (`tenant:read|provision|suspend|offboard|purge`) and the role→permission map: `admin`
+  holds all, the new **`operator`** runs the full reversible lifecycle but **cannot `tenant:purge`**
+  (the irreversible op stays admin-only), `readonly` only reads. A principal may also carry an
+  **explicit permission set** that narrows its role (e.g. scope an admin down). Wired through the
+  token authenticator (`id:role:token`, role now `admin|operator|readonly`), the OIDC authenticator
+  (validated role claim + optional `TENANTFORGE_OIDC_PERMISSIONS_CLAIM`), and per-route
+  `requirePermission` middleware. Fully backward-compatible (existing admin/readonly tokens behave
+  identically). Documented in `openapi.yaml`, README, and the threat model (E/EoP). Core + HTTP
+  enforcement (operator-can't-purge, explicit-scope-down) unit-tested.
+
 - **Idempotency-Key on HTTP mutations** (gap #11) — a client may set an `Idempotency-Key` header on
   any `POST /v1/*` so a retry **replays the original response** (header `Idempotency-Replayed: true`)
   instead of re-executing — most importantly for `provision`, whose once-only connection secret is
