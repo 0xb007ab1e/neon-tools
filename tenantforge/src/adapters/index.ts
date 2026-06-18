@@ -13,6 +13,12 @@ export {
   type PgMigrationRunnerOptions,
 } from './neon-pg/migration-runner.js';
 export { createInMemorySecretStore } from './secret-store.js';
+export { createTokenAuthenticator } from './auth/token-authenticator.js';
+export {
+  createOidcAuthenticator,
+  type OidcAuthenticatorOptions,
+} from './auth/oidc-authenticator.js';
+export type { Authenticator, Principal, HttpCredential, HttpRole } from '../ports/authenticator.js';
 export { createInMemoryRateLimitStore } from './rate-limit-store.js';
 export {
   createPgRateLimitStore,

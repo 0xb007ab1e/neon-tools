@@ -1,4 +1,3 @@
-import { timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
@@ -9,20 +8,12 @@ import { TENANTFORGE } from '../meta.js';
 import type { JsonObject, TenantStatus } from '../core/index.js';
 import type { RateLimitStore } from '../ports/rate-limit-store.js';
 import { createInMemoryRateLimitStore } from '../adapters/rate-limit-store.js';
+import type { Authenticator, HttpCredential, Principal } from '../ports/authenticator.js';
+import { createTokenAuthenticator } from '../adapters/auth/token-authenticator.js';
 import type { TenantForge } from './lib.js';
 
-/** A control-plane role: `admin` may mutate; `readonly` may only read. */
-export type HttpRole = 'admin' | 'readonly';
-
-/** A named operator credential — a bearer token attributable to a principal, with a role. */
-export interface HttpCredential {
-  /** Stable principal id (for attribution + per-operator rate limiting). */
-  id: string;
-  /** The bearer token (a secret). */
-  token: string;
-  /** The operator's role. */
-  role: HttpRole;
-}
+// Re-export the auth types so existing importers (config) keep their import path.
+export type { HttpRole, HttpCredential, Principal, Authenticator } from '../ports/authenticator.js';
 
 /** Fixed-window rate-limit settings (per principal). */
 export interface RateLimitOptions {
@@ -38,6 +29,8 @@ export interface HttpServerOptions {
   token?: string;
   /** Per-operator credentials (preferred over `token`): attributable identity + role. */
   credentials?: HttpCredential[];
+  /** Authenticator to resolve the bearer token (e.g. OIDC). Defaults to a token authenticator. */
+  authenticator?: Authenticator;
   /** Per-principal rate limit. Defaults to 120 requests / 60s. */
   rateLimit?: RateLimitOptions;
   /** Counter store for the rate limiter. Defaults to in-memory (per-instance). */
@@ -46,21 +39,8 @@ export interface HttpServerOptions {
   now?: () => number;
 }
 
-/** The authenticated principal attached to a request. */
-interface Principal {
-  id: string;
-  role: HttpRole;
-}
-
 /** Hono Variables: the resolved principal, set by the auth middleware. */
 type Env = { Variables: { principal: Principal } };
-
-/** Constant-time bearer-token compare (avoids token timing leaks — topic-authn-authz). */
-function tokenEquals(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
-}
 
 const TENANT_STATUSES = ['provisioning', 'active', 'suspended', 'offboarding', 'deleted'] as const;
 
@@ -136,13 +116,19 @@ async function readJson<T>(
 export function createHttpServer(tf: TenantForge, options: HttpServerOptions): Hono<Env> {
   const app = new Hono<Env>();
 
-  // Resolve credentials: explicit list, else the admin-token shorthand. Fail closed if neither —
-  // an unauthenticated control plane must not start.
-  const credentials: HttpCredential[] =
-    options.credentials ??
-    (options.token !== undefined ? [{ id: 'default', token: options.token, role: 'admin' }] : []);
-  if (credentials.length === 0) {
-    throw new Error('createHttpServer: at least one credential (or token) is required');
+  // Resolve the authenticator: an injected one (e.g. OIDC) wins; else build a token authenticator
+  // from the credential list / admin-token shorthand. Fail closed if there is no way to authenticate.
+  let authenticator: Authenticator;
+  if (options.authenticator !== undefined) {
+    authenticator = options.authenticator;
+  } else {
+    const credentials: HttpCredential[] =
+      options.credentials ??
+      (options.token !== undefined ? [{ id: 'default', token: options.token, role: 'admin' }] : []);
+    if (credentials.length === 0) {
+      throw new Error('createHttpServer: an authenticator, credentials, or a token is required');
+    }
+    authenticator = createTokenAuthenticator(credentials);
   }
   const rateLimit = options.rateLimit ?? { limit: 120, windowMs: 60_000 };
   const now = options.now ?? ((): number => Date.now());
@@ -154,18 +140,12 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     c.json({ status: 'ok', tool: TENANTFORGE.id, version: TENANTFORGE.version }),
   );
 
-  // AuthN: match the presented bearer token to a credential (constant-time) and attach the
-  // principal. Iterates all credentials (no early return) so timing doesn't reveal which matched.
-  const authenticate: MiddlewareHandler<Env> = (c, next) => {
+  // AuthN: resolve the bearer token to a principal via the authenticator (token match or OIDC JWT).
+  const authenticate: MiddlewareHandler<Env> = async (c, next) => {
     const header = c.req.header('authorization') ?? '';
     const presented = header.startsWith('Bearer ') ? header.slice(7) : '';
-    let principal: Principal | undefined;
-    for (const cred of credentials) {
-      if (presented !== '' && tokenEquals(presented, cred.token)) {
-        principal = { id: cred.id, role: cred.role };
-      }
-    }
-    if (principal === undefined) return Promise.resolve(problem(c, 401, 'Unauthorized'));
+    const principal = await authenticator.authenticate(presented);
+    if (principal === null) return problem(c, 401, 'Unauthorized');
     c.set('principal', principal);
     return next();
   };
