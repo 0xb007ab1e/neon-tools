@@ -38,6 +38,31 @@
 
 - Latency/error rate back within SLO; Neon `429`s subside; no new downstream bottleneck.
 
+## Load / soak testing (capacity planning)
+
+Two layers, mirroring the game-day split:
+
+1. **Orchestration harness (hermetic — run anytime):** `pnpm --filter tenantforge load` drives the
+   real fleet orchestrator over a large synthetic fleet with in-memory fakes, so it measures the
+   in-house fan-out (batching, **bounded concurrency**, failure isolation) without touching Neon.
+   Knobs: `TF_LOAD_TENANTS` (default 1000), `TF_LOAD_BATCH` (10), `TF_LOAD_APPLY_MS` (simulated
+   per-tenant latency, 0), `TF_LOAD_ITERATIONS` (3), `TF_LOAD_FAIL_PCT` (0). It prints throughput +
+   peak concurrency per run and **exits non-zero if concurrency ever exceeds the batch bound**.
+   Example — model 5k tenants, batch 25, 50 ms/apply, 5% failures:
+   ```bash
+   TF_LOAD_TENANTS=5000 TF_LOAD_BATCH=25 TF_LOAD_APPLY_MS=50 TF_LOAD_FAIL_PCT=5 \
+     pnpm --filter tenantforge load
+   ```
+   Capacity rule of thumb: throughput ≈ `batch / per-apply-latency` tenants/sec; raising `--batch`
+   helps only until Neon's API rate limit or the registry pool is the bottleneck. A CI regression
+   guard for the concurrency bound lives in `test/adapters/fleet-orchestrator.test.ts`.
+2. **Live-Neon load profile (operator-run, gated — like the game-day):** the real bottleneck is the
+   **Neon API rate limit**, which can't be load-tested hermetically and must not be hammered. Against
+   a **non-prod** org, provision a batch of tenants and run a `migrate-fleet` at the intended batch
+   size, watching Neon `429`s and the adapter's backoff. **Pace into the limit** — do not raise
+   `--batch` to force throughput past `429`s. Record the sustainable provisioning rate + fleet
+   throughput as the documented SLO; re-measure when Neon's limits or the batch defaults change.
+
 ## Scaling back down
 
 - Reduce gradually while watching metrics; keep HA minimums; confirm no thrashing.
@@ -52,4 +77,6 @@
 
 ---
 
-_Last validated: 2026-06-17 — procedural; traced to code in the drill ([drill-report](./drill-report.md)). Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — the orchestration load harness (`pnpm load`) runs and proves the
+fleet fan-out stays within the batch bound (CI-guarded). The live-Neon load profile is operator-run
+(non-prod org). Traced to code in the drill ([drill-report](./drill-report.md)). Owner: TenantForge maintainers._

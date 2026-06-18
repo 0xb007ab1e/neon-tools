@@ -143,3 +143,84 @@ describe('createFleetOrchestrator.migrateFleet', () => {
     await expect(orch.migrateFleet(spec)).rejects.toThrow(/different checksum \(drift\)/);
   });
 });
+
+/**
+ * A migration runner that records peak in-flight concurrency. `applyToTenant` yields a real
+ * macrotask so overlapping calls within a batch are observable.
+ */
+function concurrencyTrackingRunner(): {
+  runner: MigrationRunner;
+  peak: () => number;
+  applied: () => number;
+} {
+  let current = 0;
+  let peak = 0;
+  let applied = 0;
+  return {
+    runner: {
+      applyToTenant: async () => {
+        current += 1;
+        if (current > peak) peak = current;
+        await new Promise((r) => setTimeout(r, 0)); // hold the slot so concurrency is observable
+        applied += 1;
+        current -= 1;
+      },
+    },
+    peak: () => peak,
+    applied: () => applied,
+  };
+}
+
+const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `t${i}`);
+
+// Load/soak guard: the fleet fan-out must stay BOUNDED — unbounded concurrency would blow Neon's
+// API rate limits and exhaust connections (topic-reliability, threat-model R3). Heavy ad-hoc soak
+// runs live in the `pnpm load` harness (src/app/load.ts); this is the fast CI regression guard.
+describe('createFleetOrchestrator — load / bounded concurrency', () => {
+  it('never exceeds batchSize concurrent applies across a large fleet', async () => {
+    const N = 300;
+    const batchSize = 20;
+    const tracker = concurrencyTrackingRunner();
+    const registry = fakeRegistry({ active: ids(N) });
+    const orch = createFleetOrchestrator({
+      registry,
+      connectionRouter: router,
+      migrationRunner: tracker.runner,
+    });
+    const report = await orch.migrateFleet(spec, { batchSize });
+
+    expect(report.succeeded).toHaveLength(N);
+    expect(report.failed).toEqual([]);
+    expect(tracker.applied()).toBe(N);
+    expect(tracker.peak()).toBeLessThanOrEqual(batchSize); // the safety bound
+    expect(tracker.peak()).toBe(batchSize); // and the batch is actually saturated (N % batchSize === 0)
+  });
+
+  it('stays failure-isolated and resumable at scale', async () => {
+    const N = 200;
+    // Every 7th tenant fails this run.
+    const failing = ids(N).filter((_, i) => i % 7 === 0);
+    const failFor = Object.fromEntries(failing.map((id) => [id, new Error(`boom ${id}`)]));
+    // Half are already applied (resumability under load).
+    const preApplied = ids(N)
+      .filter((_, i) => i % 2 === 0)
+      .map((id) => ({ tenantId: id, migrationId: 'm1', status: 'applied' as const }));
+
+    const registry = fakeRegistry({ active: ids(N), states: preApplied });
+    const orch = createFleetOrchestrator({
+      registry,
+      connectionRouter: router,
+      migrationRunner: fakeRunner(failFor),
+    });
+    const report = await orch.migrateFleet(spec, { batchSize: 25 });
+
+    expect(report.total).toBe(N);
+    expect(report.alreadyApplied).toBe(preApplied.length);
+    // Every not-yet-applied tenant is either succeeded or failed — none dropped.
+    const handled = report.succeeded.length + report.failed.length;
+    expect(handled).toBe(N - preApplied.length);
+    // Only the still-pending failing tenants surface as failures (applied ones were skipped).
+    const pendingFailures = failing.filter((id) => !preApplied.some((p) => p.tenantId === id));
+    expect(report.failed).toHaveLength(pendingFailures.length);
+  });
+});
