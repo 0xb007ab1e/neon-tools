@@ -67,8 +67,13 @@ smoke (provision → suspend → resume → offboard → resume → purge), a fl
 re-run + compensating revert on a canary, the provision round-trip, the Postgres queue/worker, and
 the registry assessment queries. All provisioned `gd-*`/canary projects were auto-purged.
 
+- **Also validated in CI:** the `tenantforge-game-day` workflow (manual `workflow_dispatch`, secrets
+  in the maintainer-gated `tenantforge-game-day` Environment) ran the same suite **green** against
+  the non-prod org — a repeatable, re-runnable proof, not just a one-off local run.
 - Observation: a `pg` deprecation warning — `sslmode=require` is currently treated as `verify-full`;
   `pg` v9 will change that. Prefer `sslmode=verify-full` in production DSNs (no action required now).
+- Observation: the CI runner flags the pinned actions as Node-20-based (forced onto Node 24); bump
+  `actions/checkout` / `actions/setup-node` / `pnpm/action-setup` pins at the next CI touch.
 
 ## NEON_API_KEY rotation drill — executed 2026-06-17
 
