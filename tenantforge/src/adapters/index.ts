@@ -107,6 +107,12 @@ export {
   type ConsumeReport,
 } from './lifecycle-consumer.js';
 export {
+  createErasureEngine,
+  type ErasureEngine,
+  type ErasureEngineDeps,
+  type EraseOptions,
+} from './erasure-engine.js';
+export {
   createFleetOrchestrator,
   type FleetOrchestrator,
   type FleetOrchestratorDeps,

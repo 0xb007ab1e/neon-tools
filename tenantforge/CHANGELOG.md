@@ -8,6 +8,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **ErasureEngine** (ARCHITECTURE #17) — automated, audited right-to-erasure (GDPR Art. 17 / CCPA;
+  workflow-data-lifecycle). `createErasureEngine` (adapter) orchestrates over the existing ports:
+  optional final subject export → delete the Neon project → crypto-shred the connection secret → mark
+  the record `deleted` → **verify** the post-conditions (secret unreadable + status deleted) → emit a
+  redacted `tenant.erased` audit event (`outcome: 'error'` when a post-condition fails) → return an
+  auditable `ErasureCertificate`. Unlike `purge`, erasure is the **legal-override** path — it applies
+  from any state, not just an offboarded tenant. The pure `buildErasureCertificate` (core) encodes
+  what counts as a _provably complete_ erasure. Exposed as `TenantForge.erase(id, { reason })` and as
+  the standalone `createErasureEngine`. Pure core + orchestrator unit-tested at 100%.
+
 - **ResidencyRouter** (ARCHITECTURE #16) — `selectRegion` / `compliantRegions` in the pure core
   _choose_ a residency-compliant provisioning region from a jurisdiction + the org allow-list
   (deterministic, preferring the default when it qualifies), complementing the existing assert-style
