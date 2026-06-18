@@ -39,6 +39,12 @@ export {
   type PgMessageQueueOptions,
 } from './neon-pg/message-queue.js';
 export {
+  createSqsMessageQueue,
+  type SqsMessageQueue,
+  type SqsMessageQueueOptions,
+  type SqsClientLike,
+} from './sqs/message-queue.js';
+export {
   createLifecycleConsumer,
   type LifecycleConsumer,
   type LifecycleConsumerDeps,
