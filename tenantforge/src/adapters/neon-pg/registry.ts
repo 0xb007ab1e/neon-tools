@@ -154,6 +154,13 @@ export function createPgTenantRegistry(options: PgRegistryOptions): TenantRegist
       ]);
     },
 
+    async relocate(id: string, region: string, neonProjectId: string): Promise<void> {
+      await pool.query(
+        'UPDATE tf_tenants SET region = $2, neon_project_id = $3, updated_at = now() WHERE id = $1',
+        [id, region, neonProjectId],
+      );
+    },
+
     async registerMigration(migration: {
       version: string;
       checksum: string;

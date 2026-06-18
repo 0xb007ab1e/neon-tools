@@ -8,6 +8,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Tenant re-homing** (gap #5) — `TenantForge.rehome(id, { region, residency? })` /
+  `createRehomeEngine` relocates an **active** tenant to a new region (residency change / latency).
+  A Neon project is region-bound, so it provisions a new project in the target region, **copies the
+  data via an injected `TenantDataMover` port**, switches the registry (`relocate`) + connection
+  secret over, then decommissions the old project. **Fail closed:** the target is validated first
+  (`assertRehomeTarget` — allow-list + jurisdiction + must differ from current), a copy failure rolls
+  back the freshly-created project and leaves the source intact, and the old project is deleted only
+  after the switch (best-effort; a failure leaves a tracked orphan, not data loss). Emits a
+  `tenant.rehomed` audit event; connection cache invalidated. The concrete pg data-mover ships with
+  backup/restore (#6). Core validation + engine unit-tested at 100%.
+
 - **Outbound lifecycle webhooks** (gap #4) — `createWebhookEventSink` delivers control-plane events
   to an operator-configured endpoint so external systems (billing/CRM/alerting) learn about
   provision / transition / erase as they happen (topic-webhooks, topic-notifications). Each POST is

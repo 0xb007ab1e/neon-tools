@@ -13,7 +13,13 @@ export {
   KNOWN_JURISDICTIONS,
   type Jurisdiction,
 } from './residency.js';
-export { compliantRegions, selectRegion, type RegionSelection } from './residency-router.js';
+export {
+  compliantRegions,
+  selectRegion,
+  assertRehomeTarget,
+  type RegionSelection,
+  type RehomeConstraint,
+} from './residency-router.js';
 export { isTerminal, canTransition, assertTransition } from './lifecycle.js';
 export { assertRoutable, type RoutableTenant } from './routing.js';
 export { retentionCutoff, isPurgeable, type RetainableTenant } from './retention.js';

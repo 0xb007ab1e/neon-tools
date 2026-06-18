@@ -125,6 +125,14 @@ export {
   type EraseOptions,
 } from './erasure-engine.js';
 export {
+  createRehomeEngine,
+  type RehomeEngine,
+  type RehomeEngineDeps,
+  type RehomeOptions,
+  type RehomeResult,
+} from './rehome-engine.js';
+export type { TenantDataMover } from '../ports/tenant-data-mover.js';
+export {
   createFleetOrchestrator,
   type FleetOrchestrator,
   type FleetOrchestratorDeps,
