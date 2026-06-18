@@ -51,7 +51,12 @@ import {
   type ArchiveResult,
 } from '../adapters/backup-engine.js';
 import type { SnapshotProvider } from '../ports/snapshot-provider.js';
-import type { RetentionPolicy } from '../core/index.js';
+import type { RetentionPolicy, Quota } from '../core/index.js';
+import {
+  createQuotaEngine,
+  type QuotaCheckResult,
+  type QuotaSweepReport,
+} from '../adapters/quota-engine.js';
 import {
   createFleetOrchestrator,
   type FleetMigrationReport,
@@ -411,6 +416,33 @@ export interface TenantForge {
   archiveFleet(options?: { limit?: number }): Promise<BackupSweepReport>;
 
   /**
+   * Check one active tenant's metered consumption over `period` against `quota` (detection only —
+   * emits an audit event; the caller decides whether to act). Requires a usage provider.
+   *
+   * @param id - The tenant to check.
+   * @param period - The billing period to meter.
+   * @param quota - The limits to enforce.
+   * @returns The quota check result (exceeded + breaches).
+   */
+  checkQuota(id: string, period: BillingPeriod, quota: Quota): Promise<QuotaCheckResult>;
+
+  /**
+   * Check every active tenant against `quota` — the scheduled quota sweep. Failure-isolated. With
+   * `enforce: true`, over-quota tenants are **suspended** (reversible) rather than only reported —
+   * opt-in, since auto-suspending a tenant is impactful. Requires a usage provider.
+   *
+   * @param period - The billing period to meter.
+   * @param quota - The limits to enforce.
+   * @param options - Optional scan cap and `enforce` (suspend on breach).
+   * @returns The sweep report.
+   */
+  checkQuotas(
+    period: BillingPeriod,
+    quota: Quota,
+    options?: { limit?: number; enforce?: boolean },
+  ): Promise<QuotaSweepReport>;
+
+  /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
    * tenant is active, provisioned, and has a stored connection secret. The id must be derived
    * server-side from the authenticated principal, never client-supplied (BOLA).
@@ -494,6 +526,18 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       registry,
       snapshots: deps.snapshots,
       ...(deps.archiveExporter !== undefined ? { archiveExporter: deps.archiveExporter } : {}),
+      emit: (event) => eventSink.emit(event),
+    });
+  };
+
+  /** Build the quota engine on demand; fails closed if no usage provider was configured. */
+  const quotaEngine = (): ReturnType<typeof createQuotaEngine> => {
+    if (deps.usageProvider === undefined) {
+      throw new Error('quota operations require a configured usage provider');
+    }
+    return createQuotaEngine({
+      registry,
+      usageProvider: deps.usageProvider,
       emit: (event) => eventSink.emit(event),
     });
   };
@@ -875,6 +919,29 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         period: { from: period.from.toISOString(), to: period.to.toISOString() },
         consumption,
       };
+    },
+
+    checkQuota(id: string, period: BillingPeriod, quota: Quota): Promise<QuotaCheckResult> {
+      assertPeriod(period);
+      return quotaEngine().check(id, period, quota);
+    },
+
+    checkQuotas(
+      period: BillingPeriod,
+      quota: Quota,
+      options?: { limit?: number; enforce?: boolean },
+    ): Promise<QuotaSweepReport> {
+      assertPeriod(period);
+      return quotaEngine().checkAll(period, quota, {
+        ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+        // Enforcement (opt-in): suspend an over-quota tenant via the proper lifecycle transition.
+        ...(options?.enforce === true
+          ? {
+              onBreach: async (tid: string) =>
+                void (await transition(await requireTenant(tid), 'suspended')),
+            }
+          : {}),
+      });
     },
 
     async listTenants(options?: {

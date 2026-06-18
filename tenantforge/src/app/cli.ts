@@ -443,6 +443,51 @@ const archiveFleet = defineCommand({
   },
 });
 
+const checkQuotas = defineCommand({
+  meta: {
+    name: 'check-quotas',
+    description:
+      'Check active tenants against resource quotas for the current month (the scheduled sweep)',
+  },
+  args: {
+    'max-storage-gb': { type: 'string', description: 'Max peak storage per tenant, in GB' },
+    'max-compute-seconds': { type: 'string', description: 'Max CPU-seconds per tenant' },
+    enforce: {
+      type: 'boolean',
+      description: 'Suspend over-quota tenants (reversible) instead of only reporting',
+      default: false,
+    },
+  },
+  async run({ args }) {
+    const quota: { maxStorageBytes?: number; maxComputeTimeSeconds?: number } = {};
+    if (args['max-storage-gb'] !== undefined) {
+      quota.maxStorageBytes = Number(args['max-storage-gb']) * 1_000_000_000;
+    }
+    if (args['max-compute-seconds'] !== undefined) {
+      quota.maxComputeTimeSeconds = Number(args['max-compute-seconds']);
+    }
+    if (Object.keys(quota).length === 0) {
+      process.stdout.write('no limits given (set --max-storage-gb and/or --max-compute-seconds)\n');
+      process.exitCode = 1;
+      return;
+    }
+    // Meter the current calendar month to now.
+    const to = new Date();
+    const from = new Date(to.getFullYear(), to.getMonth(), 1);
+    await withTenantForge(async (tf) => {
+      const report = await tf.checkQuotas({ from, to }, quota, { enforce: args.enforce });
+      process.stdout.write(
+        `quota sweep: ${report.exceeded.length} over quota` +
+          (args.enforce ? ` (${report.enforced.length} suspended)` : '') +
+          `, ${report.failed.length} failed of ${report.scanned} active tenant(s)\n`,
+      );
+      for (const id of report.exceeded) process.stdout.write(`  OVER QUOTA ${id}\n`);
+      for (const f of report.failed) process.stdout.write(`  FAILED ${f.tenantId}: ${f.error}\n`);
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -467,6 +512,7 @@ const main = defineCommand({
     'restore-snapshot': restoreSnapshot,
     archive,
     'archive-fleet': archiveFleet,
+    'check-quotas': checkQuotas,
   },
 });
 
