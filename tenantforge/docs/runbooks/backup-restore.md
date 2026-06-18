@@ -56,6 +56,19 @@ Snapshots are named Neon branches (`snapshot-<ms>`), instant + copy-on-write. Th
 <branch-id> --yes`. Prefer branching off the snapshot in the Neon console first to verify, then
    restore. For recovery beyond the retention/PITR window, use the `pg_dump` archive instead.
 
+## Steps — off-Neon archive (pg_dump → object store)
+
+The durable, long-term tier — archives **survive project deletion** (unlike branches). Enabled when
+`TENANTFORGE_EXPORT_DIR` (the export object store) is configured.
+
+1. **Archive** one: `tenantforge archive <tenant-id>` → prints the artifact location
+   (`archives/{id}/{ts}.dump`). On a schedule: `tenantforge archive-fleet` (failure-isolated).
+2. **Retention** is the **object store's lifecycle policy** (e.g. an S3/GCS lifecycle rule on the
+   `archives/` prefix) — TenantForge does not delete archives. Configure the bucket rule to your
+   retention/compliance window. (Filesystem export is dev-only; no lifecycle.)
+3. **Restore** an archive into a fresh project: `pg_restore -d "<new tenant connection URI>"
+<artifact>` (same as the offboard pg-dump path above).
+
 ## Verification
 
 - Row counts / checksums / spot-checks match; the app connects and passes smoke tests. Record actual

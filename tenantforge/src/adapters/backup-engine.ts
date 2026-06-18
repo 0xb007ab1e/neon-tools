@@ -1,6 +1,8 @@
 import { planSnapshotPrune, type RetentionPolicy } from '../core/snapshot.js';
 import { type TenantEvent } from '../core/observability.js';
+import type { TenantRecord } from '../core/domain.js';
 import type { SnapshotProvider, ProjectSnapshot } from '../ports/snapshot-provider.js';
+import type { TenantExporter, ExportResult } from '../ports/tenant-exporter.js';
 import type { TenantRegistry } from '../ports/tenant-registry.js';
 
 /** Collaborators for {@link createBackupEngine}. */
@@ -9,6 +11,12 @@ export interface BackupEngineDeps {
   registry: TenantRegistry;
   /** Snapshot provider (Neon branch operations). */
   snapshots: SnapshotProvider;
+  /**
+   * Off-Neon archive exporter (pg_dump → object store) for the durable long-term backup tier.
+   * Required only for {@link BackupEngine.archive} / {@link BackupEngine.archiveAll}; when absent,
+   * those fail closed. Archive retention is handled by the object store's lifecycle policy.
+   */
+  archiveExporter?: TenantExporter;
   /** Default retention policy for prune sweeps. Defaults to keeping the 7 newest. */
   retention?: RetentionPolicy;
   /** Optional audit sink. */
@@ -43,6 +51,14 @@ export interface PruneResult {
   pruned: string[];
   /** Snapshots retained. */
   kept: number;
+}
+
+/** The outcome of archiving one tenant (off-Neon pg_dump → object store). */
+export interface ArchiveResult {
+  /** The tenant id. */
+  tenantId: string;
+  /** A reference to the written archive (e.g. an object-store URI). */
+  archive: ExportResult;
 }
 
 /** Upper bound on tenants scanned per sweep. */
@@ -93,6 +109,24 @@ export interface BackupEngine {
    * @param snapshotId - The snapshot (branch) id to restore from.
    */
   restore(tenantId: string, snapshotId: string): Promise<void>;
+
+  /**
+   * Archive one active tenant off-Neon (pg_dump → object store) — the durable, long-term backup
+   * tier. Requires a configured archive exporter; fails closed otherwise.
+   *
+   * @param tenantId - The tenant to archive.
+   * @returns The archive result.
+   */
+  archive(tenantId: string): Promise<ArchiveResult>;
+
+  /**
+   * Archive every active tenant off-Neon — the scheduled long-term backup sweep. Failure-isolated.
+   * Archive retention is the object store's lifecycle policy (S3/GCS), not app-managed.
+   *
+   * @param options - Optional scan cap.
+   * @returns Per-tenant sweep report.
+   */
+  archiveAll(options?: { limit?: number }): Promise<BackupSweepReport>;
 }
 
 /**
@@ -109,17 +143,19 @@ export function createBackupEngine(deps: BackupEngineDeps): BackupEngine {
   const now = deps.now ?? ((): Date => new Date());
   const defaultRetention = deps.retention ?? DEFAULT_RETENTION;
 
-  const requireActive = async (tenantId: string): Promise<string> => {
+  const requireActive = async (
+    tenantId: string,
+  ): Promise<{ tenant: TenantRecord; neonProjectId: string }> => {
     const tenant = await deps.registry.getById(tenantId);
     if (tenant === null) throw new Error(`snapshot: tenant not found: ${tenantId}`);
     if (tenant.status !== 'active' || tenant.neonProjectId === null) {
       throw new Error(`snapshot: tenant ${tenantId} must be active and provisioned`);
     }
-    return tenant.neonProjectId;
+    return { tenant, neonProjectId: tenant.neonProjectId };
   };
 
   const snapshot = async (tenantId: string): Promise<SnapshotResult> => {
-    const neonProjectId = await requireActive(tenantId);
+    const { neonProjectId } = await requireActive(tenantId);
     const at = now();
     const created = await deps.snapshots.createSnapshot(neonProjectId, `snapshot-${at.getTime()}`);
     deps.emit?.({
@@ -133,7 +169,7 @@ export function createBackupEngine(deps: BackupEngineDeps): BackupEngine {
   };
 
   const prune = async (tenantId: string, policy?: RetentionPolicy): Promise<PruneResult> => {
-    const neonProjectId = await requireActive(tenantId);
+    const { neonProjectId } = await requireActive(tenantId);
     const existing = await deps.snapshots.listSnapshots(neonProjectId);
     const { keep, prune: toPrune } = planSnapshotPrune(
       existing,
@@ -179,12 +215,36 @@ export function createBackupEngine(deps: BackupEngineDeps): BackupEngine {
     return { scanned: active.length, succeeded, failed };
   };
 
+  const archive = async (tenantId: string): Promise<ArchiveResult> => {
+    if (deps.archiveExporter === undefined) {
+      throw new Error('archive requires a configured archive exporter');
+    }
+    const { tenant } = await requireActive(tenantId);
+    const result = await deps.archiveExporter.exportTenant(tenant);
+    deps.emit?.({
+      event: 'tenant.archived',
+      at: now().toISOString(),
+      outcome: 'ok',
+      tenantId,
+      context: {
+        location: result.location,
+        ...(result.bytes !== undefined ? { bytes: result.bytes } : {}),
+      },
+    });
+    return { tenantId, archive: result };
+  };
+
   return {
     snapshot,
     prune,
+    archive,
 
     snapshotAll(options: { limit?: number } = {}): Promise<BackupSweepReport> {
       return sweep('tenant.snapshot_sweep', snapshot, options.limit ?? MAX_SWEEP);
+    },
+
+    archiveAll(options: { limit?: number } = {}): Promise<BackupSweepReport> {
+      return sweep('tenant.archive_sweep', archive, options.limit ?? MAX_SWEEP);
     },
 
     pruneAll(
@@ -198,7 +258,7 @@ export function createBackupEngine(deps: BackupEngineDeps): BackupEngine {
     },
 
     async restore(tenantId: string, snapshotId: string): Promise<void> {
-      const neonProjectId = await requireActive(tenantId);
+      const { neonProjectId } = await requireActive(tenantId);
       await deps.snapshots.restoreSnapshot(neonProjectId, snapshotId);
       deps.emit?.({
         event: 'tenant.snapshot_restored',

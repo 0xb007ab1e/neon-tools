@@ -148,4 +148,51 @@ describe('backup engine', () => {
     expect(restored).toEqual({ id: 'branch-x' });
     expect(events.map((e) => e.event)).toContain('tenant.snapshot_restored');
   });
+
+  it('archives an active tenant via the exporter and emits an event', async () => {
+    const exported: string[] = [];
+    const events: TenantEvent[] = [];
+    const engine = createBackupEngine({
+      registry: fakeRegistry([tenant()]),
+      snapshots: fakeSnapshots(),
+      archiveExporter: {
+        exportTenant: async (t) => {
+          exported.push(t.id);
+          return { location: 'file:///archives/t1/x.dump', bytes: 42 };
+        },
+      },
+      emit: (e) => events.push(e),
+    });
+    const result = await engine.archive('t1');
+    expect(exported).toEqual(['t1']);
+    expect(result.archive.location).toBe('file:///archives/t1/x.dump');
+    expect(events.map((e) => e.event)).toContain('tenant.archived');
+  });
+
+  it('archive fails closed when no archive exporter is configured', async () => {
+    const engine = createBackupEngine({
+      registry: fakeRegistry([tenant()]),
+      snapshots: fakeSnapshots(),
+    });
+    await expect(engine.archive('t1')).rejects.toThrow(/requires a configured archive exporter/);
+  });
+
+  it('archiveAll sweeps active tenants (failure-isolated)', async () => {
+    let calls = 0;
+    const engine = createBackupEngine({
+      registry: fakeRegistry([tenant({ id: 't1' }), tenant({ id: 't2' })]),
+      snapshots: fakeSnapshots(),
+      archiveExporter: {
+        exportTenant: async (t) => {
+          calls += 1;
+          if (t.id === 't2') throw new Error('boom');
+          return { location: `file:///archives/${t.id}.dump` };
+        },
+      },
+    });
+    const report = await engine.archiveAll();
+    expect(calls).toBe(2);
+    expect(report.succeeded).toEqual(['t1']);
+    expect(report.failed.map((f) => f.tenantId)).toEqual(['t2']);
+  });
 });

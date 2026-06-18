@@ -8,6 +8,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Scheduled backups — off-Neon pg_dump archive tier** (gap #13, tier 2 of 2) — the durable,
+  long-term complement to the in-Neon branch snapshots: `TenantForge.archive(id)` / `archiveFleet()`
+  (CLI `archive`, `archive-fleet`) `pg_dump` each active tenant to an object store under the
+  `archives/` key prefix, off-Neon so the artifact **survives project deletion** (unlike branches).
+  Reuses the existing `pg_dump`-to-object-store exporter + `spawnPgDump` behind the `TenantExporter`
+  port; wired in the production composition root when an export object store is configured
+  (`TENANTFORGE_EXPORT_DIR`), and fails closed otherwise. Failure-isolated fleet sweep for a cron.
+  **Archive retention is the object store's lifecycle policy** (e.g. S3/GCS lifecycle rules), not
+  app-managed — documented in the backup-restore runbook. Engine paths unit-tested.
+
 - **Scheduled backups — Neon branch snapshots** (gap #13, tier 1 of 2) — point-in-time tenant
   snapshots realized as **Neon branches** (copy-on-write — instant, cheap restore points), with
   scheduled fleet sweeps and retention pruning. New `SnapshotProvider` port + Neon-API adapter

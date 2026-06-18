@@ -192,6 +192,12 @@ destructive) resets the tenant to a snapshot. Snapshots are restore points again
 migrations — **not** project deletion (they live in the project); for long-term off-Neon durability,
 use the `pg_dump` archive path.
 
+**Off-Neon archive tier:** `tf.archive(id)` / `archiveFleet()` (CLI `archive`, `archive-fleet`)
+`pg_dump` each active tenant to an object store (`archives/` prefix) — durable, **survives project
+deletion**, for long-term/compliance retention. Enabled when an export object store is configured
+(`TENANTFORGE_EXPORT_DIR`); archive **retention is the object store's lifecycle policy** (S3/GCS),
+not app-managed.
+
 **Re-homing (residency change):** `tf.rehome(id, { region, residency? })` relocates an **active**
 tenant to a new region — for a residency change (e.g. a customer moves to the EU) or latency. A Neon
 project is region-bound, so it **provisions a new project in the target region, copies the data**
