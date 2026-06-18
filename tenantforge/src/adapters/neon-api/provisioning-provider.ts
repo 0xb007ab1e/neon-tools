@@ -13,6 +13,27 @@ const CreateProjectResponseSchema = z.object({
     .min(1, 'Neon API returned no connection URI for the project'),
 });
 
+/** Project branches (we need the default branch to locate the owner role for rotation). */
+const BranchesResponseSchema = z.object({
+  branches: z
+    .array(z.object({ id: z.string().min(1), default: z.boolean().optional() }))
+    .min(1, 'Neon API returned no branches for the project'),
+});
+
+/** Roles on a branch (we rotate the first role — the project owner). */
+const RolesResponseSchema = z.object({
+  roles: z
+    .array(z.object({ name: z.string().min(1) }))
+    .min(1, 'Neon API returned no roles for the branch'),
+});
+
+/** Reset-password response: a fresh connection URI for the rotated role. */
+const ResetPasswordResponseSchema = z.object({
+  connection_uris: z
+    .array(z.object({ connection_uri: z.string().min(1) }))
+    .min(1, 'Neon API returned no connection URI for the rotated role'),
+});
+
 /** Configuration for the Neon API provisioning provider. */
 export interface NeonProvisioningOptions {
   /** Neon API key (bearer token) — a secret read from config. */
@@ -125,6 +146,21 @@ export function createNeonProvisioningProvider(
 
     async deleteTenantProject(neonProjectId: string): Promise<void> {
       await api('DELETE', `/projects/${encodeURIComponent(neonProjectId)}`);
+    },
+
+    async rotateTenantCredential(neonProjectId: string): Promise<{ connectionUri: string }> {
+      // Reset the owner role's password on the project's default branch → a fresh connection URI.
+      // (Integration-verified via the live game-day, like the other Neon API calls.)
+      const projectPath = `/projects/${encodeURIComponent(neonProjectId)}`;
+      const branches = BranchesResponseSchema.parse(await api('GET', `${projectPath}/branches`));
+      const branch = branches.branches.find((b) => b.default === true) ?? branches.branches[0]!;
+      const branchPath = `${projectPath}/branches/${encodeURIComponent(branch.id)}`;
+      const roles = RolesResponseSchema.parse(await api('GET', `${branchPath}/roles`));
+      const roleName = roles.roles[0]!.name;
+      const reset = ResetPasswordResponseSchema.parse(
+        await api('POST', `${branchPath}/roles/${encodeURIComponent(roleName)}/reset_password`),
+      );
+      return { connectionUri: reset.connection_uris[0]!.connection_uri };
     },
   };
 }
