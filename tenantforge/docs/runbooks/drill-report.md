@@ -29,9 +29,9 @@ Three layers of validation, strongest first:
 
 3. **Executed live — the automated Neon path (2026-06-17).** With a non-prod org's credentials the
    full integration suite ran against real Neon (10/10 passed) — provision/delete projects, the
-   lifecycle smoke, and the fleet migrate + revert. See the dedicated section below. The two
-   **manual-only console** steps (real `NEON_API_KEY` rotation, Neon PITR/branch restore) remain
-   to be drilled by hand.
+   lifecycle smoke, and the fleet migrate + revert. See the dedicated section below. The
+   **`NEON_API_KEY` rotation** was also drilled (suite re-run 10/10 on the rotated key). One
+   **manual-only console** step remains: the Neon PITR/branch restore.
 
 ## Finding (fixed in this pass)
 
@@ -47,17 +47,17 @@ All other referenced commands, flags, HTTP routes (`/health`, `/v1/*`), registry
 
 ## Per-runbook status
 
-| Runbook                  | Validation                                                                                 |
-| ------------------------ | ------------------------------------------------------------------------------------------ |
-| deploy                   | Registry `migrate` executed; **drift fixed**; live provision/purge smoke pending (Neon).   |
-| rollback                 | Stuck-in-`provisioning` query **executed**; live app rollback is operator/deploy-specific. |
-| fleet-migration-rollback | §2 assessment + failure-list queries **executed**; live revert migration pending (Neon).   |
-| backup-restore           | Registry status query **executed**; Neon PITR/branch restore pending (Neon).               |
-| secret-rotation          | Traced (`SecretStore.set/get`, `/health`); live key/cred rotation pending (Neon org).      |
-| on-call                  | Traced; its registry triage queries are the ones executed above.                           |
-| scaling                  | Traced (procedural — Neon `429`/pool/batch guidance; no automatable assertion).            |
-| incident-response        | Traced (procedural — containment-by-vector; SecretStore-vs-registry payoff confirmed).     |
-| dependency-patch         | Already exercised for real in the vitest/vite/esbuild remediation.                         |
+| Runbook                  | Validation                                                                                     |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| deploy                   | Registry `migrate` executed; **drift fixed**; live provision/purge smoke pending (Neon).       |
+| rollback                 | Stuck-in-`provisioning` query **executed**; live app rollback is operator/deploy-specific.     |
+| fleet-migration-rollback | §2 assessment + failure-list queries **executed**; live revert migration pending (Neon).       |
+| backup-restore           | Registry status query **executed**; Neon PITR/branch restore pending (Neon).                   |
+| secret-rotation          | **NEON_API_KEY rotation drilled** (suite re-run on the rotated key); DB-cred rotation pending. |
+| on-call                  | Traced; its registry triage queries are the ones executed above.                               |
+| scaling                  | Traced (procedural — Neon `429`/pool/batch guidance; no automatable assertion).                |
+| incident-response        | Traced (procedural — containment-by-vector; SecretStore-vs-registry payoff confirmed).         |
+| dependency-patch         | Already exercised for real in the vitest/vite/esbuild remediation.                             |
 
 ## Live-Neon game-day — executed 2026-06-17
 
@@ -67,14 +67,26 @@ smoke (provision → suspend → resume → offboard → resume → purge), a fl
 re-run + compensating revert on a canary, the provision round-trip, the Postgres queue/worker, and
 the registry assessment queries. All provisioned `gd-*`/canary projects were auto-purged.
 
+- **Also validated in CI:** the `tenantforge-game-day` workflow (manual `workflow_dispatch`, secrets
+  in the maintainer-gated `tenantforge-game-day` Environment) ran the same suite **green** against
+  the non-prod org — a repeatable, re-runnable proof, not just a one-off local run.
 - Observation: a `pg` deprecation warning — `sslmode=require` is currently treated as `verify-full`;
   `pg` v9 will change that. Prefer `sslmode=verify-full` in production DSNs (no action required now).
+- Observation: the CI runner flags the pinned actions as Node-20-based (forced onto Node 24); bump
+  `actions/checkout` / `actions/setup-node` / `pnpm/action-setup` pins at the next CI touch.
+
+## NEON_API_KEY rotation drill — executed 2026-06-17
+
+A new (rotated) non-prod API key was minted in the Neon org; the full game-day suite was re-run with
+it — **10/10 passed** — confirming provisioning/lifecycle/fleet work on the rotated key (the
+`secret-rotation.md` verification step). Revoking the old key is the operator's console step after
+verification.
 
 ## Residual work
 
-- **Manual-only steps not yet drilled:** the **NEON_API_KEY / registry-credential rotation** and the
-  **Neon PITR / branch restore** (both console operations) — see `secret-rotation.md` /
-  `backup-restore.md`. Run them by hand against a non-prod org to fully close R4.
+- **Manual-only step not yet drilled:** the **Neon PITR / branch restore** (console operation) —
+  see `backup-restore.md`. Also the registry-credential (`DATABASE_URL`) rotation. Run by hand
+  against a non-prod org to fully close R4.
 - Re-drill the automated suite after any change to the CLI surface, registry schema, or HTTP contract.
 
 ---

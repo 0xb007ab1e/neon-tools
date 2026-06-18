@@ -6,6 +6,19 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`NEON_API_KEY` rotation drilled** (2026-06-17, threat-model R4): a rotated non-prod key was
+  verified end-to-end by re-running the live game-day suite (10/10) on it — the `secret-rotation.md`
+  verification step. Only the manual Neon PITR-restore console drill now remains before `stable`.
+- **Game-day validated in CI:** the `tenantforge-game-day` workflow ran the live suite green against
+  the non-prod org (Environment secrets) — the drill is now repeatable on demand, not just local.
+
+### Security
+
+- `.gitignore` now excludes editor swap/backup files (`*.swp`, `*~`, `.*.kate-swp`) — a Kate swap of
+  `.env` was otherwise untracked-but-not-ignored, a credential-leak foot-gun.
+
 ## [0.2.0] - 2026-06-17
 
 Hardening release (still **beta**): security hardening + the alternate-backend adapters. Every

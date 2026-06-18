@@ -13,8 +13,9 @@ provisioning and Postgres registry / encrypted secret-store adapters; the full l
 sweep); connection routing; fleet-migration orchestration; per-tenant observability and metering;
 residency enforcement; and a Neon-native (Postgres) queue + worker for async lifecycle — all reachable
 as a **library**, **CLI**, **HTTP** control-plane API, and **MCP** server. Known gaps: the runbook
-game-day passed live against a non-prod org (only the manual-only key-rotation + PITR-restore console
-steps remain to drill), and some adapters (alternate brokers / secret stores / exporters) are deferred
+game-day passed live against a non-prod org and the `NEON_API_KEY` rotation was drilled (only the
+manual-only Neon PITR-restore console step remains), and some adapters (alternate brokers / secret
+stores / exporters) are deferred
 to their own branches. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the design, scope, and
 milestones.
 
@@ -102,8 +103,8 @@ release; a cross-tenant leak or Neon-API-key compromise is a SEV1. The STRIDE
 [threat model](./docs/security/threat-model.md) maps each trust boundary to its mitigation, residual
 risks, and abuse tests. The HTTP API contract is
 [`openapi.yaml`](./openapi.yaml). _(Live-Neon game-day passed 2026-06-17 — 10/10 against a non-prod
-org; [drill report](./docs/runbooks/drill-report.md). Only the manual-only key-rotation + PITR-restore
-console steps remain to drill.)_
+org, and the `NEON_API_KEY` rotation was drilled; [drill report](./docs/runbooks/drill-report.md).
+Only the manual-only Neon PITR-restore console step remains to drill.)_
 
 **Per-tenant observability:** every control-plane operation emits a structured, tenant-scoped JSON
 event (provision / transition / connection-resolved-or-denied / fleet-migration / purge-sweep) to

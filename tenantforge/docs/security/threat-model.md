@@ -110,8 +110,8 @@ data). No tenant content is stored in the control plane.
   (pacing provisioning + fleet migration into Neon's real `429` limits) is operator-run against a
   non-prod org — documented in `docs/runbooks/scaling.md`.
 - **R4 — automated live-Neon game-day passed** (2026-06-17, non-prod org; 10/10 — see
-  `docs/runbooks/drill-report.md`). Remaining: the manual-only `NEON_API_KEY` rotation + Neon PITR
-  restore (console ops) to fully close it.
+  `docs/runbooks/drill-report.md`), and the **`NEON_API_KEY` rotation** was drilled (suite re-run
+  10/10 on the rotated key). Remaining: the **Neon PITR / branch restore** (console op) to fully close it.
 
 Residual risks are owned by the maintainers, time-boxed at the next review, and gate the
 `beta → stable` promotion.
