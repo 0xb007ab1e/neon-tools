@@ -49,4 +49,4 @@
 
 ---
 
-_Last validated: 2026-06-17 — registry `migrate` executed in the drill; the deploy-smoke drift was caught + fixed; live provision/purge smoke pending a Neon game-day ([drill-report](./drill-report.md)). Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — **live-Neon game-day passed** against a non-prod org: the provision → purge smoke ran end-to-end (registry `migrate`, provision, teardown). The deploy-smoke drift was caught + fixed earlier. See [drill-report](./drill-report.md). Owner: TenantForge maintainers._

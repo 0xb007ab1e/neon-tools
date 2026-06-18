@@ -63,4 +63,4 @@
 
 ---
 
-_Last validated: 2026-06-17 — registry status query executed in the drill ([drill-report](./drill-report.md)); Neon PITR/branch restore pending a Neon game-day. Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — **partially** in the live-Neon game-day: the offboard→resume "restore" path ran end-to-end against a non-prod org, and the registry status query executed in the drill. The **Neon PITR / branch restore** (console operation) is still manual-only and not yet drilled. See [drill-report](./drill-report.md). Owner: TenantForge maintainers._

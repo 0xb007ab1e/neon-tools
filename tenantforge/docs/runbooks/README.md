@@ -17,8 +17,8 @@ can execute them under pressure (`@rules/workflow-runbooks.md`). Linked from ale
 | [dependency-patch](./dependency-patch.md)                 | Patch a vulnerable dependency (workspace overrides).                              |
 | [game-day](./game-day.md)                                 | Periodic live-Neon drill of these runbooks against a non-prod org.                |
 
-> **Status:** first drill done (2026-06-17) — see the [drill report](./drill-report.md). The
-> registry & queue layers were **executed** against an ephemeral Postgres; all commands/queries
-> were traced to code (one `deploy.md` drift caught + fixed). The **live-Neon path** (real
-> provision/purge, key rotation, PITR restore) still needs an operator-run game-day — each
-> runbook's footer tracks its own validation state.
+> **Status:** drilled (2026-06-17) — see the [drill report](./drill-report.md). The **live-Neon
+> game-day passed** against a non-prod org (10/10: provision→purge lifecycle, fleet migrate+revert,
+> queue/worker, registry queries); the registry/queue layers were also exercised against an
+> ephemeral Postgres, and one `deploy.md` drift was caught + fixed. **Remaining:** the manual-only
+> `NEON_API_KEY` rotation and Neon PITR restore (console ops). Each footer tracks its own state.
