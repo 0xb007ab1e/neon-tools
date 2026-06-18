@@ -8,6 +8,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **NATS JetStream message-queue backend** (`createNatsMessageQueue`) behind the `MessageQueue`
+  port — the final deferred broker, alongside the Postgres / SQS / Pub/Sub / in-memory adapters. Zero
+  new dependencies: it takes a minimal injected client (a `nats` JetStream pull consumer satisfies it
+  via a small shim); JetStream provides the at-least-once delivery + per-message ack the port assumes.
+  `receive` fetches and maps to `{ id, body }` retaining each message's ack/nak controls (malformed
+  JSON passed through so the consumer dead-letters it); `ack` acks; `deadLetter` publishes to an
+  optional DLQ subject + acks the original, or **nacks** for JetStream's native `MaxDeliver` +
+  dead-letter advisory; `enqueue` publishes to the source subject. The irreversible `purge` is never
+  a queue command. Unit-tested at 100%.
+
 - **Google Pub/Sub message-queue backend** (`createPubSubMessageQueue`) behind the `MessageQueue`
   port — the lifecycle broker for GCP, alongside the Postgres / SQS / in-memory adapters. Zero new
   dependencies: it takes a minimal injected client (the `@google-cloud/pubsub` client satisfies it
