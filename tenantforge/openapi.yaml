@@ -42,6 +42,25 @@ paths:
                   tool: { type: string }
                   version: { type: string }
                 required: [status, tool, version]
+  /ready:
+    get:
+      tags: [meta]
+      summary: Readiness probe — checks critical dependencies (registry connectivity).
+      description: >
+        200 when every dependency check passes; 503 when degraded so an orchestrator stops routing
+        traffic to this instance. Distinct from the static liveness probe at /health.
+      security: []
+      responses:
+        '200':
+          description: All dependencies healthy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthReport' }
+        '503':
+          description: A dependency is degraded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthReport' }
   /v1/tenants:
     post:
       tags: [tenants]
@@ -211,6 +230,16 @@ components:
     TenantStatus:
       type: string
       enum: [provisioning, active, suspended, offboarding, deleted]
+    HealthReport:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        checks:
+          type: object
+          properties:
+            registry: { type: string, enum: [ok, error] }
+          required: [registry]
+      required: [status, checks]
     Tenant:
       type: object
       description: A control-plane tenant record (metadata only — never tenant content).

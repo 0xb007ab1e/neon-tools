@@ -136,9 +136,17 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
 
   app.use('*', secureHeaders());
 
+  // Liveness: the process is up (static — no dependency checks).
   app.get('/health', (c) =>
     c.json({ status: 'ok', tool: TENANTFORGE.id, version: TENANTFORGE.version }),
   );
+
+  // Readiness: probe critical dependencies (registry connectivity). 503 when degraded so an
+  // orchestrator stops routing traffic to an instance that can't serve (topic-reliability).
+  app.get('/ready', async (c) => {
+    const report = await tf.health();
+    return c.json(report, report.status === 'ok' ? 200 : 503);
+  });
 
   // AuthN: resolve the bearer token to a principal via the authenticator (token match or OIDC JWT).
   const authenticate: MiddlewareHandler<Env> = async (c, next) => {

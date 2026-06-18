@@ -22,6 +22,7 @@ const tenant: TenantRecord = {
 /** Permissive TenantForge so every documented route resolves (we assert routing, not behavior). */
 const permissiveTf = (): TenantForge =>
   ({
+    health: () => Promise.resolve({ status: 'ok', checks: { registry: 'ok' } }),
     provision: () => Promise.resolve({ tenant, connectionUri: 'x' }),
     listTenants: () => Promise.resolve([tenant]),
     getTenant: () => Promise.resolve(tenant),

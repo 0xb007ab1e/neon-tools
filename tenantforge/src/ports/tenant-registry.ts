@@ -27,6 +27,12 @@ export interface TenantRegistry {
   migrate(): Promise<void>;
 
   /**
+   * Cheap connectivity check (e.g. `SELECT 1`) for readiness probes. Resolves when the registry is
+   * reachable; rejects otherwise. Touches no tenant data.
+   */
+  ping(): Promise<void>;
+
+  /**
    * Insert a new tenant in `provisioning` status. Fails if the slug already exists (idempotency is
    * enforced at the unique-slug constraint).
    *

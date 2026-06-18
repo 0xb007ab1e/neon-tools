@@ -168,10 +168,31 @@ export interface ProvisionOutcome {
   connectionUri: string | null;
 }
 
+/** A readiness report: overall status plus per-dependency check results. */
+export interface HealthReport {
+  /** `ok` when every dependency check passed; `degraded` otherwise. */
+  status: 'ok' | 'degraded';
+  /** Per-dependency outcomes. */
+  checks: {
+    /** Control-plane registry connectivity (the hard dependency for every operation). */
+    registry: 'ok' | 'error';
+  };
+}
+
 /** The TenantForge control-plane API (library surface). */
 export interface TenantForge {
   /** Apply the control-plane registry migrations idempotently. */
   migrate(): Promise<void>;
+
+  /**
+   * Readiness check: probe critical dependencies (registry connectivity) and report status. Fail-soft
+   * — never throws; a failed dependency yields `status: 'degraded'`. Use for a readiness probe
+   * (distinct from a static liveness check). The Neon API is a per-call upstream (its own timeouts /
+   * bounded retries), deliberately **not** probed here to avoid hitting it on every readiness tick.
+   *
+   * @returns The health report.
+   */
+  health(): Promise<HealthReport>;
 
   /**
    * Provision a tenant: create an isolated Neon project, record it, and activate the tenant.
@@ -415,6 +436,19 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   };
 
   return {
+    async health(): Promise<HealthReport> {
+      let registryCheck: 'ok' | 'error' = 'ok';
+      try {
+        await registry.ping();
+      } catch {
+        registryCheck = 'error';
+      }
+      return {
+        status: registryCheck === 'ok' ? 'ok' : 'degraded',
+        checks: { registry: registryCheck },
+      };
+    },
+
     async migrate(): Promise<void> {
       await registry.migrate();
     },

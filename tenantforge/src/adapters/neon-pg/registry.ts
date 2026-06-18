@@ -64,6 +64,11 @@ export function createPgTenantRegistry(options: PgRegistryOptions): TenantRegist
   });
 
   return {
+    async ping(): Promise<void> {
+      // Cheap connectivity check for readiness — touches no tenant data.
+      await pool.query('SELECT 1');
+    },
+
     async migrate(): Promise<void> {
       await pool.query(
         `CREATE TABLE IF NOT EXISTS tf_schema_migrations (
