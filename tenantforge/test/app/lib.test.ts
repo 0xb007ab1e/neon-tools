@@ -16,6 +16,7 @@ import type {
 } from '../../src/ports/provisioning-provider.js';
 import { createInMemorySecretStore } from '../../src/adapters/secret-store.js';
 import { createLifecycleHandler, createTenantForge } from '../../src/app/lib.js';
+import { runWithActor } from '../../src/app/actor-context.js';
 
 /** Minimal in-memory tenant registry for hermetic unit tests. */
 function fakeRegistry(): TenantRegistry & { seed(record: TenantRecord): void } {
@@ -736,6 +737,31 @@ describe('createTenantForge observability', () => {
       expect(typeof e.at).toBe('string');
       expect(JSON.stringify(e)).not.toContain('postgresql://'); // connection URI never leaks
     }
+  });
+
+  it('attributes events to the operator in scope (audit who-did-what), and none when absent', async () => {
+    const events: TenantEvent[] = [];
+    const make = () =>
+      createTenantForge({
+        registry: fakeRegistry(),
+        provisioning: fakeProvisioning(),
+        secretStore: createInMemorySecretStore(),
+        eventSink: { emit: (e: TenantEvent) => events.push(e) },
+        defaultRegion: 'aws-us-east-1',
+      });
+
+    // Run within an operator context → every emitted event carries that actor.
+    await runWithActor({ id: 'op-7', role: 'admin' }, async () => {
+      await make().provision({ slug: 'acme' });
+    });
+    expect(events.length).toBeGreaterThan(0);
+    for (const e of events) expect(e.actor).toEqual({ id: 'op-7', role: 'admin' });
+
+    // Run with no context (e.g. a cron sweep) → no attribution, but emission still works.
+    events.length = 0;
+    await make().provision({ slug: 'beta' });
+    expect(events.length).toBeGreaterThan(0);
+    for (const e of events) expect(e.actor).toBeUndefined();
   });
 
   it('emits a connection_denied event (no URI) when routing fails closed', async () => {

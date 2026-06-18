@@ -8,6 +8,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Operator audit attribution** (gap #10) — every control-plane event now records **who** performed
+  the action (`TenantEvent.actor = { id, role }`), closing the who-did-what-when gap for
+  non-repudiation (NIST AU, SOC2 change management, OWASP A09). A request-scoped actor context
+  (`app/actor-context`, `AsyncLocalStorage` — like a correlation id) is set once at each entrypoint
+  and read at the facade's single event-emit chokepoint, so no operation signature changes: the HTTP
+  API attributes to the authenticated **principal** (`{ id, role }`), the CLI to the invoking OS user
+  (`cli:<user>`), and the MCP agent surface to a fixed `mcp` operator. Actions with no request
+  context (e.g. scheduled `rotateSecrets`/`purgeExpired` sweeps) are emitted unattributed rather than
+  mislabelled. `actor.id` is an operator identity, never a secret. Context module + facade/HTTP/MCP
+  attribution unit-tested.
+
 - **Keyset pagination for the tenant list** (gap #9) — opaque `(created_at, id)` cursors let clients
   page a large fleet without `OFFSET` scans, consistently across all three control-plane surfaces.
   The pure `encodeCursor`/`decodeCursor` core (base64url `created_at|id`, opaque so clients treat it

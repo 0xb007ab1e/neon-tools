@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { userInfo } from 'node:os';
 import { defineCommand, runMain } from 'citty';
 import type { TenantRecord } from '../core/index.js';
 import { decodeCursor, encodeCursor } from '../core/index.js';
+import { runWithActor } from './actor-context.js';
 import { parseLifecycleCommand } from '../adapters/lifecycle-command.js';
 import { createPgMessageQueue } from '../adapters/neon-pg/message-queue.js';
 import { loadConfig } from './config.js';
@@ -16,8 +18,10 @@ import { type TenantForge, tenantForgeFromConfig } from './lib.js';
  */
 async function withTenantForge<T>(fn: (tf: TenantForge) => Promise<T>): Promise<T> {
   const tf = tenantForgeFromConfig(loadConfig());
+  // Attribute CLI actions to the invoking OS user in the audit stream.
+  const actor = { id: `cli:${userInfo().username}`, role: 'admin' };
   try {
-    return await fn(tf);
+    return await runWithActor(actor, () => fn(tf));
   } finally {
     await tf.close();
   }

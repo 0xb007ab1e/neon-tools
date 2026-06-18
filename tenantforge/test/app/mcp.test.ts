@@ -3,6 +3,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 import { createMcpServer } from '../../src/app/mcp-server.js';
 import { decodeCursor } from '../../src/core/index.js';
+import { currentActor } from '../../src/app/actor-context.js';
 import type { TenantRecord } from '../../src/core/domain.js';
 import type { TenantForge } from '../../src/app/lib.js';
 
@@ -117,6 +118,21 @@ describe('MCP server', () => {
     });
     expect(body(result)).toContain('invalid cursor');
     expect(called).toBe(false);
+    await client.close();
+  });
+
+  it('attributes a mutating tool call to the mcp operator (audit context)', async () => {
+    let seen: unknown = 'unset';
+    const client = await connect(
+      fakeTf({
+        suspend: async () => {
+          seen = currentActor();
+          return tenant;
+        },
+      }),
+    );
+    await client.callTool({ name: 'tf_suspend', arguments: { id: 't1' } });
+    expect(seen).toEqual({ id: 'mcp', role: 'admin' });
     await client.close();
   });
 
