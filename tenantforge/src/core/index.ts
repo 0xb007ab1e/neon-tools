@@ -19,6 +19,12 @@ export { assertRoutable, type RoutableTenant } from './routing.js';
 export { retentionCutoff, isPurgeable, type RetainableTenant } from './retention.js';
 export { redactSecrets, type TenantEvent } from './observability.js';
 export {
+  buildErasureCertificate,
+  type ErasureCertificate,
+  type ErasureVerification,
+  type ErasureSteps,
+} from './erasure.js';
+export {
   assertPeriod,
   aggregateConsumption,
   type BillingPeriod,

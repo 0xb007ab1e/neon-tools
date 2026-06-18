@@ -142,6 +142,15 @@ secrets always redacted. Plug a metrics/SIEM backend via the `EventSink` port.
 (compute/active seconds, bytes written, peak storage) over a period for billing — pulled on demand
 from Neon's consumption API via the `UsageProvider` port (no usage data stored in the control plane).
 
+**Right to erasure (GDPR Art. 17 / CCPA):** `tf.erase(id, { reason })` (the **ErasureEngine**) is the
+legal-override deletion path — it applies from **any** state (unlike `purge`, which requires an
+offboarded tenant). It optionally produces a final subject export, deletes the Neon project,
+crypto-shreds the connection secret, marks the record `deleted`, then **verifies** the post-conditions
+(secret unreadable + status deleted) and returns an auditable **erasure certificate** (no secrets) —
+emitted as a `tenant.erased` event (`outcome: 'error'` if a post-condition fails, so monitoring
+catches an incomplete erasure). The control-plane registry holds no tenant content, so this erases the
+personal data. `createErasureEngine` is also exported for standalone composition.
+
 **Data residency:** provisioning is fail-closed on residency. A deployment can pin the regions
 tenants may use via `TENANTFORGE_ALLOWED_REGIONS` (e.g. EU-only), and each provision may require a
 jurisdiction (`--residency us|eu|apac`). With an explicit region, that region must satisfy the

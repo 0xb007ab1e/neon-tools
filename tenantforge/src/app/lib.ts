@@ -16,6 +16,7 @@ import {
   type TenantRecord,
   type TenantStatus,
   type TenantUsage,
+  type ErasureCertificate,
 } from '../core/index.js';
 import { createNeonProvisioningProvider } from '../adapters/neon-api/provisioning-provider.js';
 import { createPgTenantRegistry } from '../adapters/neon-pg/registry.js';
@@ -27,6 +28,7 @@ import { createNeonArchiveExporter } from '../adapters/neon-archive-exporter.js'
 import { createPgDumpExporter, spawnPgDump } from '../adapters/pg-dump/exporter.js';
 import { createFilesystemObjectStore } from '../adapters/object-store/filesystem.js';
 import { createJsonEventSink, createNoopEventSink } from '../adapters/event-sink.js';
+import { createErasureEngine, type EraseOptions } from '../adapters/erasure-engine.js';
 import {
   createFleetOrchestrator,
   type FleetMigrationReport,
@@ -234,6 +236,19 @@ export interface TenantForge {
    * @returns Per-tenant sweep report (scanned / purged / failed).
    */
   purgeExpired(options?: PurgeSweepOptions): Promise<PurgeSweepReport>;
+
+  /**
+   * Erase a tenant under a right-to-erasure request (GDPR Art. 17 / CCPA — ErasureEngine #17): an
+   * optional final export, then delete the project, crypto-shred the secret, mark `deleted`, verify,
+   * and return an auditable {@link ErasureCertificate}. Unlike {@link TenantForge.purge}, erasure is
+   * the legal-override path — it applies from **any** state, not just an offboarded tenant. Inspect
+   * the certificate's `verified` flag; a `false` is a remediation signal (the data is already gone).
+   *
+   * @param id - The tenant to erase.
+   * @param options - The audit reason and export choice.
+   * @returns The erasure certificate.
+   */
+  erase(id: string, options: EraseOptions): Promise<ErasureCertificate>;
 
   /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
@@ -450,6 +465,18 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
 
     async purge(id: string): Promise<TenantRecord> {
       return purgeTenant(await requireTenant(id));
+    },
+
+    erase(id: string, options: EraseOptions): Promise<ErasureCertificate> {
+      // Compose the ErasureEngine over the already-injected ports; audit through the same sink.
+      const engine = createErasureEngine({
+        registry,
+        provisioning,
+        secretStore,
+        ...(exporter ? { exporter } : {}),
+        emit: (event) => eventSink.emit(event),
+      });
+      return engine.erase(id, options);
     },
 
     async purgeExpired(options: PurgeSweepOptions = {}): Promise<PurgeSweepReport> {

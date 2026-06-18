@@ -231,6 +231,30 @@ describe('createTenantForge.provision', () => {
   });
 });
 
+describe('createTenantForge.erase', () => {
+  it('erases an active tenant (override path) and returns a verified certificate', async () => {
+    const registry = fakeRegistry();
+    const provisioning = fakeProvisioning();
+    const secretStore = createInMemorySecretStore();
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    expect(tenant.status).toBe('active');
+
+    const cert = await tf.erase(tenant.id, { reason: 'GDPR Art.17 #7' });
+    expect(cert.tenantId).toBe(tenant.id);
+    expect(cert.reason).toBe('GDPR Art.17 #7');
+    expect(cert.projectDeleted).toBe(true);
+    expect(cert.verified).toBe(true);
+    expect(await secretStore.get(tenant.id)).toBeNull();
+    expect((await tf.getTenant(tenant.id))?.status).toBe('deleted');
+  });
+});
+
 describe('createTenantForge lifecycle', () => {
   let registry: ReturnType<typeof fakeRegistry>;
   let provisioning: ReturnType<typeof fakeProvisioning>;
