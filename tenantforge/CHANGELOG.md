@@ -8,6 +8,14 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **ResidencyRouter** (ARCHITECTURE #16) — `selectRegion` / `compliantRegions` in the pure core
+  _choose_ a residency-compliant provisioning region from a jurisdiction + the org allow-list
+  (deterministic, preferring the default when it qualifies), complementing the existing assert-style
+  checks that validate an explicitly chosen region. `provision` now uses it: with no `region` but a
+  required `residency`, a compliant region is auto-selected (e.g. `--residency eu` lands in an EU
+  region without naming one); no compliant region fails closed (std-privacy). Pure, unit-tested at
+  100%; backward-compatible (explicit-region path unchanged).
+
 - **NATS JetStream message-queue backend** (`createNatsMessageQueue`) behind the `MessageQueue`
   port — the final deferred broker, alongside the Postgres / SQS / Pub/Sub / in-memory adapters. Zero
   new dependencies: it takes a minimal injected client (a `nats` JetStream pull consumer satisfies it
