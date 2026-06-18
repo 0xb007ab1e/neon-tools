@@ -102,7 +102,10 @@ they need their SDK at the composition root — same approach as the SQS queue):
 (`createAwsSecretsManagerStore`) takes a minimal injected client (wrap your
 `@aws-sdk/client-secrets-manager` client with a small shim) so it adds **zero dependencies**; `set`
 creates-or-updates the secret and `delete` force-deletes without a recovery window (crypto-shred on
-offboard). GCP Secret Manager / Azure Key Vault follow the same shape in their own branches.
+offboard). **GCP Secret Manager** (`createGcpSecretManagerStore`) follows the same shape over the
+`@google-cloud/secret-manager` client: `set` creates the secret then adds a version, `get` accesses
+`latest`, and `delete` removes the secret and all versions (crypto-shred). Azure Key Vault follows in
+its own branch.
 
 **Offboard export** is selected by `TENANTFORGE_EXPORTER`: `neon-archive` (default — retain the Neon
 project scaled-to-zero, no data movement) or `pg-dump` (dump the tenant DB to an object store; set
