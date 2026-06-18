@@ -1,0 +1,65 @@
+name: TenantForge Game-Day (live Neon)
+
+# Opt-in, MANUAL only. This drills the runbooks against a LIVE, NON-PROD Neon org: it provisions and
+# purges throwaway tenant projects, applies + reverts a fleet migration, and exercises the lifecycle.
+# Never runs on push/PR (it touches real cloud resources) — a maintainer triggers it deliberately.
+#
+# Prerequisites (a maintainer configures these once, in the `tenantforge-game-day` Environment):
+#   - DATABASE_URL  — a THROWAWAY non-prod control-plane registry Postgres (never prod).
+#   - NEON_API_KEY  — least-privilege key scoped to the non-prod org.
+#   - NEON_ORG_ID   — the non-prod org id.
+# Restrict the Environment to maintainers (and optionally required reviewers) so the gate holds.
+# See tenantforge/docs/runbooks/game-day.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'run' to confirm a live game-day against the NON-PROD Neon org."
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+
+# One game-day at a time — concurrent runs would race on the shared non-prod org/registry.
+concurrency:
+  group: tenantforge-game-day
+  cancel-in-progress: false
+
+jobs:
+  game-day:
+    if: ${{ github.event.inputs.confirm == 'run' }}
+    runs-on: ubuntu-latest
+    environment: tenantforge-game-day
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Preflight: fail loudly if the Environment secrets are missing. Without them the integration
+      # suite self-skips and would report a misleading green "drill passed" — so we refuse to run.
+      - name: Preflight — require live-Neon credentials
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_ORG_ID: ${{ secrets.NEON_ORG_ID }}
+        run: |
+          missing=()
+          [ -z "$DATABASE_URL" ] && missing+=(DATABASE_URL)
+          [ -z "$NEON_API_KEY" ] && missing+=(NEON_API_KEY)
+          [ -z "$NEON_ORG_ID" ] && missing+=(NEON_ORG_ID)
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing game-day secrets: ${missing[*]}. Configure them in the tenantforge-game-day Environment."
+            exit 1
+          fi
+          echo "All live-Neon credentials present; running the game-day."
+      - name: Game-day — live integration drill
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_ORG_ID: ${{ secrets.NEON_ORG_ID }}
+        run: pnpm --filter tenantforge test:int

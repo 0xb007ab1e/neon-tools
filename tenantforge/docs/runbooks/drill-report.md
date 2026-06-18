@@ -61,10 +61,12 @@ All other referenced commands, flags, HTTP routes (`/health`, `/v1/*`), registry
 
 ## Residual work (to fully retire "not yet drilled")
 
-- A **live-Neon game-day** with a non-prod org: run the deploy smoke (`provision` → `offboard` →
-  `purge --yes`), a real fleet `migrate-fleet` + compensating revert, a `NEON_API_KEY` rotation
-  canary, and a Neon PITR registry restore. Gated (real cloud resources/secrets) — run by an
-  operator with credentials, then stamp the live date into each footer.
+- A **live-Neon game-day** with a non-prod org — now a documented, one-click procedure:
+  [`game-day.md`](./game-day.md). It is automated (the `lifecycle` / `fleet` / `provision` / `queue`
+  integration tests + the manual `NEON_API_KEY`-rotation and PITR-restore steps) and runnable via the
+  `tenantforge-game-day` CI workflow or `pnpm --filter tenantforge test:int` with non-prod
+  credentials. **Still pending execution** against a real non-prod org (no live credentials wired into
+  CI yet); once run clean, stamp the live date into each footer here and in the runbooks.
 - Re-drill after any change to the CLI surface, registry schema, or HTTP contract.
 
 ---

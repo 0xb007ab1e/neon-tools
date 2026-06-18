@@ -8,6 +8,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Live-Neon game-day** (`docs/runbooks/game-day.md`): a documented, opt-in drill of the runbooks
+  against a non-prod Neon org. Backed by two new self-skipping integration tests —
+  `lifecycle.int.test.ts` (provision → suspend → resume → offboard → resume-restore → purge) and
+  `fleet.int.test.ts` (fleet migrate → idempotent re-run → compensating revert) — plus a manual-only
+  `NEON_API_KEY` rotation and PITR-restore procedure. Runnable via the maintainer-gated
+  `tenantforge-game-day` GitHub Actions workflow (manual dispatch, preflight-guarded secrets) or
+  `pnpm --filter tenantforge test:int` with non-prod credentials.
 - Runbook **drill report** (`docs/runbooks/drill-report.md`) and an automated registry-query drill
   (`test/integration/drill.int.test.ts`) that runs the runbooks' documented `psql` assessment
   queries against the real schema. The registry & queue layers were executed against an ephemeral

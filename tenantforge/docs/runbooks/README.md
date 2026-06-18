@@ -15,6 +15,7 @@ can execute them under pressure (`@rules/workflow-runbooks.md`). Linked from ale
 | [scaling](./scaling.md)                                   | Scale the real constraint (Neon API limits / fleet batch / DB pool).              |
 | [secret-rotation](./secret-rotation.md)                   | Rotate the Neon API key, registry creds, HTTP token, per-tenant secrets.          |
 | [dependency-patch](./dependency-patch.md)                 | Patch a vulnerable dependency (workspace overrides).                              |
+| [game-day](./game-day.md)                                 | Periodic live-Neon drill of these runbooks against a non-prod org.                |
 
 > **Status:** first drill done (2026-06-17) — see the [drill report](./drill-report.md). The
 > registry & queue layers were **executed** against an ephemeral Postgres; all commands/queries
