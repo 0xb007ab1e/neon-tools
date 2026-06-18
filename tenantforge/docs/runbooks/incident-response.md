@@ -54,4 +54,4 @@
 
 ---
 
-_Last validated: not yet drilled (beta). Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — procedural; traced to code in the drill ([drill-report](./drill-report.md)); SecretStore-vs-registry containment payoff confirmed. Owner: TenantForge maintainers._

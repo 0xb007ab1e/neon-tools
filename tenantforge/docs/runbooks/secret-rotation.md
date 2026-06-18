@@ -63,4 +63,4 @@
 
 ---
 
-_Last validated: not yet drilled (beta). Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — commands traced to code in the drill ([drill-report](./drill-report.md)); live key/cred rotation pending a Neon game-day. Owner: TenantForge maintainers._

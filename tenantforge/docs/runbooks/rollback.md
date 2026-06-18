@@ -49,4 +49,4 @@
 
 ---
 
-_Last validated: not yet drilled (beta). Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — stuck-in-`provisioning` query executed in the drill ([drill-report](./drill-report.md)); live app rollback is deploy-specific. Owner: TenantForge maintainers._

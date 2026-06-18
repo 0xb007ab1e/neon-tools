@@ -13,8 +13,8 @@ provisioning and Postgres registry / encrypted secret-store adapters; the full l
 sweep); connection routing; fleet-migration orchestration; per-tenant observability and metering;
 residency enforcement; and a Neon-native (Postgres) queue + worker for async lifecycle — all reachable
 as a **library**, **CLI**, **HTTP** control-plane API, and **MCP** server. Known gaps: the runbooks
-are drafted but not yet drilled, and some adapters (alternate brokers / secret stores / exporters) are
-deferred to their own branches. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the design, scope, and
+are drilled at the registry/queue layer but the live-Neon game-day is still pending, and some adapters
+(alternate brokers / secret stores / exporters) are deferred to their own branches. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the design, scope, and
 milestones.
 
 ## Quickstart
@@ -78,7 +78,8 @@ Runbooks live in [`docs/runbooks/`](./docs/runbooks/) ([index](./docs/runbooks/R
 rollback, [fleet-migration rollback](./docs/runbooks/fleet-migration-rollback.md), incident-response,
 backup-restore, on-call, scaling, secret-rotation, and dependency-patch. A fleet migration is a
 release; a cross-tenant leak or Neon-API-key compromise is a SEV1. The HTTP API contract is
-[`openapi.yaml`](./openapi.yaml). _(Runbooks are drafted and not yet drilled (beta).)_
+[`openapi.yaml`](./openapi.yaml). _(Runbooks drilled at the registry/queue layer on 2026-06-17 —
+[drill report](./docs/runbooks/drill-report.md); the live-Neon game-day is still pending.)_
 
 **Per-tenant observability:** every control-plane operation emits a structured, tenant-scoped JSON
 event (provision / transition / connection-resolved-or-denied / fleet-migration / purge-sweep) to

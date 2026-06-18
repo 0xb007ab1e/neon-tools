@@ -48,4 +48,4 @@
 
 ---
 
-_Last validated: not yet drilled (beta). Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — triage queries executed; rest traced to code in the drill ([drill-report](./drill-report.md)). Owner: TenantForge maintainers._

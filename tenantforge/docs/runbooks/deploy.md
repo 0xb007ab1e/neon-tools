@@ -30,7 +30,9 @@
 ## Verification
 
 - `GET /health` green. Smoke test in a **non-prod org**: `tenantforge provision smoke-$(date +%s)`
-  → active + project id; then `offboard … --yes --skip-export --reason smoke`. Error rate within budget.
+  → `active` + a project id (note the printed tenant id). Tear the smoke tenant down with
+  `tenantforge offboard <id>` (archives it) then `tenantforge purge <id> --yes` (irreversible delete —
+  leaves no canary behind). Error rate within budget.
 
 ## Rollback / abort
 
@@ -47,4 +49,4 @@
 
 ---
 
-_Last validated: not yet drilled (beta). Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — registry `migrate` executed in the drill; the deploy-smoke drift was caught + fixed; live provision/purge smoke pending a Neon game-day ([drill-report](./drill-report.md)). Owner: TenantForge maintainers._
