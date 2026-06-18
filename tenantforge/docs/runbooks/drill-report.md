@@ -47,17 +47,17 @@ All other referenced commands, flags, HTTP routes (`/health`, `/v1/*`), registry
 
 ## Per-runbook status
 
-| Runbook                  | Validation                                                                                     |
-| ------------------------ | ---------------------------------------------------------------------------------------------- |
-| deploy                   | Registry `migrate` executed; **drift fixed**; live provision/purge smoke pending (Neon).       |
-| rollback                 | Stuck-in-`provisioning` query **executed**; live app rollback is operator/deploy-specific.     |
-| fleet-migration-rollback | §2 assessment + failure-list queries **executed**; live revert migration pending (Neon).       |
-| backup-restore           | **PITR drilled** (row-level recovery via a point-in-time branch); status query also executed.  |
-| secret-rotation          | **NEON_API_KEY rotation drilled** (suite re-run on the rotated key); DB-cred rotation pending. |
-| on-call                  | Traced; its registry triage queries are the ones executed above.                               |
-| scaling                  | Traced (procedural — Neon `429`/pool/batch guidance; no automatable assertion).                |
-| incident-response        | Traced (procedural — containment-by-vector; SecretStore-vs-registry payoff confirmed).         |
-| dependency-patch         | Already exercised for real in the vitest/vite/esbuild remediation.                             |
+| Runbook                  | Validation                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| deploy                   | Registry `migrate` executed; **drift fixed**; live provision/purge smoke pending (Neon).          |
+| rollback                 | Stuck-in-`provisioning` query **executed**; live app rollback is operator/deploy-specific.        |
+| fleet-migration-rollback | §2 assessment + failure-list queries **executed**; live revert migration pending (Neon).          |
+| backup-restore           | **PITR drilled** (row-level recovery via a point-in-time branch); status query also executed.     |
+| secret-rotation          | **NEON_API_KEY + DATABASE_URL rotations drilled** (rotated-key suite re-run; DB-cred dual-valid). |
+| on-call                  | Traced; its registry triage queries are the ones executed above.                                  |
+| scaling                  | Traced (procedural — Neon `429`/pool/batch guidance; no automatable assertion).                   |
+| incident-response        | Traced (procedural — containment-by-vector; SecretStore-vs-registry payoff confirmed).            |
+| dependency-patch         | Already exercised for real in the vitest/vite/esbuild remediation.                                |
 
 ## Live-Neon game-day — executed 2026-06-17
 
@@ -82,6 +82,27 @@ it — **10/10 passed** — confirming provisioning/lifecycle/fleet work on the 
 `secret-rotation.md` verification step). Revoking the old key is the operator's console step after
 verification.
 
+## DATABASE_URL registry-credential rotation drill — executed 2026-06-18
+
+The `secret-rotation.md` **DATABASE_URL** procedure (zero-downtime, add-new-before-revoke-old) was
+drilled against the **non-prod** control-plane registry — non-destructively, without touching the
+primary credential. Run via SQL through the owner role (no Neon console needed for the drill):
+
+1. **Add new** — minted a throwaway least-privilege role (`tf_rotate_drill_*`, random password) with
+   `CONNECT` + `USAGE` + DML on the `tf_*` tables — the "new credential."
+2. **Verify dual-valid** — both the **old** (primary) and the **new** credential authenticated and
+   read the registry (`tf_tenants`) concurrently → the dual-valid window is real (the runbook's
+   "verify `/health` + a registry read" step).
+3. **Reject revoked** — a deliberately wrong password was rejected (`password authentication
+failed`); after **revoke + `DROP ROLE`**, the new credential could no longer connect → revocation
+   is complete and fails closed.
+4. **No disruption** — the primary credential still worked throughout; post-drill there were **no
+   residual `tf_rotate_drill_*` roles** and `tf_tenants` was unchanged (0 rows).
+
+Result: **PASS.** Rotating the real `DATABASE_URL` in production is the same flow — mint/rotate the
+role via Neon, roll the new DSN to instances, verify, then revoke the old (the Neon-side credential
+change is the operator's console/API step; the mechanics above are what it exercises).
+
 ## PITR row-level recovery drill — executed 2026-06-18
 
 Strong proof of registry recoverability: a canary row (`pitr-canary`, `active`) was inserted into the
@@ -93,11 +114,11 @@ auto-created `<branch>_old_<ts>` backup) are documented in `backup-restore.md`.
 
 ## Residual work (all `stable` gates drilled)
 
-- **Accepted Low residuals** (not blockers — tracked in `docs/security/threat-model.md`): per-operator
-  OIDC vs. static bearer tokens; the registry-credential (`DATABASE_URL`) rotation (mechanically
-  identical to the drilled API-key flow). _(The multi-instance rate-limit store is now resolved — a
-  Postgres-backed `RateLimitStore` ships behind the port.)_
-- Re-drill the automated suite after any change to the CLI surface, registry schema, or HTTP contract.
+- **Accepted Low residuals** (not blockers — tracked in `docs/security/threat-model.md`): the deferred
+  alternate adapters (other queue brokers / secret stores / exporters), each in its own branch.
+  _(Now resolved: per-operator OIDC ships behind the `Authenticator` port; the multi-instance
+  rate-limit store ships as a Postgres-backed `RateLimitStore`; and both the `NEON_API_KEY` and
+  `DATABASE_URL` rotations are drilled.)_
 - Re-drill the automated suite after any change to the CLI surface, registry schema, or HTTP contract.
 
 ---

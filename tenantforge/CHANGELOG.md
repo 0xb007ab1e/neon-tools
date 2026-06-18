@@ -29,6 +29,15 @@ All notable changes to TenantForge are documented here. The format follows
   store is unit-tested at 100% and the pg store has a self-skipping integration test (cross-instance
   sharing verified against an ephemeral Postgres).
 
+### Changed
+
+- **`DATABASE_URL` (registry-credential) rotation drilled** against a non-prod registry,
+  non-destructively (the last Low residual from the `stable` promotion): the `secret-rotation.md`
+  add-new-before-revoke-old flow was exercised via a throwaway least-privilege role — old and new
+  credentials read the registry concurrently (dual-valid window proven), then revoke + `DROP ROLE`
+  proved a rotated credential is rejected, with the primary credential untouched and no residue. See
+  the [drill report](./docs/runbooks/drill-report.md); `secret-rotation.md` "Last validated" updated.
+
 ## [0.3.0] - 2026-06-18
 
 First **stable** release. Every gating risk (R1–R4) is addressed/drilled — STRIDE threat model +
