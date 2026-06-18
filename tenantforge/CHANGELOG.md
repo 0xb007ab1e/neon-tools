@@ -6,6 +6,14 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-17
+
+Hardening release (still **beta**): security hardening + the alternate-backend adapters. Every
+autonomous `stable` gate is closed (threat model, abuse tests, auth/RBAC/rate-limit, load harness,
+automated live-Neon game-day); promotion to `stable` is gated only on the two manual console drills
+(`NEON_API_KEY` rotation, Neon PITR restore) and accepting the tracked Low residuals
+(`docs/security/threat-model.md`).
+
 ### Changed
 
 - **Live-Neon game-day executed (2026-06-17, threat-model R4).** The integration suite ran against a
@@ -120,4 +128,5 @@ and real-world validation.
 - Alternate adapters — other message brokers (SQS/NATS/Pub-Sub), Vault/cloud secret stores, and
   `pg_dump`→object-store exporters — are deferred to their own branches behind the existing ports.
 
+[0.2.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.2.0
 [0.1.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.1.0
