@@ -144,7 +144,10 @@ from Neon's consumption API via the `UsageProvider` port (no usage data stored i
 
 **Data residency:** provisioning is fail-closed on residency. A deployment can pin the regions
 tenants may use via `TENANTFORGE_ALLOWED_REGIONS` (e.g. EU-only), and each provision may require a
-jurisdiction (`--residency us|eu|apac`) that the chosen region must satisfy (std-privacy).
+jurisdiction (`--residency us|eu|apac`). With an explicit region, that region must satisfy the
+jurisdiction; **with no region, the ResidencyRouter selects a compliant one** from the allow-list
+(preferring the default when it qualifies) — so `provision --residency eu` lands in an EU region
+without naming it. No compliant region ⇒ provisioning fails closed (std-privacy).
 
 **Queue-driven lifecycle (optional):** lifecycle commands (provision / suspend / resume / offboard)
 can be consumed from a queue via the `MessageQueue` port + `createLifecycleConsumer` —

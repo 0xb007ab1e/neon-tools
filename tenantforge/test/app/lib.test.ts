@@ -163,6 +163,32 @@ describe('createTenantForge.provision', () => {
     expect(provisioning.calls).toHaveLength(1);
   });
 
+  it('rejects an explicit region that violates the required residency', async () => {
+    const tf = make();
+    await expect(
+      tf.provision({ slug: 'acme', region: 'aws-us-east-1', residency: 'eu' }),
+    ).rejects.toThrow(/does not satisfy required residency "eu"/);
+  });
+
+  it('auto-selects a compliant region when residency is required and no region is given', async () => {
+    const tf = make(); // default region is US (aws-us-east-1)
+    const { tenant } = await tf.provision({ slug: 'acme', residency: 'eu' });
+    // The router picks the first EU region (the US default does not qualify).
+    expect(tenant.region).toBe('aws-eu-central-1');
+  });
+
+  it('auto-selects within the org allow-list for the required jurisdiction', async () => {
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+      allowedRegions: ['aws-eu-west-2', 'aws-us-east-1'],
+    });
+    const { tenant } = await tf.provision({ slug: 'acme', residency: 'eu' });
+    expect(tenant.region).toBe('aws-eu-west-2'); // only EU region on the allow-list
+  });
+
   it('resumes an interrupted provision (record exists, no project yet)', async () => {
     registry.seed({
       id: 'tenant-resumed',

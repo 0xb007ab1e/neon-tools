@@ -9,6 +9,7 @@ import {
   isPurgeable,
   redactSecrets,
   retentionCutoff,
+  selectRegion,
   type BillingPeriod,
   type Jurisdiction,
   type JsonObject,
@@ -128,11 +129,15 @@ export interface OffboardOutcome {
 export interface ProvisionInput {
   /** Desired slug (validated + normalized). */
   slug: string;
-  /** Region override; defaults to the configured default region. */
+  /**
+   * Region override. When omitted, the region is chosen automatically: if `residency` is set, the
+   * ResidencyRouter selects a compliant region from the allow-list; otherwise the configured default.
+   */
   region?: string;
   /**
-   * Required data-residency jurisdiction (e.g. `eu`). When set, the chosen region must belong to it
-   * or provisioning fails closed (std-privacy).
+   * Required data-residency jurisdiction (e.g. `eu`). With an explicit `region`, that region must
+   * belong to it or provisioning fails closed; with no `region`, the ResidencyRouter *selects* a
+   * compliant one from the allow-list (std-privacy).
    */
   residency?: Jurisdiction;
   /** Optional non-sensitive metadata. */
@@ -375,12 +380,27 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
 
     async provision(input: ProvisionInput): Promise<ProvisionOutcome> {
       const slug = assertSlug(input.slug);
-      const region = assertRegion(input.region ?? defaultRegion);
-      // Residency enforcement (std-privacy): the region must be on the org allow-list and satisfy
-      // any required jurisdiction — both fail closed before any project is created.
-      assertRegionAllowed(region, allowedRegions);
-      if (input.residency !== undefined) {
-        assertResidency(region, input.residency);
+      // Residency enforcement (std-privacy), fail closed before any project is created:
+      // - explicit region → validate it's known, allow-listed, and satisfies any required jurisdiction;
+      // - region omitted + residency required → the ResidencyRouter (#16) *selects* a compliant region
+      //   from the allow-list (preferring the default when it qualifies);
+      // - neither → the configured default, still allow-list-checked.
+      let region: string;
+      if (input.region !== undefined) {
+        region = assertRegion(input.region);
+        assertRegionAllowed(region, allowedRegions);
+        if (input.residency !== undefined) {
+          assertResidency(region, input.residency);
+        }
+      } else if (input.residency !== undefined) {
+        region = selectRegion({
+          jurisdiction: input.residency,
+          allowed: allowedRegions,
+          preferred: defaultRegion,
+        });
+      } else {
+        region = assertRegion(defaultRegion);
+        assertRegionAllowed(region, allowedRegions);
       }
 
       const existing = await registry.getBySlug(slug);
