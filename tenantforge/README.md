@@ -167,8 +167,10 @@ port — it carries **zero new dependencies** by taking a minimal injected clien
 via `createTenantForge`; `ack`→DeleteMessage, `deadLetter`→DLQ (or SQS native redrive). A **Google
 Pub/Sub** backend (`createPubSubMessageQueue`) implements the same port the same zero-dependency way
 (wrap your `@google-cloud/pubsub` client): `receive`→pull, `ack`→acknowledge, `deadLetter`→publish to
-a DLQ topic + ack (or nack for Pub/Sub's native dead-letter policy). NATS can follow behind the same
-port; an in-memory adapter backs tests/dev.
+a DLQ topic + ack (or nack for Pub/Sub's native dead-letter policy). A **NATS JetStream** backend
+(`createNatsMessageQueue`) does the same (wrap your `nats` pull consumer): `receive`→fetch,
+`ack`→ack, `deadLetter`→publish to a DLQ subject + ack (or nack for JetStream's `MaxDeliver` +
+dead-letter advisory). An in-memory adapter backs tests/dev.
 
 ## Discoverability & rules
 

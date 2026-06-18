@@ -94,6 +94,13 @@ export {
   type PubSubPulledMessage,
 } from './pubsub/message-queue.js';
 export {
+  createNatsMessageQueue,
+  type NatsMessageQueue,
+  type NatsMessageQueueOptions,
+  type NatsClientLike,
+  type NatsPulledMessage,
+} from './nats/message-queue.js';
+export {
   createLifecycleConsumer,
   type LifecycleConsumer,
   type LifecycleConsumerDeps,
