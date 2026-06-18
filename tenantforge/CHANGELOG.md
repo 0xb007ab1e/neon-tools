@@ -8,6 +8,18 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Per-tenant quota enforcement** (gap #14) — meter each tenant's consumption (via the existing
+  Neon usage provider) and evaluate it against per-tenant resource limits. The pure `evaluateQuota`
+  (core, 100% covered) compares a `Quota` (`maxComputeTimeSeconds` / `maxActiveTimeSeconds` /
+  `maxWrittenDataBytes` / `maxStorageBytes`; unset limits aren't enforced) against aggregated
+  `Consumption` and returns the breaches. A new `QuotaEngine` + facade `checkQuota(id, period, quota)`
+  / `checkQuotas(period, quota, { enforce })` (CLI `check-quotas --max-storage-gb /
+--max-compute-seconds [--enforce]`) run the scheduled, failure-isolated sweep, emitting
+  `tenant.quota_checked` / `tenant.quota_exceeded` audit events. **Enforcement is opt-in** —
+  detection and alerting by default; `--enforce` **suspends** over-quota tenants (reversible, via the
+  proper lifecycle transition), since auto-suspending a tenant is impactful, so it is never the
+  default. Requires a usage provider; fails closed otherwise. Core + engine unit-tested.
+
 - **Scheduled backups — off-Neon pg_dump archive tier** (gap #13, tier 2 of 2) — the durable,
   long-term complement to the in-Neon branch snapshots: `TenantForge.archive(id)` / `archiveFleet()`
   (CLI `archive`, `archive-fleet`) `pg_dump` each active tenant to an object store under the

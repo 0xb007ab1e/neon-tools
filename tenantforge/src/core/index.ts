@@ -28,6 +28,7 @@ export {
   type RetentionPolicy,
   type SnapshotPrunePlan,
 } from './snapshot.js';
+export { evaluateQuota, type Quota, type QuotaBreach, type QuotaStatus } from './quota.js';
 export {
   can,
   permissionsFor,

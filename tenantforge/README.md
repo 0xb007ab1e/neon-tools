@@ -162,6 +162,12 @@ non-blocking — it never delays or breaks a control-plane operation.
 (compute/active seconds, bytes written, peak storage) over a period for billing — pulled on demand
 from Neon's consumption API via the `UsageProvider` port (no usage data stored in the control plane).
 
+**Per-tenant quotas:** `tf.checkQuota(id, period, quota)` / `checkQuotas(...)` (CLI `check-quotas
+--max-storage-gb / --max-compute-seconds`) meter consumption and evaluate it against per-tenant
+limits with the pure `evaluateQuota`, emitting `tenant.quota_exceeded` on a breach. **Enforcement is
+opt-in** — detection + alerting by default; `--enforce` suspends over-quota tenants (reversible),
+since auto-suspending is impactful.
+
 **Right to erasure (GDPR Art. 17 / CCPA):** `tf.erase(id, { reason })` (the **ErasureEngine**) is the
 legal-override deletion path — it applies from **any** state (unlike `purge`, which requires an
 offboarded tenant). It optionally produces a final subject export, deletes the Neon project,
