@@ -8,6 +8,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Azure Key Vault secret backend** (`createAzureKeyVaultStore`) behind the `SecretStore` port —
+  the third deferred cloud secret manager (completing the big-three). Zero new dependencies: it
+  speaks the Key Vault Secrets REST API directly via an injectable `fetch` + an injected AAD token
+  provider (the Vault-adapter REST shape, not an SDK shim), with timeouts and a zod-validated read.
+  `set` PUTs a new version; `get` returns null on 404; `delete` soft-deletes then **best-effort
+  purges** to crypto-shred on offboard (workflow-data-lifecycle) — when purge-protection is enabled
+  the purge is refused (403) and the secret is retained per policy; both steps are idempotent (404
+  tolerated). Token + secret values never logged. Hand-wired via `createTenantForge`. Unit-tested at
+  100%.
+
 - **GCS object store for export artifacts** (`createGcsObjectStore`) behind the `ObjectStore` port —
   the off-Neon `pg_dump` sink for Google Cloud Storage, alongside the filesystem and S3 stores. Zero
   new dependencies: it takes a minimal injected client (the `@google-cloud/storage` `Storage` client

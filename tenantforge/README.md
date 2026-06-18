@@ -104,8 +104,10 @@ they need their SDK at the composition root — same approach as the SQS queue):
 creates-or-updates the secret and `delete` force-deletes without a recovery window (crypto-shred on
 offboard). **GCP Secret Manager** (`createGcpSecretManagerStore`) follows the same shape over the
 `@google-cloud/secret-manager` client: `set` creates the secret then adds a version, `get` accesses
-`latest`, and `delete` removes the secret and all versions (crypto-shred). Azure Key Vault follows in
-its own branch.
+`latest`, and `delete` removes the secret and all versions (crypto-shred). **Azure Key Vault**
+(`createAzureKeyVaultStore`) speaks the Key Vault REST API directly (injectable `fetch` + an injected
+AAD token provider, no SDK): `set` PUTs a version, `get` reads the value, and `delete` soft-deletes
+then best-effort **purges** to crypto-shred (retained per policy when purge-protection is on).
 
 **Offboard export** is selected by `TENANTFORGE_EXPORTER`: `neon-archive` (default — retain the Neon
 project scaled-to-zero, no data movement) or `pg-dump` (dump the tenant DB to an object store; set
