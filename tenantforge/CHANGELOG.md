@@ -8,6 +8,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Keyset pagination for the tenant list** (gap #9) — opaque `(created_at, id)` cursors let clients
+  page a large fleet without `OFFSET` scans, consistently across all three control-plane surfaces.
+  The pure `encodeCursor`/`decodeCursor` core (base64url `created_at|id`, opaque so clients treat it
+  as a token) backs `TenantRegistry.list({ cursor })`, whose SQL filters `(created_at, id) < (cursor)`
+  with a matching `ORDER BY created_at DESC, id DESC` (stable tiebreak). `GET /v1/tenants` decodes the
+  cursor (**400 on malformed**) and returns `nextCursor` only when the page is full; the CLI `list`
+  takes `--cursor` (prints `next-cursor:` when more remain) and the MCP `tf_list_tenants` takes an
+  optional `cursor`, returns `nextCursor`, and rejects a malformed cursor **before** calling the
+  service (fail closed). Backward-compatible: `cursor` is optional and `nextCursor` is additive. Core
+  codec unit-tested at 100%; HTTP + MCP round-trip and bad-cursor paths covered.
+
 - **Fleet migration drift detection + canary rollout** (gap #8). **Canary:**
   `migrateFleet(spec, { canaryTenantId })` applies to one tenant first and **aborts the fleet
   rollout if it fails** (report `canaryAborted`), so a bad migration is caught on one tenant, not all
