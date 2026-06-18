@@ -28,6 +28,11 @@ export {
 export type { RateLimitStore, RateLimitHit } from '../ports/rate-limit-store.js';
 export { createNeonPgSecretStore, type NeonPgSecretStoreOptions } from './neon-pg/secret-store.js';
 export { createVaultSecretStore, type VaultSecretStoreOptions } from './vault/secret-store.js';
+export {
+  createAwsSecretsManagerStore,
+  type AwsSecretsManagerStoreOptions,
+  type SecretsManagerClientLike,
+} from './aws-secrets-manager/secret-store.js';
 export { deriveKey, seal, open } from './secret-crypto.js';
 export { createConnectionRouter, type ConnectionRouterDeps } from './connection-router.js';
 export { createNeonArchiveExporter } from './neon-archive-exporter.js';
