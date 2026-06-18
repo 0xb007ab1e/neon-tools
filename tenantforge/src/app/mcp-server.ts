@@ -4,6 +4,7 @@ import { TENANTFORGE } from '../meta.js';
 import type { JsonObject } from '../core/index.js';
 import { decodeCursor, encodeCursor } from '../core/index.js';
 import type { TenantForge } from './lib.js';
+import { runWithActor } from './actor-context.js';
 
 /** Wrap a string as a tool text result. */
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] });
@@ -26,6 +27,11 @@ const json = (value: unknown) => text(JSON.stringify(value, null, 2));
 export function createMcpServer(tf: TenantForge): McpServer {
   const server = new McpServer({ name: TENANTFORGE.id, version: TENANTFORGE.version });
 
+  // Attribute control-plane actions taken via the agent surface to a single `mcp` operator in
+  // the audit stream (the MCP transport carries no per-call principal). Wrap emitting ops.
+  const asMcp = <T>(fn: () => Promise<T>): Promise<T> =>
+    runWithActor({ id: 'mcp', role: 'admin' }, fn);
+
   server.registerTool(
     'tf_provision',
     {
@@ -39,19 +45,20 @@ export function createMcpServer(tf: TenantForge): McpServer {
         metadata: z.record(z.string(), z.unknown()).optional(),
       },
     },
-    async ({ slug, region, residency, metadata }) => {
-      const outcome = await tf.provision({
-        slug,
-        ...(region ? { region } : {}),
-        ...(residency ? { residency } : {}),
-        ...(metadata ? { metadata: metadata as JsonObject } : {}),
-      });
-      // Deliberately omit outcome.connectionUri (a secret) from the model-visible result.
-      return json({
-        tenant: outcome.tenant,
-        connectionSecretIssued: outcome.connectionUri !== null,
-      });
-    },
+    async ({ slug, region, residency, metadata }) =>
+      asMcp(async () => {
+        const outcome = await tf.provision({
+          slug,
+          ...(region ? { region } : {}),
+          ...(residency ? { residency } : {}),
+          ...(metadata ? { metadata: metadata as JsonObject } : {}),
+        });
+        // Deliberately omit outcome.connectionUri (a secret) from the model-visible result.
+        return json({
+          tenant: outcome.tenant,
+          connectionSecretIssued: outcome.connectionUri !== null,
+        });
+      }),
   );
 
   server.registerTool(
@@ -104,7 +111,7 @@ export function createMcpServer(tf: TenantForge): McpServer {
       description: 'Suspend an active tenant (reversible with tf_resume).',
       inputSchema: { id: z.string() },
     },
-    async ({ id }) => json({ tenant: await tf.suspend(id) }),
+    async ({ id }) => asMcp(async () => json({ tenant: await tf.suspend(id) })),
   );
 
   server.registerTool(
@@ -113,7 +120,7 @@ export function createMcpServer(tf: TenantForge): McpServer {
       description: 'Resume a suspended tenant back to active.',
       inputSchema: { id: z.string() },
     },
-    async ({ id }) => json({ tenant: await tf.resume(id) }),
+    async ({ id }) => asMcp(async () => json({ tenant: await tf.resume(id) })),
   );
 
   server.registerTool(
@@ -125,10 +132,11 @@ export function createMcpServer(tf: TenantForge): McpServer {
         'not exposed to agents; run it via the CLI/HTTP control plane.',
       inputSchema: { id: z.string() },
     },
-    async ({ id }) => {
-      const outcome = await tf.offboard(id);
-      return json({ tenant: outcome.tenant, archive: outcome.archive });
-    },
+    async ({ id }) =>
+      asMcp(async () => {
+        const outcome = await tf.offboard(id);
+        return json({ tenant: outcome.tenant, archive: outcome.archive });
+      }),
   );
 
   return server;

@@ -55,7 +55,9 @@ data). No tenant content is stored in the control plane.
   (deploy concern). **I (disclosure):** the API **never returns connection URIs** — `provision`
   reports only that a secret was issued; errors return a stable shape, not internals
   (`@rules/topic-error-handling.md`). **R (repudiation):** structured, tenant-scoped audit events
-  (`src/core/observability.ts`). **D (DoS):** a 1 MB request
+  (`src/core/observability.ts`) carry an **operator `actor` { id, role }** (who-did-what-when),
+  threaded from the authenticated principal via a request-scoped context (`src/app/actor-context.ts`).
+  **D (DoS):** a 1 MB request
   **body-size cap** + a **per-principal fixed-window rate limit** (429 + `Retry-After`) are enforced
   in-app (`src/app/http-server.ts`). **E (EoP):** this is an _admin_ control plane: the
   `:id` is operator-supplied by design (not a tenant impersonating another); least-privilege token +

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createHttpServer } from '../../src/app/http-server.js';
 import { decodeCursor } from '../../src/core/index.js';
+import { currentActor } from '../../src/app/actor-context.js';
 import type { TenantRecord } from '../../src/core/domain.js';
 import type { TenantForge } from '../../src/app/lib.js';
 
@@ -162,6 +163,19 @@ describe('HTTP control-plane', () => {
     });
     expect(calls).toHaveLength(2);
     expect(calls[1]!.cursor).toEqual({ createdAt: tenant.createdAt, id: tenant.id });
+  });
+
+  it('runs authenticated handlers within the operator audit context (principal as actor)', async () => {
+    let seen: unknown = 'unset';
+    const res = await app({
+      listTenants: async () => {
+        seen = currentActor();
+        return [];
+      },
+    }).request('/v1/tenants', { headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(res.status).toBe(200);
+    // The default token credential authenticates as the `default` admin principal.
+    expect(seen).toEqual({ id: 'default', role: 'admin' });
   });
 
   it('rejects a malformed cursor (400)', async () => {

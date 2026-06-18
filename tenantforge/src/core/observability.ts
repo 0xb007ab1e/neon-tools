@@ -14,6 +14,12 @@ export interface TenantEvent {
   at: string;
   /** Whether the operation succeeded or failed. */
   outcome: 'ok' | 'error';
+  /**
+   * The operator who performed the action, for non-repudiation / audit attribution
+   * (who-did-what-when — NIST AU, SOC2 change management, OWASP A09). Absent for actions with
+   * no request context (e.g. scheduled sweeps). `id` is an operator identity, never a secret.
+   */
+  actor?: { id: string; role: string };
   /** The tenant the event concerns (absent for fleet-level events). */
   tenantId?: string;
   /** Operation duration in milliseconds. */

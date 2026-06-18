@@ -30,6 +30,7 @@ import { createPgDumpExporter, spawnPgDump } from '../adapters/pg-dump/exporter.
 import { createPgDataMover } from '../adapters/pg-dump/data-mover.js';
 import { createFilesystemObjectStore } from '../adapters/object-store/filesystem.js';
 import { createJsonEventSink, createNoopEventSink } from '../adapters/event-sink.js';
+import { currentActor } from './actor-context.js';
 import { createErasureEngine, type EraseOptions } from '../adapters/erasure-engine.js';
 import { createCachingConnectionRouter } from '../adapters/caching-connection-router.js';
 import {
@@ -419,10 +420,12 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       error?: string;
     },
   ): void => {
+    const actor = currentActor();
     eventSink.emit({
       event,
       at: new Date().toISOString(),
       outcome: fields.outcome,
+      ...(actor !== undefined ? { actor } : {}),
       ...(fields.tenantId !== undefined ? { tenantId: fields.tenantId } : {}),
       ...(fields.durationMs !== undefined ? { durationMs: fields.durationMs } : {}),
       ...(fields.context !== undefined ? { context: redactSecrets(fields.context) } : {}),

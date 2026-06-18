@@ -12,6 +12,7 @@ import { createInMemoryRateLimitStore } from '../adapters/rate-limit-store.js';
 import type { Authenticator, HttpCredential, Principal } from '../ports/authenticator.js';
 import { createTokenAuthenticator } from '../adapters/auth/token-authenticator.js';
 import type { TenantForge } from './lib.js';
+import { runWithActor } from './actor-context.js';
 
 // Re-export the auth types so existing importers (config) keep their import path.
 export type { HttpRole, HttpCredential, Principal, Authenticator } from '../ports/authenticator.js';
@@ -170,7 +171,9 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     const principal = await authenticator.authenticate(presented);
     if (principal === null) return problem(c, 401, 'Unauthorized');
     c.set('principal', principal);
-    return next();
+    // Carry the operator identity through the request so every emitted event is attributed
+    // (who-did-what-when). Downstream handlers + facade calls run within this context.
+    return runWithActor({ id: principal.id, role: principal.role }, () => next());
   };
 
   // Per-principal fixed-window rate limit, counted via the injected store (in-memory by default; a
