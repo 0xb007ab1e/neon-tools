@@ -8,6 +8,14 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Azure Blob object store for export artifacts** (`createAzureBlobObjectStore`) behind the
+  `ObjectStore` port — the off-Neon `pg_dump` sink for Azure Blob Storage, completing object-store
+  parity across AWS/GCP/Azure (alongside filesystem). Zero new dependencies: it takes a minimal
+  injected client (the `@azure/storage-blob` `BlobServiceClient` satisfies it via a small shim).
+  `put` uploads under an optional `{prefix}/{key}` and returns a resolvable `https://…/{container}/{blob}`
+  location when an `accountUrl` is set, else `azure-blob://{container}/{blob}`, plus byte size.
+  Hand-wired via `createTenantForge` (compose into `createPgDumpExporter`). Unit-tested at 100%.
+
 - **Azure Key Vault secret backend** (`createAzureKeyVaultStore`) behind the `SecretStore` port —
   the third deferred cloud secret manager (completing the big-three). Zero new dependencies: it
   speaks the Key Vault Secrets REST API directly via an injectable `fetch` + an injected AAD token
