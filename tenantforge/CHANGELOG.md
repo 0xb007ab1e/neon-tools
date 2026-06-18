@@ -8,6 +8,20 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Scheduled backups — Neon branch snapshots** (gap #13, tier 1 of 2) — point-in-time tenant
+  snapshots realized as **Neon branches** (copy-on-write — instant, cheap restore points), with
+  scheduled fleet sweeps and retention pruning. New `SnapshotProvider` port + Neon-API adapter
+  (create/list/delete/restore branches, schema-validated, bounded retries) and a `BackupEngine`
+  (`TenantForge.snapshot` / `snapshotFleet` / `pruneSnapshots` / `restoreSnapshot`) wired into the
+  production composition root; CLI `snapshot`, `snapshot-fleet`, `prune-snapshots`
+  (`--max-count`/`--max-age-days`), and `restore-snapshot` (`--yes`-gated, destructive) for cron. The
+  pure `planSnapshotPrune` (core, 100% covered) decides what to drop (keep newest `maxCount`, drop
+  older than `maxAgeMs`); the engine sweep is failure-isolated. **Scope note:** snapshots are Neon
+  branches inside the project — DR against bad migrations / corruption, **not** project deletion, and
+  Neon's built-in PITR already covers the short window; an off-Neon **pg_dump → object-store archive
+  tier** (for long-term / compliance durability) follows as a second PR. Core planner + engine
+  unit-tested; the Neon adapter is integration/game-day-covered.
+
 - **Fine-grained RBAC** (gap #12) — control-plane authorization moves from coarse admin/readonly to a
   required **permission per operation**, evaluated server-side and **deny by default** (std-owasp-api
   API5, topic-authn-authz). A pure core module (`src/core/authz.ts`, 100% covered) defines the

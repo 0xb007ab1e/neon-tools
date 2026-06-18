@@ -23,6 +23,12 @@ export {
 export { isTerminal, canTransition, assertTransition } from './lifecycle.js';
 export { encodeCursor, decodeCursor, type TenantCursor } from './pagination.js';
 export {
+  planSnapshotPrune,
+  type RetainableSnapshot,
+  type RetentionPolicy,
+  type SnapshotPrunePlan,
+} from './snapshot.js';
+export {
   can,
   permissionsFor,
   isRole,

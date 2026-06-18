@@ -43,6 +43,19 @@
    **unrecoverable by design** (`@rules/std-privacy.md`). This is why `purge` runs only after the
    retention window.
 
+## Steps — scheduled snapshots (Neon branches)
+
+Snapshots are named Neon branches (`snapshot-<ms>`), instant + copy-on-write. They protect against
+**corruption / bad migrations**, not project deletion (a branch lives inside the project).
+
+1. **Take** one: `tenantforge snapshot <tenant-id>` → prints the branch id. On a schedule (cron /
+   CronJob): `tenantforge snapshot-fleet` snapshots every active tenant (failure-isolated).
+2. **Prune** by retention on a schedule: `tenantforge prune-snapshots --max-count 7`
+   (and/or `--max-age-days 30`) — keeps the newest, drops the rest; failure-isolated.
+3. **Restore** (DESTRUCTIVE — overwrites live tenant data): `tenantforge restore-snapshot <tenant-id>
+<branch-id> --yes`. Prefer branching off the snapshot in the Neon console first to verify, then
+   restore. For recovery beyond the retention/PITR window, use the `pg_dump` archive instead.
+
 ## Verification
 
 - Row counts / checksums / spot-checks match; the app connects and passes smoke tests. Record actual

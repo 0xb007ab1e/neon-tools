@@ -184,6 +184,14 @@ concrete `TenantDataMover` the re-home engine uses (wired by default in the prod
 root, so it needs `pg_dump`/`pg_restore` on PATH). PITR recovery via Neon branches stays operator-run
 (`docs/runbooks/backup-restore.md`).
 
+**Scheduled snapshots:** `tf.snapshot(id)` takes a point-in-time snapshot as a **Neon branch**
+(copy-on-write — instant, cheap); `snapshotFleet()` / `pruneSnapshots()` are the failure-isolated
+cron sweeps (CLI: `snapshot-fleet`, `prune-snapshots --max-count/--max-age-days`), the pure
+`planSnapshotPrune` deciding what to drop; `restoreSnapshot(id, branchId)` (CLI `restore-snapshot`,
+destructive) resets the tenant to a snapshot. Snapshots are restore points against corruption / bad
+migrations — **not** project deletion (they live in the project); for long-term off-Neon durability,
+use the `pg_dump` archive path.
+
 **Re-homing (residency change):** `tf.rehome(id, { region, residency? })` relocates an **active**
 tenant to a new region — for a residency change (e.g. a customer moves to the EU) or latency. A Neon
 project is region-bound, so it **provisions a new project in the target region, copies the data**

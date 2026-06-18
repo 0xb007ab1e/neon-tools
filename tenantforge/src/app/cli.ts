@@ -325,6 +325,92 @@ const enqueue = defineCommand({
   },
 });
 
+const snapshot = defineCommand({
+  meta: {
+    name: 'snapshot',
+    description: 'Take a point-in-time snapshot (Neon branch) of a tenant',
+  },
+  args: { id: { type: 'positional', description: 'Tenant id (UUID)', required: true } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const { snapshot: snap } = await tf.snapshot(args.id);
+      process.stdout.write(`snapshot ${snap.name} (${snap.id}) created for tenant ${args.id}\n`);
+    });
+  },
+});
+
+const snapshotFleet = defineCommand({
+  meta: {
+    name: 'snapshot-fleet',
+    description: 'Snapshot every active tenant (the scheduled backup sweep)',
+  },
+  async run() {
+    await withTenantForge(async (tf) => {
+      const report = await tf.snapshotFleet();
+      process.stdout.write(
+        `snapshot sweep: ${report.succeeded.length} snapshotted, ${report.failed.length} failed ` +
+          `of ${report.scanned} active tenant(s)\n`,
+      );
+      for (const f of report.failed) process.stdout.write(`  FAILED ${f.tenantId}: ${f.error}\n`);
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+  },
+});
+
+const pruneSnapshots = defineCommand({
+  meta: {
+    name: 'prune-snapshots',
+    description: 'Prune old tenant snapshots per retention (the scheduled retention sweep)',
+  },
+  args: {
+    'max-count': {
+      type: 'string',
+      description: 'Keep at most this many newest snapshots per tenant',
+    },
+    'max-age-days': { type: 'string', description: 'Prune snapshots older than this many days' },
+  },
+  async run({ args }) {
+    const policy: { maxCount?: number; maxAgeMs?: number } = {};
+    if (args['max-count'] !== undefined) policy.maxCount = Number(args['max-count']);
+    if (args['max-age-days'] !== undefined)
+      policy.maxAgeMs = Number(args['max-age-days']) * 86_400_000;
+    await withTenantForge(async (tf) => {
+      const report = await tf.pruneSnapshots(Object.keys(policy).length > 0 ? { policy } : {});
+      process.stdout.write(
+        `prune sweep: ${report.succeeded.length} pruned, ${report.failed.length} failed ` +
+          `of ${report.scanned} active tenant(s)\n`,
+      );
+      for (const f of report.failed) process.stdout.write(`  FAILED ${f.tenantId}: ${f.error}\n`);
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+  },
+});
+
+const restoreSnapshot = defineCommand({
+  meta: {
+    name: 'restore-snapshot',
+    description: 'Restore a tenant to a snapshot (DESTRUCTIVE — overwrites live data)',
+  },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    snapshot: { type: 'positional', description: 'Snapshot (branch) id', required: true },
+    yes: { type: 'boolean', description: 'Confirm the destructive restore', default: false },
+  },
+  async run({ args }) {
+    if (!args.yes) {
+      process.stdout.write(
+        'refusing to restore without --yes (this overwrites live tenant data)\n',
+      );
+      process.exitCode = 1;
+      return;
+    }
+    await withTenantForge(async (tf) => {
+      await tf.restoreSnapshot(args.id, args.snapshot);
+      process.stdout.write(`tenant ${args.id} restored to snapshot ${args.snapshot}\n`);
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -343,6 +429,10 @@ const main = defineCommand({
     purge,
     'purge-expired': purgeExpired,
     'migrate-fleet': migrateFleet,
+    snapshot,
+    'snapshot-fleet': snapshotFleet,
+    'prune-snapshots': pruneSnapshots,
+    'restore-snapshot': restoreSnapshot,
   },
 });
 
