@@ -22,6 +22,32 @@
 - Provisioning real cloud resources is a **gated action** (`@rules/workflow-gated-actions.md`) — a
   human runs this deliberately; it never runs on push/PR.
 
+## Setup (one-time)
+
+Do this once to enable the drill; reuse it every run. **Use a throwaway non-prod org — never prod.**
+
+1. **Create a dedicated non-prod Neon org** (or a clearly-named sandbox org). This org is where the
+   drill provisions and deletes throwaway tenant projects, so isolate it from anything real.
+2. **Create the control-plane registry project** in that org — a Neon project whose Postgres holds
+   the tenant **metadata** (the `tf_*` tables). Copy its pooled connection string → this is
+   `DATABASE_URL`. (The drill runs `migrate` to create the schema; start from an empty DB.)
+3. **Find the org id**: `NEON_ORG_ID` is the org's id (Neon console → org settings, or
+   `GET /users/me/organizations` via the API). The account is org-scoped, so it's required.
+4. **Mint a least-privilege API key scoped to the non-prod org** (Neon console → API keys → an
+   **organization** key for that org, not a personal key with broader reach) → this is
+   `NEON_API_KEY`. Treat it as a secret; never commit it (`@rules/workflow-secrets.md`).
+5. **Wire the credentials** for whichever run mode you'll use:
+   - **CI:** repo → _Settings → Environments → New environment_ named **`tenantforge-game-day`**.
+     Restrict its deployment branches and add **required reviewers** (maintainers) so only a
+     deliberate, approved dispatch can use the secrets. Add three **environment secrets**:
+     `DATABASE_URL`, `NEON_API_KEY`, `NEON_ORG_ID`. (The workflow's preflight fails if any is unset.)
+   - **Local:** export the same three vars in your shell (or a git-ignored `.env`), never committed.
+6. **Verify** without provisioning anything: `tenantforge migrate` against the non-prod `DATABASE_URL`
+   should print `migrations applied`. You're ready — proceed to the drill below.
+
+> Cost: throwaway projects scale to zero and the drill purges them, so a run is ≈ \$0. After a run,
+> confirm no `gd-*` projects linger in the org (see Rollback / abort).
+
 ## Steps
 
 ### 1. Automated drill (covers most of it)
