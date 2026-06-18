@@ -138,6 +138,12 @@ event (provision / transition / connection-resolved-or-denied / fleet-migration 
 stdout as a 12-Factor event stream — carrying the tenant id, outcome, and timing, with connection
 secrets always redacted. Plug a metrics/SIEM backend via the `EventSink` port.
 
+**Metrics (Prometheus):** the HTTP entrypoint derives **RED metrics from that same event stream** (no
+extra instrumentation) via `createMetricsEventSink` fanned out alongside the JSON sink
+(`createFanOutEventSink`), and serves them at `GET /metrics` in Prometheus text format —
+`tenantforge_events_total{event,outcome}` (rate + errors) and a `tenantforge_event_duration_ms`
+histogram (duration). The endpoint is unauthenticated (an internal scrape target, like the probes).
+
 **Per-tenant metering:** `usage <id> [--from --to]` reports a tenant's Neon resource consumption
 (compute/active seconds, bytes written, peak storage) over a period for billing — pulled on demand
 from Neon's consumption API via the `UsageProvider` port (no usage data stored in the control plane).

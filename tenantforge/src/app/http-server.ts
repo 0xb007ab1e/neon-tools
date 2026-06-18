@@ -37,6 +37,12 @@ export interface HttpServerOptions {
   rateLimitStore?: RateLimitStore;
   /** Injectable clock (ms) for rate limiting — defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * When set, mount an unauthenticated `GET /metrics` returning this Prometheus text (e.g. a
+   * {@link import('../adapters/metrics-event-sink.js').MetricsEventSink}'s `render`). Omitted = no
+   * metrics endpoint.
+   */
+  metrics?: () => string;
 }
 
 /** Hono Variables: the resolved principal, set by the auth middleware. */
@@ -147,6 +153,14 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     const report = await tf.health();
     return c.json(report, report.status === 'ok' ? 200 : 503);
   });
+
+  // Prometheus scrape endpoint (text exposition), unauthenticated like the probes; only when wired.
+  if (options.metrics !== undefined) {
+    const renderMetrics = options.metrics;
+    app.get('/metrics', (c) =>
+      c.text(renderMetrics(), 200, { 'content-type': 'text/plain; version=0.0.4' }),
+    );
+  }
 
   // AuthN: resolve the bearer token to a principal via the authenticator (token match or OIDC JWT).
   const authenticate: MiddlewareHandler<Env> = async (c, next) => {

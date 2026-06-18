@@ -31,3 +31,25 @@ export function createJsonEventSink(write?: (line: string) => void): EventSink {
 export function createNoopEventSink(): EventSink {
   return { emit: () => undefined };
 }
+
+/**
+ * Create an {@link EventSink} that fans one event out to several sinks (e.g. JSON-to-stdout **and** a
+ * metrics accumulator). Each delivery is best-effort and isolated — a throwing sink never blocks the
+ * others or breaks the operation.
+ *
+ * @param sinks - The downstream sinks, invoked in order.
+ * @returns A fan-out event sink.
+ */
+export function createFanOutEventSink(sinks: readonly EventSink[]): EventSink {
+  return {
+    emit(event): void {
+      for (const sink of sinks) {
+        try {
+          sink.emit(event);
+        } catch {
+          // Isolated: one sink failing must not stop the others (observability is best-effort).
+        }
+      }
+    },
+  };
+}

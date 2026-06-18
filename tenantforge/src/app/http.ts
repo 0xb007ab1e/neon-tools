@@ -1,6 +1,8 @@
 import { serve } from '@hono/node-server';
 import { createPgRateLimitStore } from '../adapters/neon-pg/rate-limit-store.js';
 import { createOidcAuthenticator } from '../adapters/auth/oidc-authenticator.js';
+import { createMetricsEventSink } from '../adapters/metrics-event-sink.js';
+import { createFanOutEventSink, createJsonEventSink } from '../adapters/event-sink.js';
 import { loadConfig } from './config.js';
 import { createHttpServer } from './http-server.js';
 import { tenantForgeFromConfig } from './lib.js';
@@ -19,7 +21,11 @@ function main(): void {
     process.exit(1);
   }
 
-  const tf = tenantForgeFromConfig(config);
+  // Derive RED metrics from the same event stream that feeds the JSON logs, and expose /metrics.
+  const metrics = createMetricsEventSink();
+  const tf = tenantForgeFromConfig(config, {
+    eventSink: createFanOutEventSink([createJsonEventSink(), metrics]),
+  });
   // Shared (cross-instance) rate-limit counter when configured; else the in-memory default.
   const rateLimitStore =
     config.rateLimitStore === 'pg'
@@ -43,6 +49,7 @@ function main(): void {
     ...(config.httpToken !== undefined ? { token: config.httpToken } : {}),
     rateLimit: config.rateLimit,
     ...(rateLimitStore !== undefined ? { rateLimitStore } : {}),
+    metrics: () => metrics.render(),
   });
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
