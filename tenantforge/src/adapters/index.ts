@@ -57,6 +57,11 @@ export {
   type S3ObjectStoreOptions,
   type S3ClientLike,
 } from './object-store/s3.js';
+export {
+  createGcsObjectStore,
+  type GcsObjectStoreOptions,
+  type GcsClientLike,
+} from './object-store/gcs.js';
 export type { ObjectStore, PutResult } from '../ports/object-store.js';
 export { createJsonEventSink, createNoopEventSink } from './event-sink.js';
 export { parseLifecycleCommand, type LifecycleCommand } from './lifecycle-command.js';
