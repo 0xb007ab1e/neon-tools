@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { defineCommand, runMain } from 'citty';
 import type { TenantRecord } from '../core/index.js';
+import { decodeCursor, encodeCursor } from '../core/index.js';
 import { parseLifecycleCommand } from '../adapters/lifecycle-command.js';
 import { createPgMessageQueue } from '../adapters/neon-pg/message-queue.js';
 import { loadConfig } from './config.js';
@@ -72,18 +73,34 @@ const list = defineCommand({
   args: {
     status: { type: 'string', description: 'Filter by status' },
     limit: { type: 'string', description: 'Max rows', default: '100' },
+    cursor: { type: 'string', description: 'Opaque next-page token from a previous list' },
   },
   async run({ args }) {
+    const limit = Number(args.limit);
+    const cursor = args.cursor ? decodeCursor(args.cursor) : null;
+    if (args.cursor && cursor === null) {
+      process.stderr.write('error: invalid cursor\n');
+      process.exitCode = 1;
+      return;
+    }
     await withTenantForge(async (tf) => {
       const tenants = await tf.listTenants({
-        limit: Number(args.limit),
+        limit,
         ...(args.status ? { status: args.status as TenantRecord['status'] } : {}),
+        ...(cursor ? { cursor } : {}),
       });
       if (tenants.length === 0) {
         process.stdout.write('no tenants\n');
         return;
       }
       for (const t of tenants) process.stdout.write(`${formatTenant(t)}\n`);
+      // Page full → there may be more; print the token to fetch the next page.
+      const last = tenants[tenants.length - 1];
+      if (tenants.length === limit && last !== undefined) {
+        process.stdout.write(
+          `next-cursor: ${encodeCursor({ createdAt: last.createdAt, id: last.id })}\n`,
+        );
+      }
     });
   },
 });

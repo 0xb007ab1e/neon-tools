@@ -6,6 +6,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { TENANTFORGE } from '../meta.js';
 import type { JsonObject, TenantStatus } from '../core/index.js';
+import { decodeCursor, encodeCursor } from '../core/index.js';
 import type { RateLimitStore } from '../ports/rate-limit-store.js';
 import { createInMemoryRateLimitStore } from '../adapters/rate-limit-store.js';
 import type { Authenticator, HttpCredential, Principal } from '../ports/authenticator.js';
@@ -229,12 +230,25 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
       return problem(c, 400, 'Bad Request', 'limit must be a positive integer');
     }
+    const cursorParam = c.req.query('cursor');
+    const cursor = cursorParam === undefined ? null : decodeCursor(cursorParam);
+    if (cursorParam !== undefined && cursor === null) {
+      return problem(c, 400, 'Bad Request', 'invalid cursor');
+    }
+    const effectiveLimit = limit ?? 100;
     try {
       const tenants = await tf.listTenants({
         ...(statusParam !== undefined ? { status: statusParam as TenantStatus } : {}),
-        ...(limit !== undefined ? { limit } : {}),
+        limit: effectiveLimit,
+        ...(cursor !== null ? { cursor } : {}),
       });
-      return c.json({ tenants });
+      // Keyset next-page token: present only when this page is full (more may remain).
+      const last = tenants[tenants.length - 1];
+      const nextCursor =
+        tenants.length === effectiveLimit && last !== undefined
+          ? encodeCursor({ createdAt: last.createdAt, id: last.id })
+          : null;
+      return c.json({ tenants, nextCursor });
     } catch (error) {
       return handleError(c, error);
     }

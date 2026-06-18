@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 import { createMcpServer } from '../../src/app/mcp-server.js';
+import { decodeCursor } from '../../src/core/index.js';
 import type { TenantRecord } from '../../src/core/domain.js';
 import type { TenantForge } from '../../src/app/lib.js';
 
@@ -72,6 +73,50 @@ describe('MCP server', () => {
     const client = await connect(fakeTf({ listTenants: async () => [tenant] }));
     const result = await client.callTool({ name: 'tf_list_tenants', arguments: {} });
     expect(body(result)).toContain('acme');
+    await client.close();
+  });
+
+  it('tf_list_tenants emits a keyset nextCursor on a full page and forwards it', async () => {
+    const calls: Array<{ cursor?: { createdAt: Date; id: string } }> = [];
+    const client = await connect(
+      fakeTf({
+        listTenants: async (options) => {
+          calls.push(options ?? {});
+          return [tenant];
+        },
+      }),
+    );
+    // limit=1 and one row → full page → a next-page cursor is returned.
+    const first = await client.callTool({ name: 'tf_list_tenants', arguments: { limit: 1 } });
+    const { nextCursor } = JSON.parse(body(first)) as { nextCursor: string | null };
+    expect(nextCursor).not.toBeNull();
+    expect(decodeCursor(nextCursor!)).toEqual({ createdAt: tenant.createdAt, id: tenant.id });
+
+    // The token round-trips back in as a keyset cursor.
+    await client.callTool({
+      name: 'tf_list_tenants',
+      arguments: { limit: 1, cursor: nextCursor! },
+    });
+    expect(calls[1]!.cursor).toEqual({ createdAt: tenant.createdAt, id: tenant.id });
+    await client.close();
+  });
+
+  it('tf_list_tenants reports an invalid cursor without calling the service', async () => {
+    let called = false;
+    const client = await connect(
+      fakeTf({
+        listTenants: async () => {
+          called = true;
+          return [];
+        },
+      }),
+    );
+    const result = await client.callTool({
+      name: 'tf_list_tenants',
+      arguments: { cursor: 'not-a-valid-cursor' },
+    });
+    expect(body(result)).toContain('invalid cursor');
+    expect(called).toBe(false);
     await client.close();
   });
 

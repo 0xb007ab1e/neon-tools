@@ -58,12 +58,17 @@ export interface TenantRegistry {
   getBySlug(slug: string): Promise<TenantRecord | null>;
 
   /**
-   * List tenant records, most-recent first.
+   * List tenant records, most-recent first (created_at desc, id desc tiebreak). With a `cursor`
+   * (the sort key of the last item on the previous page), returns the **next** keyset page.
    *
-   * @param options - Optional status filter and page size.
+   * @param options - Optional status filter, page size, and keyset cursor.
    * @returns The matching records.
    */
-  list(options?: { status?: TenantStatus; limit?: number }): Promise<TenantRecord[]>;
+  list(options?: {
+    status?: TenantStatus;
+    limit?: number;
+    cursor?: { createdAt: Date; id: string };
+  }): Promise<TenantRecord[]>;
 
   /**
    * Record the Neon project id and connection-secret reference for a freshly provisioned tenant.

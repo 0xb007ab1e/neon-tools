@@ -124,18 +124,28 @@ export function createPgTenantRegistry(options: PgRegistryOptions): TenantRegist
       return rows[0] ? toRecord(rows[0]) : null;
     },
 
-    async list(options?: { status?: TenantStatus; limit?: number }): Promise<TenantRecord[]> {
+    async list(options?: {
+      status?: TenantStatus;
+      limit?: number;
+      cursor?: { createdAt: Date; id: string };
+    }): Promise<TenantRecord[]> {
       const limit = options?.limit ?? 100;
+      // Keyset pagination: (created_at, id) strictly less than the cursor, in the same desc order.
+      const conditions: string[] = [];
+      const params: unknown[] = [];
       if (options?.status) {
-        const { rows } = await pool.query<TenantRow>(
-          'SELECT * FROM tf_tenants WHERE status = $1 ORDER BY created_at DESC LIMIT $2',
-          [options.status, limit],
-        );
-        return rows.map(toRecord);
+        params.push(options.status);
+        conditions.push(`status = $${params.length}`);
       }
+      if (options?.cursor) {
+        params.push(options.cursor.createdAt, options.cursor.id);
+        conditions.push(`(created_at, id) < ($${params.length - 1}, $${params.length})`);
+      }
+      params.push(limit);
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
       const { rows } = await pool.query<TenantRow>(
-        'SELECT * FROM tf_tenants ORDER BY created_at DESC LIMIT $1',
-        [limit],
+        `SELECT * FROM tf_tenants ${where} ORDER BY created_at DESC, id DESC LIMIT $${params.length}`,
+        params,
       );
       return rows.map(toRecord);
     },

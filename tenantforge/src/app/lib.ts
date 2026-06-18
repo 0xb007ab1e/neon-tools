@@ -235,7 +235,11 @@ export interface TenantForge {
    * @param options - Optional status filter and page size.
    * @returns The matching records.
    */
-  listTenants(options?: { status?: TenantStatus; limit?: number }): Promise<TenantRecord[]>;
+  listTenants(options?: {
+    status?: TenantStatus;
+    limit?: number;
+    cursor?: { createdAt: Date; id: string };
+  }): Promise<TenantRecord[]>;
 
   /**
    * Suspend an active tenant (e.g. non-payment). Reversible via {@link TenantForge.resume}.
@@ -757,6 +761,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     async listTenants(options?: {
       status?: TenantStatus;
       limit?: number;
+      cursor?: { createdAt: Date; id: string };
     }): Promise<TenantRecord[]> {
       return registry.list(options);
     },
