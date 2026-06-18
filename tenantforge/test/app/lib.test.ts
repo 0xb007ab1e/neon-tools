@@ -370,6 +370,29 @@ describe('createTenantForge connection secrets', () => {
     await expect(make().getConnection('missing')).rejects.toThrow(/not found/);
   });
 
+  it('isolates connections across tenants end-to-end (no cross-tenant bleed)', async () => {
+    // Two distinct provisioning results so each tenant has its own project + connection URI.
+    let n = 0;
+    provisioning.createTenantProject = () => {
+      n += 1;
+      return Promise.resolve({
+        neonProjectId: `proj-${n}`,
+        connectionUri: `postgresql://t${n}@host/db`,
+      });
+    };
+    const tf = make();
+    const a = (await tf.provision({ slug: 'tenant-a' })).tenant;
+    const b = (await tf.provision({ slug: 'tenant-b' })).tenant;
+    expect(a.id).not.toBe(b.id);
+
+    const connA = await tf.getConnection(a.id);
+    const connB = await tf.getConnection(b.id);
+    // Each id resolves to ITS OWN connection — never the other tenant's.
+    expect(connA).toEqual({ tenantId: a.id, connectionUri: 'postgresql://t1@host/db' });
+    expect(connB).toEqual({ tenantId: b.id, connectionUri: 'postgresql://t2@host/db' });
+    expect(connA.connectionUri).not.toBe(connB.connectionUri);
+  });
+
   it('offboard retains the secret; purge crypto-shreds it', async () => {
     const tf = make();
     const { tenant } = await tf.provision({ slug: 'acme' });

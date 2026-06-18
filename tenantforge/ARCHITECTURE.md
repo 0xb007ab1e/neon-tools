@@ -118,6 +118,8 @@ retention/erasure obligations.
   (`@rules/std-privacy.md`). No tenant data in the control-plane DB; no real tenant data in non-prod.
 - **Fleet-migration safety:** idempotent, resumable, rollback-aware; a fleet change is a release
   (threat-model + runbook it).
+- **Threat model (STRIDE):** the trust boundaries, their mitigations, residual risks, and the
+  abuse-test mapping are documented in [`docs/security/threat-model.md`](./docs/security/threat-model.md).
 
 ## 8. Tech stack
 

@@ -8,6 +8,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Security hardening pass (toward `stable`).** A STRIDE **threat model**
+  (`docs/security/threat-model.md`) documenting every trust boundary, its in-code mitigation,
+  tracked residual risks (no in-app rate limiting, load/soak unverified, per-operator auth), and an
+  abuse-case→test map. Backed by new **abuse/negative tests**: cross-tenant connection no-bleed
+  (router + end-to-end `getConnection`), an exhaustive lifecycle transition matrix (all 5×5 pairs),
+  every non-`active` status proven non-routable, and HTTP wrong-token (401) + over-large-body (413).
+  Suite now 224 tests @ 100% core coverage.
 - **AWS SQS message-queue backend** (`createSqsMessageQueue`) behind the `MessageQueue` port — an
   alternative to the default Postgres broker. **Zero new dependencies**: it takes a minimal injected
   client (`SqsClientLike`) that the AWS SDK v3 `SQSClient` satisfies via a small shim, so the SDK

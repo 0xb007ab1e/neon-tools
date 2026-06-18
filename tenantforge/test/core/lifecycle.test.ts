@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import type { TenantStatus } from '../../src/core/domain.js';
 import { assertTransition, canTransition, isTerminal } from '../../src/core/lifecycle.js';
+
+// The intended transition matrix, declared HERE as the spec (independent of the implementation) so a
+// change to the lifecycle that isn't reflected here is caught. Every other (from,to) pair is illegal.
+const ALL: TenantStatus[] = ['provisioning', 'active', 'suspended', 'offboarding', 'deleted'];
+const LEGAL: Record<TenantStatus, TenantStatus[]> = {
+  provisioning: ['active', 'deleted'],
+  active: ['suspended', 'offboarding'],
+  suspended: ['active', 'offboarding'],
+  offboarding: ['active', 'deleted'],
+  deleted: [],
+};
 
 describe('isTerminal', () => {
   it('is true only for deleted', () => {
@@ -33,4 +45,23 @@ describe('assertTransition', () => {
   it('throws for an illegal transition', () => {
     expect(() => assertTransition('active', 'deleted')).toThrow(/illegal tenant status transition/);
   });
+});
+
+// Exhaustive: assert EVERY (from,to) pair in the 5×5 matrix matches the spec — no illegal transition
+// is silently permitted, and every modeled one is allowed. This is the make-illegal-states-
+// unrepresentable guarantee for the tenant lifecycle (topic-state-management).
+describe('transition matrix (exhaustive)', () => {
+  for (const from of ALL) {
+    for (const to of ALL) {
+      const legal = LEGAL[from].includes(to);
+      it(`${from} → ${to} is ${legal ? 'allowed' : 'rejected'}`, () => {
+        expect(canTransition(from, to)).toBe(legal);
+        if (legal) {
+          expect(() => assertTransition(from, to)).not.toThrow();
+        } else {
+          expect(() => assertTransition(from, to)).toThrow(/illegal tenant status transition/);
+        }
+      });
+    }
+  }
 });

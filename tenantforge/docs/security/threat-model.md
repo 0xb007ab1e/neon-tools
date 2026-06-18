@@ -1,0 +1,131 @@
+# TenantForge — Threat Model (STRIDE)
+
+> Design-time threat model for the TenantForge control plane (`@rules/workflow-threat-model.md`).
+> TenantForge's defining security property is **tenant isolation**: a cross-tenant data leak is a
+> SEV1 (`docs/runbooks/incident-response.md`). Revisit this model when a trust boundary, the auth
+> model, a data flow, or an external interface changes.
+
+## System & data-flow
+
+TenantForge is a control plane that provisions an **isolated Neon project per tenant** and brokers
+the lifecycle. It holds **metadata only** (the `tf_*` registry tables) — never tenant content.
+
+```
+ operator ──HTTPS+token──▶ HTTP API (Hono) ─┐
+ LLM/agent ──stdio──────▶ MCP server ───────┤
+ ops CLI ────────────────────────────────────┼─▶ core (pure) ──▶ ports ──▶ adapters
+ queue producer ─▶ tf_lifecycle_queue ─▶ worker/consumer ─┘                 │
+                                                                            ├─▶ Neon API (provision/delete/usage)   [untrusted upstream]
+                                                                            ├─▶ control-plane Postgres (registry)   [metadata only]
+                                                                            ├─▶ SecretStore (neon-pg enc / Vault)   [per-tenant URIs]
+                                                                            └─▶ tenant Neon projects                [physically isolated]
+```
+
+**Data classification** (master §5): connection URIs + Neon/registry credentials = **restricted**;
+tenant metadata (slug, region, status) = **confidential**; export artifacts = **restricted** (tenant
+data). No tenant content is stored in the control plane.
+
+## Trust boundaries
+
+| #   | Boundary                                           | Crossing                            |
+| --- | -------------------------------------------------- | ----------------------------------- |
+| B1  | Internet/operator → HTTP control-plane API         | admin requests over the network     |
+| B2  | LLM/agent → MCP server                             | tool calls from an autonomous agent |
+| B3  | Application → connection routing (`getConnection`) | resolve a tenant's DB connection    |
+| B4  | Tenant ↔ tenant                                    | the core isolation guarantee        |
+| B5  | Service → Neon API                                 | calls to an external upstream       |
+| B6  | Queue producer → lifecycle consumer                | untrusted command payloads          |
+| B7  | Service → SecretStore / registry / object store    | secret + metadata persistence       |
+
+## STRIDE per boundary → mitigation (and where it lives in code)
+
+### B1 — HTTP control-plane API (admin)
+
+- **S (spoofing):** bearer-token auth on every route (`src/app/http-server.ts`); the token is a
+  secret from env (`workflow-secrets`), rotatable (`docs/runbooks/secret-rotation.md`). _Note: a
+  single shared admin token — see Residual R1._
+- **T (tampering):** request bodies validated with `zod` before use; TLS terminated at the edge
+  (deploy concern). **I (disclosure):** the API **never returns connection URIs** — `provision`
+  reports only that a secret was issued; errors return a stable shape, not internals
+  (`@rules/topic-error-handling.md`). **R (repudiation):** structured, tenant-scoped audit events
+  (`src/core/observability.ts`). **D (DoS):** a 1 MB request
+  **body-size cap** is enforced in-app (`bodyLimit`, `src/app/http-server.ts`); per-route **rate
+  limiting** is not yet in-app — see Residual R2. **E (EoP):** this is an _admin_ control plane: the
+  `:id` is operator-supplied by design (not a tenant impersonating another); least-privilege token +
+  network ACLs gate it. The destructive purge route additionally requires an explicit `confirm: true`.
+
+### B2 — MCP server (agent)
+
+- **E / excessive agency (LLM08):** the irreversible **`purge` / `purge-expired` are not exposed as
+  MCP tools** — destructive hard-deletes stay on the human-driven CLI/HTTP plane (defense in depth).
+  Verified by an abuse test (`test/app/mcp.test.ts`). Tool inputs are validated; tool output is data.
+
+### B3 — Connection routing / BOLA (the #1 API risk)
+
+- **E / BOLA:** `getConnection(id)` resolves **only** for the given tenant and **fails closed** —
+  `assertRoutable` (`src/core/routing.ts`) admits a tenant **only** when `status === 'active'` **and**
+  a project is provisioned; every other status (`provisioning`/`suspended`/`offboarding`/`deleted`)
+  is rejected. The tenant id is **server-derived by the caller, never client-supplied**
+  (`@rules/std-owasp-api.md` API1). A denied resolution emits `tenant.connection_denied` (no URI).
+
+### B4 — Tenant ↔ tenant isolation (the core guarantee)
+
+- **I / cross-tenant leak:** isolation is **physical** — one Neon project per tenant, so there is no
+  shared-schema `WHERE tenant_id` that a bug could omit. The registry, SecretStore, and queue are all
+  keyed by tenant id; `getConnection(A)` can only ever return A's project/URI. This is the property
+  the abuse suite pins (cross-tenant no-bleed test). A leak here is SEV1.
+
+### B5 — Neon API (untrusted upstream)
+
+- **T/I/D:** every call has a **timeout**, a **schema-validated** response, and **bounded retries**
+  (`src/adapters/neon-api/*`, `@rules/topic-api-consumption.md`); the API key is a secret, never
+  logged. A compromised/abused key is SEV1 → revoke+rotate (`incident-response.md`).
+
+### B6 — Queue payloads (untrusted input)
+
+- **T/EoP:** `parseLifecycleCommand` validates every payload at the boundary; a malformed payload is
+  **dead-lettered, never executed** (`src/adapters/lifecycle-consumer.ts`); delivery is at-least-once
+  so handlers are idempotent and commands deduped by id. `purge` is **not** a queue command.
+
+### B7 — Secrets, registry, object store
+
+- **I:** connection URIs live in the **SecretStore** (AES-256-GCM-encrypted `neon-pg` or Vault),
+  **not** the registry — so a control-plane DB compromise alone yields only metadata, not URIs
+  (separation of duties, master §5). Secrets are **redacted** from logs/events/errors
+  (`redactSecrets`). `delete` crypto-shreds on purge. The filesystem object store confines keys to
+  its root (CWE-22). Per-tenant DB roles are least-privilege.
+
+## Residual risks (tracked)
+
+- **R1 — single shared HTTP admin token.** No per-operator identity / RBAC on the control-plane API
+  (Medium). Mitigate with least-privilege network ACLs + token rotation now; per-operator auth
+  (OIDC) is a future hardening item.
+- **R2 — no in-app rate limiting** on the HTTP API (Medium, DoS). A 1 MB body-size cap **is**
+  enforced in-app; per-route rate limits/quotas are expected at the edge/gateway today
+  (`@rules/topic-reliability.md`) — add app-level rate limiting before a publicly-reachable deployment.
+- **R3 — load/soak unverified.** Fleet-migration + provisioning throughput under load is not yet
+  measured; the `stable` bar needs a soak/spike test against the real Neon-API rate limits
+  (`docs/runbooks/scaling.md`).
+- **R4 — live-Neon runbook game-day pending** (`docs/runbooks/game-day.md`).
+
+Residual risks are owned by the maintainers, time-boxed at the next review, and gate the
+`beta → stable` promotion.
+
+## Abuse cases → tests
+
+Each boundary's key threat is pinned by a negative/abuse test (master §4, `@rules/topic-multi-tenancy.md`):
+
+| Threat                            | Test                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------- |
+| BOLA / cross-tenant bleed (B3/B4) | `getConnection(A)` returns A's project/URI, never B's (two tenants)             |
+| Fail-closed routing (B3)          | every non-`active` status is non-routable; active-but-no-secret fails closed    |
+| Illegal lifecycle transition (B3) | exhaustive transition matrix — every disallowed `(from,to)` rejected            |
+| Excessive agency (B2)             | the MCP tool set exposes **no** `purge`/`purge-expired`                         |
+| Spoofing (B1)                     | HTTP returns 401 on a missing/incorrect bearer token                            |
+| Untrusted payload (B6)            | invalid queue payload is dead-lettered, never handled                           |
+| Residency (B7)                    | provisioning fails closed outside the region allow-list / required jurisdiction |
+| Secret disclosure (B7)            | connection URI never appears in events/registry records                         |
+
+---
+
+_Last reviewed: 2026-06-17. Owner: TenantForge maintainers. Review on any trust-boundary change._
