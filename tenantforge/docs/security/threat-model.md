@@ -109,12 +109,14 @@ data). No tenant content is stored in the control plane.
   unbounded fan-out → no rate-limit/connection blowout). Remaining: the **live-Neon load profile**
   (pacing provisioning + fleet migration into Neon's real `429` limits) is operator-run against a
   non-prod org — documented in `docs/runbooks/scaling.md`.
-- **R4 — automated live-Neon game-day passed** (2026-06-17, non-prod org; 10/10 — see
-  `docs/runbooks/drill-report.md`), and the **`NEON_API_KEY` rotation** was drilled (suite re-run
-  10/10 on the rotated key). Remaining: the **Neon PITR / branch restore** (console op) to fully close it.
+- **R4 — closed.** The live-Neon game-day passed locally **and in CI** (10/10), the **`NEON_API_KEY`
+  rotation** was drilled (suite re-run on the rotated key), and the **Neon PITR restore** was drilled
+  with a row-level recovery proof (2026-06-18) — all against a non-prod org. See
+  `docs/runbooks/drill-report.md`.
 
-Residual risks are owned by the maintainers, time-boxed at the next review, and gate the
-`beta → stable` promotion.
+All four gating risks (R1–R4) are addressed/drilled — the basis for the **`beta → stable`
+promotion (v0.3.0)**. The remaining items above are accepted **Low residuals**, owned by the
+maintainers and time-boxed at the next review (not promotion blockers).
 
 ## Abuse cases → tests
 
@@ -135,4 +137,4 @@ Each boundary's key threat is pinned by a negative/abuse test (master §4, `@rul
 
 ---
 
-_Last reviewed: 2026-06-17. Owner: TenantForge maintainers. Review on any trust-boundary change._
+_Last reviewed: 2026-06-18 (v0.3.0 stable). Owner: TenantForge maintainers. Review on any trust-boundary change._

@@ -6,21 +6,33 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-18
+
+First **stable** release. Every gating risk (R1–R4) is addressed/drilled — STRIDE threat model +
+abuse tests, per-operator auth + RBAC + rate limiting, a load/soak harness, and the runbook game-day
+(local **and** CI) plus `NEON_API_KEY` rotation and a **PITR row-level recovery**, all green against a
+non-prod org. Remaining items are accepted **Low residuals** (per-operator OIDC, a multi-instance
+shared rate-limit store, registry-credential rotation) tracked in `docs/security/threat-model.md`.
+
 ### Changed
 
-- **`NEON_API_KEY` rotation drilled** (2026-06-17, threat-model R4): a rotated non-prod key was
-  verified end-to-end by re-running the live game-day suite (10/10) on it — the `secret-rotation.md`
-  verification step. Only the manual Neon PITR-restore console drill now remains before `stable`.
-- **Game-day validated in CI:** the `tenantforge-game-day` workflow ran the live suite green against
-  the non-prod org (Environment secrets) — the drill is now repeatable on demand, not just local.
+- **Promoted to `stable` (v0.3.0).** `status` beta → stable; version 0.2.0 → 0.3.0 across the
+  manifest, `package.json`, build metadata, and OpenAPI.
+- **Neon PITR restore drilled** (threat-model R4 — closed): a canary row inserted into the primary
+  registry was recovered in a point-in-time branch (row-level recovery verified end-to-end), then the
+  marker was cleaned up. `backup-restore.md` now documents the revert paths (delete-the-branch /
+  restore-from-the-auto-backup-branch).
+- **`NEON_API_KEY` rotation drilled**: a rotated non-prod key was verified end-to-end by re-running
+  the live game-day suite (10/10) on it.
+- **Game-day validated in CI**: the `tenantforge-game-day` workflow ran the live suite green against
+  the non-prod org (Environment secrets) — repeatable on demand, not just local.
 
 ### Security
 
 - `.gitignore` now excludes editor swap/backup files (`*.swp`, `*~`, `.*.kate-swp`) — a Kate swap of
   `.env` was otherwise untracked-but-not-ignored, a credential-leak foot-gun.
 - CI: bumped the pinned GitHub Actions off the deprecated Node-20 runtime (`actions/checkout` v6.0.3,
-  `actions/setup-node` v6.4.0, `pnpm/action-setup` v6.0.9 — pinned by digest), clearing the runner
-  deprecation warning seen during the CI game-day.
+  `actions/setup-node` v6.4.0, `pnpm/action-setup` v6.0.9 — pinned by digest).
 
 ## [0.2.0] - 2026-06-17
 
@@ -144,5 +156,6 @@ and real-world validation.
 - Alternate adapters — other message brokers (SQS/NATS/Pub-Sub), Vault/cloud secret stores, and
   `pg_dump`→object-store exporters — are deferred to their own branches behind the existing ports.
 
+[0.3.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.3.0
 [0.2.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.2.0
 [0.1.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.1.0

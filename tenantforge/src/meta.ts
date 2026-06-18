@@ -8,11 +8,11 @@ export const TENANTFORGE = {
   /** Stable tool id; matches `id` in neon-tool.json. */
   id: 'tenantforge',
   /** Semantic version of this build. */
-  version: '0.2.0',
+  version: '0.3.0',
 } as const;
 
 /**
- * Return a human-readable identifier for this build, e.g. `tenantforge@0.2.0`.
+ * Return a human-readable identifier for this build, e.g. `tenantforge@0.3.0`.
  *
  * @returns The `id@version` string.
  */

@@ -120,5 +120,6 @@ Expected: all integration tests **pass** (none skipped). What each validates:
 _Last validated: 2026-06-17 — **automated suite executed live against a non-prod Neon org: 10/10
 passed, 0 skipped** (provision→purge lifecycle, fleet migrate + revert, queue/worker, registry
 assessment queries), both locally and via the `tenantforge-game-day` CI workflow (green); the
-NEON_API_KEY rotation was drilled (suite re-run 10/10 on the rotated key). One manual-only step
-remains: the Neon PITR restore. Owner: TenantForge maintainers._
+NEON_API_KEY rotation was drilled (suite re-run 10/10 on the rotated key), and the Neon PITR restore
+was drilled with a row-level recovery proof (2026-06-18). **All runbook gates drilled.** Owner:
+TenantForge maintainers._
