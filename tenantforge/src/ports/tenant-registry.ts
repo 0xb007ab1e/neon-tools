@@ -102,6 +102,13 @@ export interface TenantRegistry {
   registerMigration(migration: { version: string; checksum: string }): Promise<FleetMigration>;
 
   /**
+   * List the fleet-migration catalog (all registered migrations), oldest version first.
+   *
+   * @returns The catalog records.
+   */
+  listMigrations(): Promise<FleetMigration[]>;
+
+  /**
    * The per-tenant state of a fleet migration (for resumability).
    *
    * @param migrationId - The migration to read state for.

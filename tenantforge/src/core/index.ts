@@ -38,3 +38,10 @@ export {
   type TenantUsage,
 } from './usage.js';
 export { planFleetMigration, type FleetPlanInput, type FleetMigrationPlan } from './fleet-plan.js';
+export {
+  computeFleetMigrationDrift,
+  type FleetDriftInput,
+  type FleetDriftReport,
+  type TenantDrift,
+  type TenantMigrationProgress,
+} from './fleet-drift.js';

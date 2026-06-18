@@ -180,6 +180,13 @@ export function createPgTenantRegistry(options: PgRegistryOptions): TenantRegist
       return { id: row.id, version: row.version, checksum: row.checksum };
     },
 
+    async listMigrations(): Promise<FleetMigration[]> {
+      const { rows } = await pool.query<{ id: string; version: string; checksum: string }>(
+        'SELECT id, version, checksum FROM tf_migrations ORDER BY version ASC',
+      );
+      return rows.map((r) => ({ id: r.id, version: r.version, checksum: r.checksum }));
+    },
+
     async listTenantMigrationStates(migrationId: string): Promise<TenantMigrationState[]> {
       const { rows } = await pool.query<{
         tenant_id: string;

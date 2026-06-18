@@ -37,6 +37,9 @@ function fakeRegistry(): TenantRegistry & { seed(record: TenantRecord): void } {
       }
       return Promise.resolve(rec);
     },
+    listMigrations() {
+      return Promise.resolve([...migrations.values()]);
+    },
     listTenantMigrationStates(migrationId: string) {
       return Promise.resolve([...migStates.values()].filter((s) => s.migrationId === migrationId));
     },
