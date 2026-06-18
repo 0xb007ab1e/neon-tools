@@ -240,8 +240,33 @@ describe('HTTP per-operator auth + RBAC', () => {
     expect(res.status).toBe(201);
   });
 
-  it('refuses to start with no credential or token (fail closed)', () => {
-    expect(() => createHttpServer(tf(), {})).toThrow(/at least one credential/);
+  it('refuses to start with no authenticator, credential, or token (fail closed)', () => {
+    expect(() => createHttpServer(tf(), {})).toThrow(
+      /an authenticator, credentials, or a token is required/,
+    );
+  });
+});
+
+describe('HTTP with an injected authenticator (e.g. OIDC)', () => {
+  const tf = (): TenantForge => fakeTf({ listTenants: async () => [] });
+  // A stand-in authenticator: any token equal to "jwt-admin" is an admin principal.
+  const authenticator = {
+    authenticate: (bearerToken: string) =>
+      Promise.resolve(
+        bearerToken === 'jwt-admin' ? { id: 'oidc-alice', role: 'admin' as const } : null,
+      ),
+  };
+  const server = () => createHttpServer(tf(), { authenticator });
+
+  it('authenticates via the injected authenticator (200) and rejects others (401)', async () => {
+    expect(
+      (await server().request('/v1/tenants', { headers: { authorization: 'Bearer jwt-admin' } }))
+        .status,
+    ).toBe(200);
+    expect(
+      (await server().request('/v1/tenants', { headers: { authorization: 'Bearer other' } }))
+        .status,
+    ).toBe(401);
   });
 });
 

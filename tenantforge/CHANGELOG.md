@@ -8,6 +8,19 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **OIDC / JWT auth for the HTTP control plane** (threat-model R1, closed): authentication is now
+  behind an `Authenticator` port (`src/ports/authenticator.ts`) with two adapters selected by
+  `TENANTFORGE_AUTH_MODE`. `token` (default, unchanged) keeps the static per-operator credentials /
+  admin-token shorthand with constant-time compare. `oidc` verifies a Bearer **JWT** against an
+  external issuer's JWKS via [`jose`](https://github.com/panva/jose) — signature + `iss`/`aud`/`exp`
+  checked, the algorithm constrained to an asymmetric allow-list (rejects `alg:none`/`HS*`
+  confusion), the principal id + role read from the `sub`/`role` claims
+  (`TENANTFORGE_OIDC_ISSUER` / `_AUDIENCE` / `_JWKS_URI`, optional `_SUBJECT_CLAIM` / `_ROLE_CLAIM`).
+  Phishing-resistant, externally-managed identity with no shared secrets; RBAC is unchanged across
+  modes. JWT verification is delegated to a vetted library, never hand-rolled (master §1). Both
+  authenticators are unit-tested at 100% (`jose` `generateKeyPair`/`SignJWT` fixtures — valid /
+  expired / wrong-aud / wrong-iss / wrong-key / disallowed-alg / missing-or-non-string-sub /
+  invalid-role / custom-claims). Adds one dependency (`jose`, `pnpm audit --prod` clean).
 - **Cross-instance rate limiting** (threat-model R2, closed): the HTTP rate limiter now counts via a
   `RateLimitStore` port — the default `createInMemoryRateLimitStore` (per-instance) plus a
   **Postgres-backed** `createPgRateLimitStore` (`tf_rate_limits`, migration 0004) that makes the

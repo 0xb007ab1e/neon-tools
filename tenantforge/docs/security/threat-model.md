@@ -41,10 +41,16 @@ data). No tenant content is stored in the control plane.
 
 ### B1 — HTTP control-plane API (admin)
 
-- **S (spoofing):** **per-operator** bearer credentials (`id:role:token`) with **constant-time**
-  token compare (`src/app/http-server.ts`); tokens are secrets from env (`workflow-secrets`),
-  rotatable (`docs/runbooks/secret-rotation.md`). A single-admin token shorthand remains for simple
-  deploys. **AuthZ (RBAC, API5):** mutating routes require the `admin` role; `readonly` → 403.
+- **S (spoofing):** authentication is behind the `Authenticator` port (`src/ports/authenticator.ts`),
+  resolved server-side to a principal `{ id, role }`. Two modes (`TENANTFORGE_AUTH_MODE`): **`token`**
+  — per-operator bearer credentials (`id:role:token`) with **constant-time** token compare
+  (`src/adapters/auth/token-authenticator.ts`), tokens are secrets from env (`workflow-secrets`),
+  rotatable (`docs/runbooks/secret-rotation.md`), with a single-admin shorthand for simple deploys; or
+  **`oidc`** — a Bearer **JWT** verified against an external issuer's JWKS via `jose`
+  (`src/adapters/auth/oidc-authenticator.ts`): signature + `iss`/`aud`/`exp` checked, algorithm
+  constrained to an asymmetric allow-list (rejects `alg:none`/`HS*` confusion), id+role from the
+  `sub`/`role` claims — phishing-resistant, externally-managed identity, no shared secrets.
+  **AuthZ (RBAC, API5):** mutating routes require the `admin` role; `readonly` → 403 (mode-independent).
 - **T (tampering):** request bodies validated with `zod` before use; TLS terminated at the edge
   (deploy concern). **I (disclosure):** the API **never returns connection URIs** — `provision`
   reports only that a secret was issued; errors return a stable shape, not internals
@@ -98,9 +104,11 @@ data). No tenant content is stored in the control plane.
 
 ## Residual risks (tracked)
 
-- **R1 — addressed (Low residual).** Per-operator credentials + RBAC are now in-app (admin/readonly,
-  constant-time compare). Remaining: tokens are static bearer secrets — phishing-resistant,
-  externally-managed identity (OIDC) is a future enhancement, not a gap for an admin control plane.
+- **R1 — closed.** Per-operator credentials + RBAC are in-app (admin/readonly, constant-time compare),
+  and authentication is now pluggable behind the `Authenticator` port: in addition to static tokens,
+  an **OIDC mode** (`TENANTFORGE_AUTH_MODE=oidc`) verifies a Bearer JWT against an external issuer's
+  JWKS (`jose`; signature + `iss`/`aud`/`exp`, asymmetric-alg allow-list) — phishing-resistant,
+  externally-managed identity with no shared secrets. Static tokens remain the default for simple deploys.
 - **R2 — closed.** A 1 MB body cap **and** a per-principal rate limit are enforced in-app, behind a
   `RateLimitStore` port: the default is in-memory (per-instance); a **Postgres-backed** store
   (`tf_rate_limits`, migration 0004, `TENANTFORGE_RATE_LIMIT_STORE=pg`) makes the limit **global
@@ -116,8 +124,9 @@ data). No tenant content is stored in the control plane.
   `docs/runbooks/drill-report.md`.
 
 All four gating risks (R1–R4) are addressed/drilled — the basis for the **`beta → stable`
-promotion (v0.3.0)**. The remaining items above are accepted **Low residuals**, owned by the
-maintainers and time-boxed at the next review (not promotion blockers).
+promotion (v0.3.0)**; R1 and R2 are now fully **closed** (OIDC auth + cross-instance rate limiting).
+The remaining items above are accepted **Low residuals**, owned by the maintainers and time-boxed at
+the next review (not promotion blockers).
 
 ## Abuse cases → tests
 

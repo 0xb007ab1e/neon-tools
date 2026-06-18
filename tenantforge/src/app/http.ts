@@ -1,15 +1,20 @@
 import { serve } from '@hono/node-server';
 import { createPgRateLimitStore } from '../adapters/neon-pg/rate-limit-store.js';
+import { createOidcAuthenticator } from '../adapters/auth/oidc-authenticator.js';
 import { loadConfig } from './config.js';
 import { createHttpServer } from './http-server.js';
 import { tenantForgeFromConfig } from './lib.js';
 
-/** Entry point: serve the TenantForge HTTP control-plane API. Fails closed without a bearer token. */
+/** Entry point: serve the TenantForge HTTP control-plane API. Fails closed without a way to authenticate. */
 function main(): void {
   const config = loadConfig();
-  if (config.httpCredentials === undefined && config.httpToken === undefined) {
+  if (
+    config.authMode === 'token' &&
+    config.httpCredentials === undefined &&
+    config.httpToken === undefined
+  ) {
     process.stderr.write(
-      'TENANTFORGE_HTTP_TOKEN or TENANTFORGE_HTTP_CREDENTIALS is required to run the HTTP server\n',
+      'TENANTFORGE_HTTP_TOKEN or TENANTFORGE_HTTP_CREDENTIALS is required for token auth (or set TENANTFORGE_AUTH_MODE=oidc)\n',
     );
     process.exit(1);
   }
@@ -20,7 +25,20 @@ function main(): void {
     config.rateLimitStore === 'pg'
       ? createPgRateLimitStore({ connectionString: config.databaseUrl })
       : undefined;
+  // OIDC mode: verify Bearer JWTs against the issuer's JWKS; else use the static-token authenticator
+  // built by createHttpServer from the credentials / admin-token shorthand.
+  const authenticator =
+    config.oidc !== undefined
+      ? createOidcAuthenticator({
+          issuer: config.oidc.issuer,
+          audience: config.oidc.audience,
+          jwksUri: config.oidc.jwksUri,
+          subjectClaim: config.oidc.subjectClaim,
+          roleClaim: config.oidc.roleClaim,
+        })
+      : undefined;
   const app = createHttpServer(tf, {
+    ...(authenticator !== undefined ? { authenticator } : {}),
     ...(config.httpCredentials !== undefined ? { credentials: config.httpCredentials } : {}),
     ...(config.httpToken !== undefined ? { token: config.httpToken } : {}),
     rateLimit: config.rateLimit,

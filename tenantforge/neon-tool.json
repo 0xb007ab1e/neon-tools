@@ -119,16 +119,52 @@
       "description": "Comma-separated allow-list of regions tenants may be provisioned in (residency enforcement); empty = all known regions."
     },
     {
+      "name": "TENANTFORGE_AUTH_MODE",
+      "required": false,
+      "secret": false,
+      "description": "HTTP control-plane auth mode: token (default — static credentials) or oidc (verify a Bearer JWT against an external issuer's JWKS)."
+    },
+    {
       "name": "TENANTFORGE_HTTP_TOKEN",
       "required": false,
       "secret": true,
-      "description": "Single-admin bearer-token shorthand for the HTTP control-plane API."
+      "description": "token mode: single-admin bearer-token shorthand for the HTTP control-plane API."
     },
     {
       "name": "TENANTFORGE_HTTP_CREDENTIALS",
       "required": false,
       "secret": true,
-      "description": "Per-operator HTTP credentials as comma-separated id:role:token entries (role = admin | readonly) — enables attribution + RBAC."
+      "description": "token mode: per-operator HTTP credentials as comma-separated id:role:token entries (role = admin | readonly) — enables attribution + RBAC."
+    },
+    {
+      "name": "TENANTFORGE_OIDC_ISSUER",
+      "required": false,
+      "secret": false,
+      "description": "oidc mode (required): expected JWT issuer (iss)."
+    },
+    {
+      "name": "TENANTFORGE_OIDC_AUDIENCE",
+      "required": false,
+      "secret": false,
+      "description": "oidc mode (required): expected JWT audience (aud)."
+    },
+    {
+      "name": "TENANTFORGE_OIDC_JWKS_URI",
+      "required": false,
+      "secret": false,
+      "description": "oidc mode (required): the issuer's JWKS endpoint used to verify token signatures."
+    },
+    {
+      "name": "TENANTFORGE_OIDC_SUBJECT_CLAIM",
+      "required": false,
+      "secret": false,
+      "description": "oidc mode: JWT claim carrying the principal id (default sub)."
+    },
+    {
+      "name": "TENANTFORGE_OIDC_ROLE_CLAIM",
+      "required": false,
+      "secret": false,
+      "description": "oidc mode: JWT claim carrying the role admin | readonly (default role)."
     },
     {
       "name": "TENANTFORGE_RATE_LIMIT",

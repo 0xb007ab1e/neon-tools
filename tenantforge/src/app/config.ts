@@ -97,6 +97,17 @@ const EnvSchema = z
     // (role = admin | readonly; the token may itself contain colons — only the first two split).
     TENANTFORGE_HTTP_TOKEN: z.string().optional(),
     TENANTFORGE_HTTP_CREDENTIALS: z.string().optional(),
+    // HTTP auth mode: `token` (default — static per-operator credentials / admin-token shorthand) or
+    // `oidc` (verify a Bearer JWT against an external issuer's JWKS — phishing-resistant, no static
+    // shared secrets). In `oidc` mode the issuer/audience/JWKS endpoint below are required.
+    TENANTFORGE_AUTH_MODE: z.enum(['token', 'oidc']).default('token'),
+    TENANTFORGE_OIDC_ISSUER: z.string().url().optional(),
+    TENANTFORGE_OIDC_AUDIENCE: z.string().min(1).optional(),
+    TENANTFORGE_OIDC_JWKS_URI: z.string().url().optional(),
+    // Claims the principal id + role are read from (defaults: `sub` / `role`). The role value must
+    // be `admin` | `readonly`; anything else is rejected (unauthenticated).
+    TENANTFORGE_OIDC_SUBJECT_CLAIM: z.string().min(1).default('sub'),
+    TENANTFORGE_OIDC_ROLE_CLAIM: z.string().min(1).default('role'),
     // Per-principal HTTP rate limit (fixed window).
     TENANTFORGE_RATE_LIMIT: z.coerce.number().int().positive().default(120),
     TENANTFORGE_RATE_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
@@ -127,6 +138,30 @@ const EnvSchema = z
           code: z.ZodIssueCode.custom,
           path: ['VAULT_TOKEN'],
           message: 'VAULT_TOKEN is required when TENANTFORGE_SECRET_BACKEND=vault',
+        });
+      }
+    }
+    // OIDC mode needs the issuer, audience, and JWKS endpoint to verify tokens (fail fast).
+    if (env.TENANTFORGE_AUTH_MODE === 'oidc') {
+      if (env.TENANTFORGE_OIDC_ISSUER === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['TENANTFORGE_OIDC_ISSUER'],
+          message: 'TENANTFORGE_OIDC_ISSUER is required when TENANTFORGE_AUTH_MODE=oidc',
+        });
+      }
+      if (env.TENANTFORGE_OIDC_AUDIENCE === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['TENANTFORGE_OIDC_AUDIENCE'],
+          message: 'TENANTFORGE_OIDC_AUDIENCE is required when TENANTFORGE_AUTH_MODE=oidc',
+        });
+      }
+      if (env.TENANTFORGE_OIDC_JWKS_URI === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['TENANTFORGE_OIDC_JWKS_URI'],
+          message: 'TENANTFORGE_OIDC_JWKS_URI is required when TENANTFORGE_AUTH_MODE=oidc',
         });
       }
     }
@@ -179,6 +214,21 @@ export interface Config {
   retentionDays: number;
   /** Worker poll interval (ms) between lifecycle-queue drains. */
   queuePollMs: number;
+  /** HTTP auth mode: static `token` credentials or external `oidc` (JWT) verification. */
+  authMode: 'token' | 'oidc';
+  /** OIDC verification settings, set when `authMode` is `oidc`. */
+  oidc?: {
+    /** Expected token issuer (`iss`). */
+    issuer: string;
+    /** Expected audience (`aud`). */
+    audience: string;
+    /** The issuer's JWKS endpoint. */
+    jwksUri: string;
+    /** Claim carrying the principal id (default `sub`). */
+    subjectClaim: string;
+    /** Claim carrying the role (default `role`). */
+    roleClaim: string;
+  };
   /** Admin-token shorthand for the HTTP entrypoint (required only when serving HTTP). */
   httpToken?: string;
   /** Per-operator HTTP credentials (preferred over httpToken); set when configured. */
@@ -215,8 +265,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       windowMs: parsed.TENANTFORGE_RATE_WINDOW_MS,
     },
     rateLimitStore: parsed.TENANTFORGE_RATE_LIMIT_STORE,
+    authMode: parsed.TENANTFORGE_AUTH_MODE,
     port: parsed.TENANTFORGE_PORT,
   };
+  if (parsed.TENANTFORGE_AUTH_MODE === 'oidc') {
+    // superRefine guarantees issuer/audience/jwksUri are present for this mode.
+    config.oidc = {
+      issuer: parsed.TENANTFORGE_OIDC_ISSUER!,
+      audience: parsed.TENANTFORGE_OIDC_AUDIENCE!,
+      jwksUri: parsed.TENANTFORGE_OIDC_JWKS_URI!,
+      subjectClaim: parsed.TENANTFORGE_OIDC_SUBJECT_CLAIM,
+      roleClaim: parsed.TENANTFORGE_OIDC_ROLE_CLAIM,
+    };
+  }
   const httpCredentials = parseHttpCredentials(parsed.TENANTFORGE_HTTP_CREDENTIALS);
   if (httpCredentials !== undefined) {
     config.httpCredentials = httpCredentials;

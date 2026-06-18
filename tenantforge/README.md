@@ -75,10 +75,18 @@ Secrets come from the environment (never committed). See [`.env.example`](./.env
 `NEON_API_KEY` + `NEON_ORG_ID` (provision projects — the account is org-scoped), `DATABASE_URL` (the
 control-plane registry DB), and the HTTP auth (below).
 
-**HTTP control-plane auth** is per-operator with RBAC: `TENANTFORGE_HTTP_TOKEN` is a single-admin
-shorthand, or set `TENANTFORGE_HTTP_CREDENTIALS` (comma-separated `id:role:token`, role =
-`admin` | `readonly`) for attributable identities — `readonly` may GET, only `admin` may mutate
-(403 otherwise; constant-time token compare). Every `/v1/*` route is **rate-limited per principal**
+**HTTP control-plane auth** has two modes, selected by `TENANTFORGE_AUTH_MODE` (default `token`),
+both resolving a request to a principal `{ id, role }` behind the `Authenticator` port. In **`token`**
+mode, `TENANTFORGE_HTTP_TOKEN` is a single-admin shorthand, or set `TENANTFORGE_HTTP_CREDENTIALS`
+(comma-separated `id:role:token`, role = `admin` | `readonly`) for attributable identities
+(constant-time token compare). In **`oidc`** mode, every request must carry a Bearer **JWT** verified
+against an external issuer's JWKS (`TENANTFORGE_OIDC_ISSUER` / `TENANTFORGE_OIDC_AUDIENCE` /
+`TENANTFORGE_OIDC_JWKS_URI`, via [`jose`](https://github.com/panva/jose)) — phishing-resistant,
+no shared secrets; the principal id + role come from the `sub` / `role` claims
+(`TENANTFORGE_OIDC_SUBJECT_CLAIM` / `_ROLE_CLAIM` to override), the signature algorithm is constrained
+to an asymmetric allow-list (rejects `alg:none` / `HS*` confusion), and `iss`/`aud`/`exp` are checked.
+RBAC is identical across modes: `readonly` may GET, only `admin` may mutate (403 otherwise). Every
+`/v1/*` route is **rate-limited per principal**
 (`TENANTFORGE_RATE_LIMIT` / `TENANTFORGE_RATE_WINDOW_MS`; 429 + `Retry-After` when exceeded). The
 counter store is selected by `TENANTFORGE_RATE_LIMIT_STORE`: `memory` (default, per-instance) or
 `pg` — a Postgres-backed (`tf_rate_limits`) store that makes the limit **global across instances**
