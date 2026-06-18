@@ -1,5 +1,10 @@
-import { KNOWN_REGIONS } from './regions.js';
-import { regionJurisdiction, type Jurisdiction } from './residency.js';
+import { assertRegion, KNOWN_REGIONS } from './regions.js';
+import {
+  assertRegionAllowed,
+  assertResidency,
+  regionJurisdiction,
+  type Jurisdiction,
+} from './residency.js';
 
 /** A request to choose a provisioning region under residency + allow-list constraints. */
 export interface RegionSelection {
@@ -58,4 +63,38 @@ export function selectRegion(selection: RegionSelection): string {
     return selection.preferred;
   }
   return candidates[0]!;
+}
+
+/** Constraints on a re-home target region. */
+export interface RehomeConstraint {
+  /** Org/deployment allow-list (empty = all known regions). */
+  allowed?: readonly string[];
+  /** Required jurisdiction the target must satisfy, if any. */
+  jurisdiction?: Jurisdiction;
+}
+
+/**
+ * Validate a re-home **target** region for a tenant currently in `current` — the policy half of
+ * tenant relocation (#5). The target must be a known region, on the allow-list, satisfy any required
+ * jurisdiction, and **differ from the current region** (re-homing to the same region is a no-op).
+ * Fail closed (std-privacy, master §2).
+ *
+ * @param current - The tenant's current region.
+ * @param target - The desired target region.
+ * @param constraint - Allow-list + optional required jurisdiction.
+ * @throws Error if the target is unknown, disallowed, non-compliant, or equal to `current`.
+ */
+export function assertRehomeTarget(
+  current: string,
+  target: string,
+  constraint: RehomeConstraint = {},
+): void {
+  assertRegion(target);
+  if (target === current) {
+    throw new Error(`tenant is already in region ${current}`);
+  }
+  assertRegionAllowed(target, constraint.allowed ?? []);
+  if (constraint.jurisdiction !== undefined) {
+    assertResidency(target, constraint.jurisdiction);
+  }
 }

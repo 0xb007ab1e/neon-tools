@@ -82,6 +82,16 @@ export interface TenantRegistry {
   setStatus(id: string, status: TenantStatus): Promise<void>;
 
   /**
+   * Atomically point a tenant at a new region + Neon project (re-homing — #5). The caller has already
+   * provisioned the new project and copied the data; this switches the registry record over.
+   *
+   * @param id - The tenant id.
+   * @param region - The new (validated) region.
+   * @param neonProjectId - The new project id.
+   */
+  relocate(id: string, region: string, neonProjectId: string): Promise<void>;
+
+  /**
    * Register a fleet migration in the catalog (idempotent by version). Returns the stored record;
    * if the version already exists, the existing record is returned (the caller checks for checksum
    * drift).

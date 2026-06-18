@@ -31,6 +31,12 @@ import { createJsonEventSink, createNoopEventSink } from '../adapters/event-sink
 import { createErasureEngine, type EraseOptions } from '../adapters/erasure-engine.js';
 import { createCachingConnectionRouter } from '../adapters/caching-connection-router.js';
 import {
+  createRehomeEngine,
+  type RehomeOptions,
+  type RehomeResult,
+} from '../adapters/rehome-engine.js';
+import type { TenantDataMover } from '../ports/tenant-data-mover.js';
+import {
   createFleetOrchestrator,
   type FleetMigrationReport,
   type FleetMigrationSpec,
@@ -104,6 +110,11 @@ export interface TenantForgeDeps {
   connectionCacheTtlMs?: number;
   /** Max cached connection resolutions before the least-recently-used is evicted. Optional. */
   connectionCacheMaxEntries?: number;
+  /**
+   * Copies a tenant's data between projects. Required only for {@link TenantForge.rehome}; when
+   * absent, that method fails closed.
+   */
+  dataMover?: TenantDataMover;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -280,6 +291,18 @@ export interface TenantForge {
    * @returns The erasure certificate.
    */
   erase(id: string, options: EraseOptions): Promise<ErasureCertificate>;
+
+  /**
+   * Re-home an active tenant to a new region (#5) — for a residency change or latency optimization.
+   * Provisions a new project in the target region, copies the data (via the injected data mover),
+   * switches the registry + connection secret over, then decommissions the old project. Fail closed:
+   * a copy failure rolls back the new project and leaves the source intact. Requires a `dataMover`.
+   *
+   * @param id - The tenant to relocate.
+   * @param options - The target region + optional required jurisdiction.
+   * @returns The re-home result.
+   */
+  rehome(id: string, options: RehomeOptions): Promise<RehomeResult>;
 
   /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
@@ -540,6 +563,24 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       // The engine sets status directly (bypassing `transition`) — drop any cached resolution.
       invalidateConnection(id);
       return certificate;
+    },
+
+    async rehome(id: string, options: RehomeOptions): Promise<RehomeResult> {
+      if (deps.dataMover === undefined) {
+        throw new Error('rehome: a dataMover is required to copy tenant data between regions');
+      }
+      const engine = createRehomeEngine({
+        registry,
+        provisioning,
+        secretStore,
+        dataMover: deps.dataMover,
+        allowedRegions,
+        emit: (event) => eventSink.emit(event),
+      });
+      const result = await engine.rehome(id, options);
+      // The new project means a new connection URI — drop any cached resolution.
+      invalidateConnection(id);
+      return result;
     },
 
     async purgeExpired(options: PurgeSweepOptions = {}): Promise<PurgeSweepReport> {

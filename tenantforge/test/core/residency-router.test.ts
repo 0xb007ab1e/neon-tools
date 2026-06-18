@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { compliantRegions, selectRegion } from '../../src/core/residency-router.js';
+import {
+  assertRehomeTarget,
+  compliantRegions,
+  selectRegion,
+} from '../../src/core/residency-router.js';
 
 describe('compliantRegions', () => {
   it('returns all known regions when no jurisdiction and no allow-list', () => {
@@ -70,5 +74,42 @@ describe('selectRegion', () => {
     expect(() => selectRegion({ allowed: ['unknown-only'] })).toThrow(
       /no region satisfies residency "any" within the allowed regions \[unknown-only\]/,
     );
+  });
+});
+
+describe('assertRehomeTarget', () => {
+  it('accepts a known, allowed, compliant, different target', () => {
+    expect(() =>
+      assertRehomeTarget('aws-us-east-1', 'aws-eu-central-1', {
+        allowed: ['aws-eu-central-1'],
+        jurisdiction: 'eu',
+      }),
+    ).not.toThrow();
+  });
+
+  it('accepts with no constraints', () => {
+    expect(() => assertRehomeTarget('aws-us-east-1', 'aws-eu-west-1')).not.toThrow();
+  });
+
+  it('rejects an unknown target region', () => {
+    expect(() => assertRehomeTarget('aws-us-east-1', 'mars-1')).toThrow(/unknown region/);
+  });
+
+  it('rejects re-homing to the same region', () => {
+    expect(() => assertRehomeTarget('aws-us-east-1', 'aws-us-east-1')).toThrow(
+      /already in region aws-us-east-1/,
+    );
+  });
+
+  it('rejects a target outside the allow-list', () => {
+    expect(() =>
+      assertRehomeTarget('aws-us-east-1', 'aws-eu-central-1', { allowed: ['aws-us-east-1'] }),
+    ).toThrow(/not in the allowed set/);
+  });
+
+  it('rejects a target that violates the required jurisdiction', () => {
+    expect(() =>
+      assertRehomeTarget('aws-eu-central-1', 'aws-us-east-1', { jurisdiction: 'eu' }),
+    ).toThrow(/does not satisfy required residency "eu"/);
   });
 });

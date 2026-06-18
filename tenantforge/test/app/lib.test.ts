@@ -56,6 +56,11 @@ function fakeRegistry(): TenantRegistry & { seed(record: TenantRecord): void } {
     },
     migrate: () => Promise.resolve(),
     ping: () => Promise.resolve(),
+    relocate(id: string, region: string, neonProjectId: string) {
+      const rec = byId.get(id);
+      if (rec) byId.set(id, { ...rec, region, neonProjectId });
+      return Promise.resolve();
+    },
     create(tenant: NewTenant) {
       const now = new Date(0);
       const record: TenantRecord = {
@@ -253,6 +258,46 @@ describe('createTenantForge.erase', () => {
     expect(cert.verified).toBe(true);
     expect(await secretStore.get(tenant.id)).toBeNull();
     expect((await tf.getTenant(tenant.id))?.status).toBe('deleted');
+  });
+});
+
+describe('createTenantForge.rehome', () => {
+  it('relocates an active tenant to a new region via the injected data mover', async () => {
+    const registry = fakeRegistry();
+    const provisioning = fakeProvisioning();
+    const secretStore = createInMemorySecretStore();
+    const moved: { from: string; to: string }[] = [];
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+      dataMover: {
+        move: (input) => {
+          moved.push(input);
+          return Promise.resolve();
+        },
+      },
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+
+    const result = await tf.rehome(tenant.id, { region: 'aws-eu-central-1' });
+    expect(result).toMatchObject({ fromRegion: 'aws-us-east-1', toRegion: 'aws-eu-central-1' });
+    expect(moved).toHaveLength(1);
+    expect((await tf.getTenant(tenant.id))?.region).toBe('aws-eu-central-1');
+  });
+
+  it('fails closed when no data mover is configured', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await expect(tf.rehome(tenant.id, { region: 'aws-eu-central-1' })).rejects.toThrow(
+      /a dataMover is required/,
+    );
   });
 });
 

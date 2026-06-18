@@ -165,6 +165,15 @@ emitted as a `tenant.erased` event (`outcome: 'error'` if a post-condition fails
 catches an incomplete erasure). The control-plane registry holds no tenant content, so this erases the
 personal data. `createErasureEngine` is also exported for standalone composition.
 
+**Re-homing (residency change):** `tf.rehome(id, { region, residency? })` relocates an **active**
+tenant to a new region — for a residency change (e.g. a customer moves to the EU) or latency. A Neon
+project is region-bound, so it **provisions a new project in the target region, copies the data**
+(via an injected `TenantDataMover` — the same machinery as backup/restore), switches the registry +
+connection secret over, then decommissions the old project. **Fail closed / never lose data:** the
+target is validated first (allow-list + jurisdiction, must differ from current), and a copy failure
+rolls back the new project leaving the source intact; the old project is deleted only after the
+switch (best-effort). Exposed as the standalone `createRehomeEngine`.
+
 **Data residency:** provisioning is fail-closed on residency. A deployment can pin the regions
 tenants may use via `TENANTFORGE_ALLOWED_REGIONS` (e.g. EU-only), and each provision may require a
 jurisdiction (`--residency us|eu|apac`). With an explicit region, that region must satisfy the
