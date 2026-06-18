@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createHttpServer } from '../../src/app/http-server.js';
+import { decodeCursor } from '../../src/core/index.js';
 import type { TenantRecord } from '../../src/core/domain.js';
 import type { TenantForge } from '../../src/app/lib.js';
 
@@ -125,12 +126,50 @@ describe('HTTP control-plane', () => {
       headers: { authorization: `Bearer ${TOKEN}` },
     });
     expect(list.status).toBe(200);
-    expect(await list.json()).toEqual({ tenants: [tenantJson] });
+    // Page not full (1 < default limit) → no next-page cursor.
+    expect(await list.json()).toEqual({ tenants: [tenantJson], nextCursor: null });
 
     const bad = await app().request('/v1/tenants?status=bogus', {
       headers: { authorization: `Bearer ${TOKEN}` },
     });
     expect(bad.status).toBe(400);
+  });
+
+  it('emits a keyset nextCursor on a full page and forwards it to the next request', async () => {
+    const calls: Array<{ limit?: number; cursor?: { createdAt: Date; id: string } }> = [];
+    const server = createHttpServer(
+      fakeTf({
+        listTenants: async (options) => {
+          calls.push(options ?? {});
+          return [tenant];
+        },
+      }),
+      { token: TOKEN },
+    );
+
+    // limit=1 and one row returned → page is full → a next-page cursor is emitted.
+    const first = await server.request('/v1/tenants?limit=1', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(first.status).toBe(200);
+    const body = (await first.json()) as { tenants: unknown[]; nextCursor: string | null };
+    expect(body.nextCursor).not.toBeNull();
+    expect(decodeCursor(body.nextCursor!)).toEqual({ createdAt: tenant.createdAt, id: tenant.id });
+
+    // The opaque token round-trips back through the query string into a keyset cursor.
+    await server.request(`/v1/tenants?limit=1&cursor=${encodeURIComponent(body.nextCursor!)}`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.cursor).toEqual({ createdAt: tenant.createdAt, id: tenant.id });
+  });
+
+  it('rejects a malformed cursor (400)', async () => {
+    const res = await app({ listTenants: async () => [] }).request(
+      '/v1/tenants?cursor=not-a-valid-cursor',
+      { headers: { authorization: `Bearer ${TOKEN}` } },
+    );
+    expect(res.status).toBe(400);
   });
 
   it('gets a tenant, 404 when missing', async () => {
