@@ -664,9 +664,14 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
  * validated configuration. This is the production composition root.
  *
  * @param config - Validated configuration (see {@link loadConfig}).
+ * @param opts - Optional overrides; `eventSink` replaces the default JSON-to-stdout sink (e.g. a
+ *   fan-out of JSON + a metrics sink at the composition root).
  * @returns A control-plane API backed by live adapters.
  */
-export function tenantForgeFromConfig(config: Config): TenantForge {
+export function tenantForgeFromConfig(
+  config: Config,
+  opts?: { eventSink?: EventSink },
+): TenantForge {
   const registry = createPgTenantRegistry({ connectionString: config.databaseUrl });
   const provisioning = createNeonProvisioningProvider({
     apiKey: config.neonApiKey,
@@ -706,7 +711,7 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
     secretStore,
     migrationRunner: createPgMigrationRunner(),
     exporter,
-    eventSink: createJsonEventSink(),
+    eventSink: opts?.eventSink ?? createJsonEventSink(),
     usageProvider: createNeonUsageProvider({
       apiKey: config.neonApiKey,
       orgId: config.neonOrgId,

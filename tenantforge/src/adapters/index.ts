@@ -77,7 +77,8 @@ export {
   type AzureBlobClientLike,
 } from './object-store/azure-blob.js';
 export type { ObjectStore, PutResult } from '../ports/object-store.js';
-export { createJsonEventSink, createNoopEventSink } from './event-sink.js';
+export { createJsonEventSink, createNoopEventSink, createFanOutEventSink } from './event-sink.js';
+export { createMetricsEventSink, type MetricsEventSink } from './metrics-event-sink.js';
 export { parseLifecycleCommand, type LifecycleCommand } from './lifecycle-command.js';
 export { createInMemoryQueue, type InMemoryQueue } from './in-memory-queue.js';
 export {

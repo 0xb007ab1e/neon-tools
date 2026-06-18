@@ -47,6 +47,22 @@ describe('HTTP control-plane', () => {
     expect(await res.json()).toMatchObject({ status: 'degraded' });
   });
 
+  it('serves /metrics as Prometheus text when wired', async () => {
+    const server = createHttpServer(fakeTf({}), {
+      token: TOKEN,
+      metrics: () => 'tenantforge_events_total{event="x",outcome="ok"} 1\n',
+    });
+    const res = await server.request('/metrics');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/plain');
+    expect(await res.text()).toContain('tenantforge_events_total');
+  });
+
+  it('does not mount /metrics when not wired (404)', async () => {
+    const res = await app().request('/metrics');
+    expect(res.status).toBe(404);
+  });
+
   it('rejects /v1 routes without a bearer token (401)', async () => {
     const res = await app().request('/v1/tenants');
     expect(res.status).toBe(401);

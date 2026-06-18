@@ -8,6 +8,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Prometheus metrics** (gap #3) — `createMetricsEventSink` derives **RED metrics** (rate / errors /
+  duration) from the existing control-plane event stream (no scattered instrumentation): a
+  `tenantforge_events_total{event,outcome}` counter and a `tenantforge_event_duration_ms` histogram,
+  rendered in Prometheus text. `createFanOutEventSink` lets the JSON-to-stdout sink and the metrics
+  sink coexist, and the HTTP entrypoint serves them at an unauthenticated `GET /metrics` (wired via a
+  new `metrics` option on the server). Both adapters unit-tested at 100%.
+
 - **Readiness probe** — a new `GET /ready` (distinct from the static liveness `GET /health`) backed by
   `TenantForge.health()`, which checks the **registry connectivity** (the hard dependency) and returns
   `200` healthy / `503` degraded so an orchestrator stops routing to an unhealthy instance

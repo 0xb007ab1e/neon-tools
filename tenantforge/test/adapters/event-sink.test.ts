@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TenantEvent } from '../../src/core/observability.js';
-import { createJsonEventSink, createNoopEventSink } from '../../src/adapters/event-sink.js';
+import type { EventSink } from '../../src/ports/event-sink.js';
+import {
+  createFanOutEventSink,
+  createJsonEventSink,
+  createNoopEventSink,
+} from '../../src/adapters/event-sink.js';
 
 const event: TenantEvent = {
   event: 'tenant.transition',
@@ -40,5 +45,28 @@ describe('createJsonEventSink', () => {
 describe('createNoopEventSink', () => {
   it('discards events without throwing', () => {
     expect(() => createNoopEventSink().emit(event)).not.toThrow();
+  });
+});
+
+describe('createFanOutEventSink', () => {
+  it('delivers each event to every sink', () => {
+    const a: TenantEvent[] = [];
+    const b: TenantEvent[] = [];
+    const sink = createFanOutEventSink([{ emit: (e) => a.push(e) }, { emit: (e) => b.push(e) }]);
+    sink.emit(event);
+    expect(a).toEqual([event]);
+    expect(b).toEqual([event]);
+  });
+
+  it('isolates a throwing sink so the others still receive the event', () => {
+    const received: TenantEvent[] = [];
+    const throwing: EventSink = {
+      emit: () => {
+        throw new Error('sink down');
+      },
+    };
+    const sink = createFanOutEventSink([throwing, { emit: (e) => received.push(e) }]);
+    expect(() => sink.emit(event)).not.toThrow();
+    expect(received).toEqual([event]);
   });
 });
