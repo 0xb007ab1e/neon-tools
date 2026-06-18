@@ -165,6 +165,12 @@ emitted as a `tenant.erased` event (`outcome: 'error'` if a post-condition fails
 catches an incomplete erasure). The control-plane registry holds no tenant content, so this erases the
 personal data. `createErasureEngine` is also exported for standalone composition.
 
+**Secret rotation:** `tf.rotateSecret(id)` rotates one tenant's connection credential (mint a new
+one on its Neon project, store it, invalidate the cached connection); `tf.rotateSecrets()` is the
+**fleet sweep** (failure-isolated — run by a cron / K8s CronJob) — automating the per-tenant
+connection-secret procedure in `docs/runbooks/secret-rotation.md`. Each emits a
+`tenant.secret_rotated` audit event; the old/new URIs are never logged. Also `createSecretRotationEngine`.
+
 **Backup & restore:** `pg_dump` backs the offboard exporter (backup); the matching **restore** is
 `spawnPgRestore` (archive → `pg_restore` into a target DB, password off-argv, archive on stdin), and
 `createPgDataMover` pipes **`pg_dump` → `pg_restore`** to copy a tenant between databases — the

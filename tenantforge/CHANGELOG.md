@@ -8,6 +8,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Automated per-tenant secret rotation** (gap #7) — `TenantForge.rotateSecret(id)` /
+  `rotateSecrets()` and `createSecretRotationEngine` automate the per-tenant connection-credential
+  rotation that `docs/runbooks/secret-rotation.md` previously described manually. Rotating mints a new
+  credential on the tenant's Neon project (new `ProvisioningProvider.rotateTenantCredential` — neon-api
+  resets the owner role's password on the default branch, integration-verified via the game-day),
+  stores it in the SecretStore, invalidates any cached connection, and emits a `tenant.secret_rotated`
+  audit event; old/new URIs never logged. `rotateSecrets()` is the failure-isolated fleet sweep for a
+  cron. Engine unit-tested at 100% (rotate ok / not-found / not-active; sweep with failure isolation +
+  scan limit) + facade tests.
+
 - **Programmatic restore + pg data mover** (gap #6) — `spawnPgRestore` restores a `pg_dump`
   custom-format archive into a target database (archive on **stdin**, password via `PGPASSWORD` off
   argv, fixed-arg `pg_restore`, timeout), the restore counterpart to the existing `spawnPgDump`

@@ -137,6 +137,13 @@ export {
   type RehomeOptions,
   type RehomeResult,
 } from './rehome-engine.js';
+export {
+  createSecretRotationEngine,
+  type SecretRotationEngine,
+  type SecretRotationEngineDeps,
+  type RotationResult,
+  type RotationSweepReport,
+} from './secret-rotation-engine.js';
 export type { TenantDataMover } from '../ports/tenant-data-mover.js';
 export {
   createFleetOrchestrator,

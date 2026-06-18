@@ -40,4 +40,14 @@ export interface ProvisioningProvider {
    * @param neonProjectId - The project to delete.
    */
   deleteTenantProject(neonProjectId: string): Promise<void>;
+
+  /**
+   * Rotate the tenant project's database credential (reset the owner role's password) and return a
+   * **new** owner connection URI. The old URI stops working — the caller updates the SecretStore and
+   * invalidates any cached connection (workflow-secrets, secret-rotation runbook).
+   *
+   * @param neonProjectId - The tenant's project.
+   * @returns The new owner connection URI (a secret).
+   */
+  rotateTenantCredential(neonProjectId: string): Promise<{ connectionUri: string }>;
 }

@@ -124,6 +124,9 @@ function fakeProvisioning(): ProvisioningProvider & {
       deletes.push(neonProjectId);
       return Promise.resolve();
     },
+    rotateTenantCredential(neonProjectId) {
+      return Promise.resolve({ connectionUri: `postgresql://rotated@host/${neonProjectId}` });
+    },
   };
 }
 
@@ -298,6 +301,46 @@ describe('createTenantForge.rehome', () => {
     await expect(tf.rehome(tenant.id, { region: 'aws-eu-central-1' })).rejects.toThrow(
       /a dataMover is required/,
     );
+  });
+});
+
+describe('createTenantForge.rotateSecret', () => {
+  it('rotates an active tenant credential and updates the stored secret', async () => {
+    const registry = fakeRegistry();
+    const provisioning = fakeProvisioning();
+    const secretStore = createInMemorySecretStore();
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    const before = await secretStore.get(tenant.id);
+
+    const result = await tf.rotateSecret(tenant.id);
+    expect(result).toEqual({ tenantId: tenant.id, rotated: true });
+    const after = await secretStore.get(tenant.id);
+    expect(after).not.toBe(before);
+    expect(after).toContain('rotated@host');
+  });
+
+  it('rotateSecrets sweeps active tenants', async () => {
+    const registry = fakeRegistry();
+    const provisioning = fakeProvisioning();
+    const secretStore = createInMemorySecretStore();
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
+    const a = await tf.provision({ slug: 'acme' });
+    const b = await tf.provision({ slug: 'beta' });
+    const report = await tf.rotateSecrets();
+    expect(report.scanned).toBe(2);
+    expect(report.rotated).toEqual(expect.arrayContaining([a.tenant.id, b.tenant.id]));
+    expect(report.failed).toEqual([]);
   });
 });
 

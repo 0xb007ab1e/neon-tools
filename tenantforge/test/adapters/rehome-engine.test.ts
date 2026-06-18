@@ -50,6 +50,8 @@ function makeEnv(seed: TenantRecord) {
       calls.deleted.push(id);
       return Promise.resolve();
     },
+    rotateTenantCredential: (id: string) =>
+      Promise.resolve({ connectionUri: `postgres://rotated@host/${id}` }),
   };
 
   const secretStore: SecretStore = {

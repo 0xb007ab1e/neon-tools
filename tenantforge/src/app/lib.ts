@@ -38,6 +38,11 @@ import {
 } from '../adapters/rehome-engine.js';
 import type { TenantDataMover } from '../ports/tenant-data-mover.js';
 import {
+  createSecretRotationEngine,
+  type RotationResult,
+  type RotationSweepReport,
+} from '../adapters/secret-rotation-engine.js';
+import {
   createFleetOrchestrator,
   type FleetMigrationReport,
   type FleetMigrationSpec,
@@ -304,6 +309,24 @@ export interface TenantForge {
    * @returns The re-home result.
    */
   rehome(id: string, options: RehomeOptions): Promise<RehomeResult>;
+
+  /**
+   * Rotate one active tenant's connection credential (#7): mint a new one on its Neon project, store
+   * it, and invalidate any cached connection (workflow-secrets / secret-rotation runbook).
+   *
+   * @param id - The tenant to rotate.
+   * @returns The rotation result.
+   */
+  rotateSecret(id: string): Promise<RotationResult>;
+
+  /**
+   * Rotate every active tenant's connection credential — the scheduled fleet sweep (cron / CronJob).
+   * Failure-isolated: one tenant's failure is reported, not fatal.
+   *
+   * @param options - Optional scan cap.
+   * @returns Per-tenant sweep report.
+   */
+  rotateSecrets(options?: { limit?: number }): Promise<RotationSweepReport>;
 
   /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
@@ -582,6 +605,26 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       // The new project means a new connection URI — drop any cached resolution.
       invalidateConnection(id);
       return result;
+    },
+
+    rotateSecret(id: string): Promise<RotationResult> {
+      return createSecretRotationEngine({
+        registry,
+        provisioning,
+        secretStore,
+        onRotated: invalidateConnection,
+        emit: (event) => eventSink.emit(event),
+      }).rotate(id);
+    },
+
+    rotateSecrets(options?: { limit?: number }): Promise<RotationSweepReport> {
+      return createSecretRotationEngine({
+        registry,
+        provisioning,
+        secretStore,
+        onRotated: invalidateConnection,
+        emit: (event) => eventSink.emit(event),
+      }).rotateAll(options);
     },
 
     async purgeExpired(options: PurgeSweepOptions = {}): Promise<PurgeSweepReport> {
