@@ -55,6 +55,7 @@ function fakeRegistry(): TenantRegistry & { seed(record: TenantRecord): void } {
       return Promise.resolve();
     },
     migrate: () => Promise.resolve(),
+    ping: () => Promise.resolve(),
     create(tenant: NewTenant) {
       const now = new Date(0);
       const record: TenantRecord = {
@@ -252,6 +253,30 @@ describe('createTenantForge.erase', () => {
     expect(cert.verified).toBe(true);
     expect(await secretStore.get(tenant.id)).toBeNull();
     expect((await tf.getTenant(tenant.id))?.status).toBe('deleted');
+  });
+});
+
+describe('createTenantForge.health', () => {
+  const make = () => {
+    const registry = fakeRegistry();
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    return { registry, tf };
+  };
+
+  it('reports ok when the registry is reachable', async () => {
+    const { tf } = make();
+    expect(await tf.health()).toEqual({ status: 'ok', checks: { registry: 'ok' } });
+  });
+
+  it('reports degraded (fail-soft) when the registry ping rejects', async () => {
+    const { registry, tf } = make();
+    vi.spyOn(registry, 'ping').mockRejectedValue(new Error('connection refused'));
+    expect(await tf.health()).toEqual({ status: 'degraded', checks: { registry: 'error' } });
   });
 });
 

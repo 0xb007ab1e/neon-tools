@@ -31,6 +31,22 @@ describe('HTTP control-plane', () => {
     expect(await res.json()).toMatchObject({ status: 'ok', tool: 'tenantforge' });
   });
 
+  it('serves /ready (200) without auth when dependencies are healthy', async () => {
+    const res = await app({
+      health: async () => ({ status: 'ok', checks: { registry: 'ok' } }),
+    }).request('/ready');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'ok', checks: { registry: 'ok' } });
+  });
+
+  it('returns 503 from /ready when a dependency is degraded', async () => {
+    const res = await app({
+      health: async () => ({ status: 'degraded', checks: { registry: 'error' } }),
+    }).request('/ready');
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ status: 'degraded' });
+  });
+
   it('rejects /v1 routes without a bearer token (401)', async () => {
     const res = await app().request('/v1/tenants');
     expect(res.status).toBe(401);

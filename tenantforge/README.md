@@ -184,6 +184,12 @@ a DLQ topic + ack (or nack for Pub/Sub's native dead-letter policy). A **NATS Je
 `ack`→ack, `deadLetter`→publish to a DLQ subject + ack (or nack for JetStream's `MaxDeliver` +
 dead-letter advisory). An in-memory adapter backs tests/dev.
 
+**Health & readiness:** `GET /health` is a static **liveness** probe (the process is up). `GET /ready`
+is a **readiness** probe — it calls `TenantForge.health()`, which checks registry connectivity (the
+hard dependency) and returns `200` when healthy or `503` when degraded, so an orchestrator stops
+routing to an instance that can't serve. `health()` is fail-soft (never throws). The Neon API is a
+per-call upstream with its own timeouts/retries and is deliberately not probed on every readiness tick.
+
 **Connection routing & caching:** `getConnection(id)` resolves a server-derived tenant id to its
 connection (registry read + secret fetch), failing closed for any non-active/unprovisioned tenant.
 Set `TENANTFORGE_CONNECTION_CACHE_TTL_MS` (0 = off) to cache resolutions in a **process-local,

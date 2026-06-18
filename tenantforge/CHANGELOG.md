@@ -8,6 +8,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Readiness probe** — a new `GET /ready` (distinct from the static liveness `GET /health`) backed by
+  `TenantForge.health()`, which checks the **registry connectivity** (the hard dependency) and returns
+  `200` healthy / `503` degraded so an orchestrator stops routing to an unhealthy instance
+  (topic-reliability). `health()` is fail-soft (never throws); a new `TenantRegistry.ping()` (`SELECT 1`,
+  touches no tenant data) backs it. The Neon API is a per-call upstream and is deliberately not probed
+  on every readiness tick. Documented in `openapi.yaml`. Covered by HTTP + facade tests at 100%.
+
 - **Connection-resolution cache** (`createCachingConnectionRouter`) — a process-local, tenant-keyed,
   TTL-bounded **LRU with single-flight** that wraps the connection router so a hot tenant's
   resolution (registry read + secret fetch) isn't repeated every request (topic-caching,
