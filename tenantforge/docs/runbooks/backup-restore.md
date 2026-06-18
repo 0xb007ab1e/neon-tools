@@ -48,10 +48,29 @@
 - Row counts / checksums / spot-checks match; the app connects and passes smoke tests. Record actual
   RTO vs. target.
 
-## Rollback / abort
+## Rollback / abort (reverting a PITR restore)
 
 - Restore into an isolated branch first; cut over only once verified. Snapshot the current
   (damaged) state before overwriting, for forensics.
+
+How to **undo** a restore depends on how you ran it:
+
+- **Restored into a NEW branch** (the recommended path above): the primary/`main` was never touched —
+  there is nothing to revert. Just delete the verification branch:
+  ```bash
+  neon branches delete <restore-branch>        # older CLI alias: neonctl
+  ```
+  (Console → **Branches** → the restore branch → **Delete**.) This is also the clean drill teardown.
+- **In-place Instant Restore** (reset a branch to an earlier point): Neon **auto-creates a backup
+  branch** of the pre-restore head, named `<branch>_old_<head_timestamp>`. Revert by Instant-Restoring
+  the branch again **from that backup**:
+  ```bash
+  neon branches restore <target-branch> <backup-branch-id-or-name>
+  ```
+  (Console → **Backup & Restore** → target = the restored branch → **From another branch** → pick
+  `<branch>_old_<…>` → **Restore from latest data (head)**.) Note: a backup branch created by
+  restoring a **root** branch cannot be deleted — rename it or drop its databases to reclaim space.
+  Ref: [Neon branch restore](https://neon.com/docs/guides/branch-restore).
 
 ## Escalation
 
