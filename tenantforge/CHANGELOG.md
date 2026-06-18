@@ -8,6 +8,14 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **S3 object store for export artifacts** (`createS3ObjectStore`) behind the `ObjectStore` port —
+  the off-Neon `pg_dump` sink alongside the filesystem store. Zero new dependencies: it takes a
+  minimal injected client (the AWS SDK v3 `S3Client` satisfies it via a small shim), the SQS-queue
+  pattern. `put` writes via `PutObject` under an optional `{prefix}/{key}` and returns an
+  `s3://{bucket}/{key}` reference + byte size. The **same adapter serves Cloudflare R2 / MinIO / any
+  S3-compatible store** — point the `S3Client` at that endpoint at the composition root. Hand-wired
+  via `createTenantForge` (compose into `createPgDumpExporter`). Unit-tested at 100%.
+
 - **AWS Secrets Manager secret backend** (`createAwsSecretsManagerStore`) behind the `SecretStore`
   port — the first of the deferred cloud secret managers. Zero new dependencies: it takes a minimal
   injected client (the AWS SDK v3 `SecretsManagerClient` satisfies it via a small shim), the same
