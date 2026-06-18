@@ -8,6 +8,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **GCS object store for export artifacts** (`createGcsObjectStore`) behind the `ObjectStore` port —
+  the off-Neon `pg_dump` sink for Google Cloud Storage, alongside the filesystem and S3 stores. Zero
+  new dependencies: it takes a minimal injected client (the `@google-cloud/storage` `Storage` client
+  satisfies it via a small shim). `put` writes under an optional `{prefix}/{key}` and returns a
+  `gs://{bucket}/{key}` reference + byte size. Hand-wired via `createTenantForge` (compose into
+  `createPgDumpExporter`). Unit-tested at 100%.
+
 - **GCP Secret Manager secret backend** (`createGcpSecretManagerStore`) behind the `SecretStore`
   port — the second deferred cloud secret manager. Zero new dependencies: it takes a minimal injected
   client (the `@google-cloud/secret-manager` `SecretManagerServiceClient` satisfies it via a small
