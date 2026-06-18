@@ -18,6 +18,9 @@ All notable changes to TenantForge are documented here. The format follows
 
 - `.gitignore` now excludes editor swap/backup files (`*.swp`, `*~`, `.*.kate-swp`) — a Kate swap of
   `.env` was otherwise untracked-but-not-ignored, a credential-leak foot-gun.
+- CI: bumped the pinned GitHub Actions off the deprecated Node-20 runtime (`actions/checkout` v6.0.3,
+  `actions/setup-node` v6.4.0, `pnpm/action-setup` v6.0.9 — pinned by digest), clearing the runner
+  deprecation warning seen during the CI game-day.
 
 ## [0.2.0] - 2026-06-17
 
