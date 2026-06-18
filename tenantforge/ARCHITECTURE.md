@@ -1,12 +1,13 @@
 # TenantForge — v1 Architecture & Scope
 
-_Status: **beta** — feature-complete for the v1 scope: pure core (100% coverage), Neon-API
+_Status: **stable** (v0.3.0) — feature-complete and hardened: pure core (100% coverage), Neon-API
 provisioning + Postgres registry / encrypted secret-store adapters, the full tenant lifecycle,
 connection routing, fleet-migration orchestration, per-tenant observability + metering, residency
 enforcement, and a Neon-native queue + worker — across the library, CLI, HTTP, and MCP entrypoints.
-The live-Neon runbook game-day passed 2026-06-17 (10/10 against a non-prod org) and the
-`NEON_API_KEY` rotation was drilled; pending: the manual-only Neon PITR-restore console step and the
-deferred alternate adapters. Decisions
+All hardening gates are drilled: STRIDE threat model + abuse tests, auth/RBAC/rate-limiting, the
+load/soak harness, and the runbook game-day (local + CI), `NEON_API_KEY` rotation, and a PITR
+row-level recovery — all green against a non-prod org. Tracked Low residuals + deferred alternate
+adapters live in `docs/security/threat-model.md`. Decisions
 trace to
 [`../research/product-concepts.md`](../research/product-concepts.md) (#2) and
 [`../research/teardown-finalists.md`](../research/teardown-finalists.md)._

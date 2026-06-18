@@ -30,8 +30,8 @@ Three layers of validation, strongest first:
 3. **Executed live — the automated Neon path (2026-06-17).** With a non-prod org's credentials the
    full integration suite ran against real Neon (10/10 passed) — provision/delete projects, the
    lifecycle smoke, and the fleet migrate + revert. See the dedicated section below. The
-   **`NEON_API_KEY` rotation** was also drilled (suite re-run 10/10 on the rotated key). One
-   **manual-only console** step remains: the Neon PITR/branch restore.
+   **`NEON_API_KEY` rotation** was also drilled (suite re-run 10/10 on the rotated key), and the
+   **Neon PITR restore** was drilled with a row-level recovery proof (see below). All gates green.
 
 ## Finding (fixed in this pass)
 
@@ -52,7 +52,7 @@ All other referenced commands, flags, HTTP routes (`/health`, `/v1/*`), registry
 | deploy                   | Registry `migrate` executed; **drift fixed**; live provision/purge smoke pending (Neon).       |
 | rollback                 | Stuck-in-`provisioning` query **executed**; live app rollback is operator/deploy-specific.     |
 | fleet-migration-rollback | §2 assessment + failure-list queries **executed**; live revert migration pending (Neon).       |
-| backup-restore           | Registry status query **executed**; Neon PITR/branch restore pending (Neon).                   |
+| backup-restore           | **PITR drilled** (row-level recovery via a point-in-time branch); status query also executed.  |
 | secret-rotation          | **NEON_API_KEY rotation drilled** (suite re-run on the rotated key); DB-cred rotation pending. |
 | on-call                  | Traced; its registry triage queries are the ones executed above.                               |
 | scaling                  | Traced (procedural — Neon `429`/pool/batch guidance; no automatable assertion).                |
@@ -82,11 +82,21 @@ it — **10/10 passed** — confirming provisioning/lifecycle/fleet work on the 
 `secret-rotation.md` verification step). Revoking the old key is the operator's console step after
 verification.
 
-## Residual work
+## PITR row-level recovery drill — executed 2026-06-18
 
-- **Manual-only step not yet drilled:** the **Neon PITR / branch restore** (console operation) —
-  see `backup-restore.md`. Also the registry-credential (`DATABASE_URL`) rotation. Run by hand
-  against a non-prod org to fully close R4.
+Strong proof of registry recoverability: a canary row (`pitr-canary`, `active`) was inserted into the
+**primary** registry, a **point-in-time branch** was created from the primary at the current head, and
+the branch was queried — the canary was present (`active 1`, same id), confirming a real row that
+existed at time T is recovered via PITR. The marker was then deleted from the primary (registry back
+to 0) and the temp connection string shredded. The revert paths (delete the branch / restore from the
+auto-created `<branch>_old_<ts>` backup) are documented in `backup-restore.md`.
+
+## Residual work (all `stable` gates drilled)
+
+- **Accepted Low residuals** (not blockers — tracked in `docs/security/threat-model.md`): per-operator
+  OIDC vs. static bearer tokens; a shared rate-limit store for multi-instance deploys; the
+  registry-credential (`DATABASE_URL`) rotation (mechanically identical to the drilled API-key flow).
+- Re-drill the automated suite after any change to the CLI surface, registry schema, or HTTP contract.
 - Re-drill the automated suite after any change to the CLI surface, registry schema, or HTTP contract.
 
 ---
