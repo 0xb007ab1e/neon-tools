@@ -164,8 +164,11 @@ The worker polls every `TENANTFORGE_QUEUE_POLL_MS` (default 5000) and shuts down
 SIGINT/SIGTERM. An **AWS SQS** backend (`createSqsMessageQueue`) implements the same `MessageQueue`
 port — it carries **zero new dependencies** by taking a minimal injected client (wrap your
 `@aws-sdk/client-sqs` `SQSClient` with a small shim, per the adapter's doc comment) and hand-wiring it
-via `createTenantForge`; `ack`→DeleteMessage, `deadLetter`→DLQ (or SQS native redrive). Other brokers
-(NATS/Pub/Sub) can follow behind the same port; an in-memory adapter backs tests/dev.
+via `createTenantForge`; `ack`→DeleteMessage, `deadLetter`→DLQ (or SQS native redrive). A **Google
+Pub/Sub** backend (`createPubSubMessageQueue`) implements the same port the same zero-dependency way
+(wrap your `@google-cloud/pubsub` client): `receive`→pull, `ack`→acknowledge, `deadLetter`→publish to
+a DLQ topic + ack (or nack for Pub/Sub's native dead-letter policy). NATS can follow behind the same
+port; an in-memory adapter backs tests/dev.
 
 ## Discoverability & rules
 

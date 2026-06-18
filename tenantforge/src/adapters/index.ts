@@ -87,6 +87,13 @@ export {
   type SqsClientLike,
 } from './sqs/message-queue.js';
 export {
+  createPubSubMessageQueue,
+  type PubSubMessageQueue,
+  type PubSubMessageQueueOptions,
+  type PubSubClientLike,
+  type PubSubPulledMessage,
+} from './pubsub/message-queue.js';
+export {
   createLifecycleConsumer,
   type LifecycleConsumer,
   type LifecycleConsumerDeps,

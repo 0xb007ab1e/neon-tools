@@ -8,6 +8,15 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Google Pub/Sub message-queue backend** (`createPubSubMessageQueue`) behind the `MessageQueue`
+  port — the lifecycle broker for GCP, alongside the Postgres / SQS / in-memory adapters. Zero new
+  dependencies: it takes a minimal injected client (the `@google-cloud/pubsub` client satisfies it
+  via a small shim), the SQS-adapter pattern. `receive` pulls and maps to `{ id: ackId, body }`
+  (malformed JSON passed through so the consumer dead-letters it); `ack` acknowledges; `deadLetter`
+  publishes to an optional DLQ topic + acks the original, or **nacks** (ack-deadline 0) for Pub/Sub's
+  native dead-letter policy; `enqueue` publishes to the source topic. The irreversible `purge` is
+  never a queue command. Unit-tested at 100%.
+
 - **Azure Blob object store for export artifacts** (`createAzureBlobObjectStore`) behind the
   `ObjectStore` port — the off-Neon `pg_dump` sink for Azure Blob Storage, completing object-store
   parity across AWS/GCP/Azure (alongside filesystem). Zero new dependencies: it takes a minimal
