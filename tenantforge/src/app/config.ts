@@ -114,6 +114,8 @@ const EnvSchema = z
     // Rate-limit counter store: `memory` (default, per-instance) or `pg` (shared across instances
     // via the control-plane DB — use for multi-instance deployments).
     TENANTFORGE_RATE_LIMIT_STORE: z.enum(['memory', 'pg']).default('memory'),
+    // Cache getConnection resolutions for this many ms (0 = disabled). Process-local + tenant-keyed.
+    TENANTFORGE_CONNECTION_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(0),
     TENANTFORGE_PORT: z.coerce.number().int().positive().default(3000),
   })
   .superRefine((env, ctx) => {
@@ -237,6 +239,8 @@ export interface Config {
   rateLimit: { limit: number; windowMs: number };
   /** Rate-limit counter store: in-memory (per-instance) or Postgres (shared across instances). */
   rateLimitStore: 'memory' | 'pg';
+  /** Cache `getConnection` resolutions for this many ms (0 = disabled). */
+  connectionCacheTtlMs: number;
   /** Port for the HTTP entrypoint. */
   port: number;
 }
@@ -265,6 +269,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       windowMs: parsed.TENANTFORGE_RATE_WINDOW_MS,
     },
     rateLimitStore: parsed.TENANTFORGE_RATE_LIMIT_STORE,
+    connectionCacheTtlMs: parsed.TENANTFORGE_CONNECTION_CACHE_TTL_MS,
     authMode: parsed.TENANTFORGE_AUTH_MODE,
     port: parsed.TENANTFORGE_PORT,
   };

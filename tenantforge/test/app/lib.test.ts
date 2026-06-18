@@ -255,6 +255,34 @@ describe('createTenantForge.erase', () => {
   });
 });
 
+describe('createTenantForge.getConnection caching', () => {
+  it('caches resolutions when enabled and invalidates on a lifecycle transition', async () => {
+    const registry = fakeRegistry();
+    const provisioning = fakeProvisioning();
+    const secretStore = createInMemorySecretStore();
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+      connectionCacheTtlMs: 60_000,
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    const getSpy = vi.spyOn(secretStore, 'get');
+
+    await tf.getConnection(tenant.id);
+    await tf.getConnection(tenant.id);
+    expect(getSpy).toHaveBeenCalledTimes(1); // second resolve served from cache
+
+    // A transition (suspend) invalidates; the tenant is now non-routable, so resolve fails closed.
+    await tf.suspend(tenant.id);
+    await expect(tf.getConnection(tenant.id)).rejects.toThrow();
+    await tf.resume(tenant.id);
+    await tf.getConnection(tenant.id);
+    expect(getSpy.mock.calls.length).toBeGreaterThan(1); // cache was invalidated, re-resolved
+  });
+});
+
 describe('createTenantForge lifecycle', () => {
   let registry: ReturnType<typeof fakeRegistry>;
   let provisioning: ReturnType<typeof fakeProvisioning>;

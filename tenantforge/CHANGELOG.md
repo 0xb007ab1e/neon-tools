@@ -8,6 +8,15 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Connection-resolution cache** (`createCachingConnectionRouter`) — a process-local, tenant-keyed,
+  TTL-bounded **LRU with single-flight** that wraps the connection router so a hot tenant's
+  resolution (registry read + secret fetch) isn't repeated every request (topic-caching,
+  topic-performance). Fails closed (a non-routable resolution is never cached) and is **invalidated
+  on every lifecycle transition and on erasure**; TTL is the staleness backstop. Opt-in via
+  `connectionCacheTtlMs` (`createTenantForge`) / `TENANTFORGE_CONNECTION_CACHE_TTL_MS` (0 = off).
+  Caches _resolution_ only — live connection **pooling** remains the data-plane consumer's
+  responsibility (the router hands out a URI). Unit-tested at 100%.
+
 - **ErasureEngine** (ARCHITECTURE #17) — automated, audited right-to-erasure (GDPR Art. 17 / CCPA;
   workflow-data-lifecycle). `createErasureEngine` (adapter) orchestrates over the existing ports:
   optional final subject export → delete the Neon project → crypto-shred the connection secret → mark

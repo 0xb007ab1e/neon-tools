@@ -184,6 +184,14 @@ a DLQ topic + ack (or nack for Pub/Sub's native dead-letter policy). A **NATS Je
 `ack`→ack, `deadLetter`→publish to a DLQ subject + ack (or nack for JetStream's `MaxDeliver` +
 dead-letter advisory). An in-memory adapter backs tests/dev.
 
+**Connection routing & caching:** `getConnection(id)` resolves a server-derived tenant id to its
+connection (registry read + secret fetch), failing closed for any non-active/unprovisioned tenant.
+Set `TENANTFORGE_CONNECTION_CACHE_TTL_MS` (0 = off) to cache resolutions in a **process-local,
+tenant-keyed, single-flight LRU** (`createCachingConnectionRouter`) — invalidated automatically on
+every lifecycle transition and erasure, and TTL-bounded as a staleness backstop. This caches
+_resolution_ only; managing live database **connection pools** is the data-plane consumer's job
+(TenantForge hands out a URI, not a pool — pool it on your side, keyed per tenant, with sane caps).
+
 ## Discoverability & rules
 
 Publishes [`neon-tool.json`](./neon-tool.json) per the collection's
