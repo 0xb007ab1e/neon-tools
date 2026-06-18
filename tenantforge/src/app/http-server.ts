@@ -7,7 +7,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { TENANTFORGE } from '../meta.js';
 import type { JsonObject, TenantStatus } from '../core/index.js';
-import { decodeCursor, encodeCursor } from '../core/index.js';
+import { decodeCursor, encodeCursor, can, type Permission } from '../core/index.js';
 import type { RateLimitStore } from '../ports/rate-limit-store.js';
 import { createInMemoryRateLimitStore } from '../adapters/rate-limit-store.js';
 import type { IdempotencyStore } from '../ports/idempotency-store.js';
@@ -250,16 +250,19 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
   app.use('/v1/*', bodyLimit({ maxSize: 1024 * 1024 }));
   app.use('/v1/*', idempotency);
 
-  // AuthZ: mutating routes require the `admin` role; `readonly` principals get 403 (deny by default
-  // — std-owasp-api API5 Broken Function Level Authorization).
-  const requireAdmin: MiddlewareHandler<Env> = (c, next) => {
-    if (c.get('principal').role !== 'admin') {
-      return Promise.resolve(problem(c, 403, 'Forbidden', 'admin role required'));
-    }
-    return next();
-  };
+  // AuthZ: each route requires a specific permission, evaluated server-side against the principal's
+  // role/permissions; deny by default (std-owasp-api API5 Broken Function Level Authorization,
+  // topic-authn-authz). `admin` holds all; `operator` all but `tenant:purge`; `readonly` only reads.
+  const requirePermission =
+    (permission: Permission): MiddlewareHandler<Env> =>
+    (c, next) => {
+      if (!can(c.get('principal'), permission)) {
+        return Promise.resolve(problem(c, 403, 'Forbidden', `requires ${permission}`));
+      }
+      return next();
+    };
 
-  app.post('/v1/tenants', requireAdmin, async (c) => {
+  app.post('/v1/tenants', requirePermission('tenant:provision'), async (c) => {
     const parsed = await readJson(c, ProvisionSchema);
     if (!parsed.ok) return parsed.res;
     const { slug, region, residency, metadata } = parsed.data;
@@ -277,7 +280,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
-  app.get('/v1/tenants', async (c) => {
+  app.get('/v1/tenants', requirePermission('tenant:read'), async (c) => {
     const statusParam = c.req.query('status');
     if (statusParam !== undefined && !TENANT_STATUSES.includes(statusParam as TenantStatus)) {
       return problem(c, 400, 'Bad Request', `unknown status "${statusParam}"`);
@@ -311,7 +314,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
-  app.get('/v1/tenants/:id', async (c) => {
+  app.get('/v1/tenants/:id', requirePermission('tenant:read'), async (c) => {
     try {
       const tenant = await tf.getTenant(c.req.param('id'));
       if (!tenant) return problem(c, 404, 'Not Found');
@@ -321,7 +324,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
-  app.post('/v1/tenants/:id/suspend', requireAdmin, async (c) => {
+  app.post('/v1/tenants/:id/suspend', requirePermission('tenant:suspend'), async (c) => {
     try {
       return c.json({ tenant: await tf.suspend(c.req.param('id')) });
     } catch (error) {
@@ -329,7 +332,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
-  app.post('/v1/tenants/:id/resume', requireAdmin, async (c) => {
+  app.post('/v1/tenants/:id/resume', requirePermission('tenant:suspend'), async (c) => {
     try {
       return c.json({ tenant: await tf.resume(c.req.param('id')) });
     } catch (error) {
@@ -337,7 +340,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
-  app.post('/v1/tenants/:id/offboard', requireAdmin, async (c) => {
+  app.post('/v1/tenants/:id/offboard', requirePermission('tenant:offboard'), async (c) => {
     // Reversible: archives (retains, scaled to zero) — no confirmation needed.
     try {
       const outcome = await tf.offboard(c.req.param('id'));
@@ -347,7 +350,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
-  app.post('/v1/tenants/:id/purge', requireAdmin, async (c) => {
+  app.post('/v1/tenants/:id/purge', requirePermission('tenant:purge'), async (c) => {
     const parsed = await readJson(c, PurgeSchema);
     if (!parsed.ok) return parsed.res;
     try {

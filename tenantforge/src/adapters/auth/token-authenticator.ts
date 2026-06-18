@@ -23,7 +23,11 @@ export function createTokenAuthenticator(credentials: readonly HttpCredential[])
       let principal: Principal | null = null;
       for (const cred of credentials) {
         if (bearerToken !== '' && tokenEquals(bearerToken, cred.token)) {
-          principal = { id: cred.id, role: cred.role };
+          principal = {
+            id: cred.id,
+            role: cred.role,
+            ...(cred.permissions !== undefined ? { permissions: cred.permissions } : {}),
+          };
         }
       }
       return Promise.resolve(principal);

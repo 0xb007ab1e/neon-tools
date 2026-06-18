@@ -229,7 +229,11 @@ components:
       scheme: bearer
       description: >
         A per-operator bearer token. Each token maps to a principal id (for attribution +
-        per-principal rate limiting) and a role (`admin` may mutate; `readonly` may only read).
+        per-principal rate limiting) and a role granting fine-grained permissions, enforced
+        server-side per operation (deny by default): `admin` holds all permissions; `operator` may
+        run the full reversible lifecycle (read / provision / suspend / offboard) but NOT the
+        irreversible purge; `readonly` may only read. A token may also carry an explicit permission
+        set that narrows its role. Lacking the required permission returns 403.
   parameters:
     TenantId:
       name: id

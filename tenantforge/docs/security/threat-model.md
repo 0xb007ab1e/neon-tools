@@ -61,7 +61,10 @@ data). No tenant content is stored in the control plane.
   **body-size cap** + a **per-principal fixed-window rate limit** (429 + `Retry-After`) are enforced
   in-app (`src/app/http-server.ts`). **E (EoP):** this is an _admin_ control plane: the
   `:id` is operator-supplied by design (not a tenant impersonating another); least-privilege token +
-  network ACLs gate it. The destructive purge route additionally requires an explicit `confirm: true`.
+  network ACLs gate it. **Fine-grained RBAC** enforces a required permission per operation
+  server-side, deny by default (`src/core/authz.ts`): `operator` runs the reversible lifecycle but
+  cannot `tenant:purge`, so the irreversible op needs an `admin` (or an explicitly-granted) token.
+  The destructive purge route additionally requires an explicit `confirm: true`.
 
 ### B2 — MCP server (agent)
 

@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import type { JWTVerifyGetKey, CryptoKey, KeyObject, JWK } from 'jose';
 import type { Authenticator, Principal } from '../../ports/authenticator.js';
+import { isRole, isPermission } from '../../core/index.js';
 
 /** The key/key-resolver argument `jose.jwtVerify` accepts (a key, or a JWKS getter function). */
 type VerifyKey = CryptoKey | KeyObject | JWK | Uint8Array | JWTVerifyGetKey;
@@ -18,8 +19,10 @@ export interface OidcAuthenticatorOptions {
   jwksUri?: string;
   /** Key resolver / key (for testing — defaults to a remote JWKS set built from `jwksUri`). */
   keys?: VerifyKey;
-  /** Claim carrying the role (`admin` | `readonly`). Defaults to `role`. */
+  /** Claim carrying the role (`admin` | `operator` | `readonly`). Defaults to `role`. */
   roleClaim?: string;
+  /** Optional claim carrying an explicit permission array (overrides the role's defaults). */
+  permissionsClaim?: string;
   /** Claim carrying the principal id. Defaults to `sub`. */
   subjectClaim?: string;
   /** Accepted signature algorithms (allow-list). Defaults to common asymmetric algs. */
@@ -41,6 +44,7 @@ export interface OidcAuthenticatorOptions {
 export function createOidcAuthenticator(options: OidcAuthenticatorOptions): Authenticator {
   const roleClaim = options.roleClaim ?? 'role';
   const subjectClaim = options.subjectClaim ?? 'sub';
+  const permissionsClaim = options.permissionsClaim;
   const algorithms = options.algorithms ?? DEFAULT_ALGS;
   const keys: VerifyKey =
     options.keys ??
@@ -64,8 +68,14 @@ export function createOidcAuthenticator(options: OidcAuthenticatorOptions): Auth
         const id = payload[subjectClaim];
         const role = payload[roleClaim];
         if (typeof id !== 'string' || id === '') return null;
-        if (role !== 'admin' && role !== 'readonly') return null;
-        return { id, role };
+        if (!isRole(role)) return null;
+        // Optional explicit permissions claim: only an array of known permissions narrows the grant;
+        // anything malformed is ignored (fall back to the role's defaults — fail closed, not open).
+        const permissions =
+          permissionsClaim !== undefined && Array.isArray(payload[permissionsClaim])
+            ? (payload[permissionsClaim] as unknown[]).filter(isPermission)
+            : undefined;
+        return permissions !== undefined ? { id, role, permissions } : { id, role };
       } catch {
         // Invalid signature / issuer / audience / expiry / shape → not authenticated (fail closed).
         return null;

@@ -1,5 +1,7 @@
-/** A control-plane role: `admin` may mutate; `readonly` may only read. */
-export type HttpRole = 'admin' | 'readonly';
+import type { Permission, Role } from '../core/index.js';
+
+/** A control-plane role: `admin` (all), `operator` (lifecycle, no purge), `readonly` (read). */
+export type HttpRole = Role;
 
 /** The authenticated principal resolved from a request's bearer token. */
 export interface Principal {
@@ -7,6 +9,8 @@ export interface Principal {
   id: string;
   /** The principal's role. */
   role: HttpRole;
+  /** Explicit permissions; when present they override the role's defaults (scope an operator down). */
+  permissions?: readonly Permission[];
 }
 
 /** A named operator credential — a static bearer token attributable to a principal, with a role. */
@@ -17,6 +21,8 @@ export interface HttpCredential {
   token: string;
   /** The operator's role. */
   role: HttpRole;
+  /** Explicit permissions; when present they override the role's defaults. */
+  permissions?: readonly Permission[];
 }
 
 /**

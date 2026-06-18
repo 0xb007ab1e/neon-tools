@@ -351,10 +351,19 @@ describe('HTTP per-operator auth + RBAC', () => {
     fakeTf({
       listTenants: async () => [tenant],
       provision: async () => ({ tenant, connectionUri: 'postgresql://secret@host/db' }),
+      suspend: async () => tenant,
+      purge: async () => tenant,
     });
   const creds = [
     { id: 'alice', token: 'tok-admin', role: 'admin' as const },
     { id: 'bob', token: 'tok-read', role: 'readonly' as const },
+    { id: 'carol', token: 'tok-op', role: 'operator' as const },
+    {
+      id: 'dave',
+      token: 'tok-scoped',
+      role: 'operator' as const,
+      permissions: ['tenant:read'] as const,
+    },
   ];
   const server = () => createHttpServer(tf(), { credentials: creds });
 
@@ -390,6 +399,41 @@ describe('HTTP per-operator auth + RBAC', () => {
       body: JSON.stringify({ slug: 'acme' }),
     });
     expect(res.status).toBe(201);
+  });
+
+  it('lets an operator run the lifecycle but forbids the irreversible purge (403)', async () => {
+    const opAuth = { authorization: 'Bearer tok-op', 'content-type': 'application/json' };
+    // operator holds tenant:provision …
+    const provisioned = await server().request('/v1/tenants', {
+      method: 'POST',
+      headers: opAuth,
+      body: JSON.stringify({ slug: 'acme' }),
+    });
+    expect(provisioned.status).toBe(201);
+    // … and tenant:suspend …
+    expect(
+      (await server().request('/v1/tenants/t1/suspend', { method: 'POST', headers: opAuth }))
+        .status,
+    ).toBe(200);
+    // … but NOT tenant:purge (deny by default for the irreversible op).
+    const purge = await server().request('/v1/tenants/t1/purge', {
+      method: 'POST',
+      headers: opAuth,
+      body: JSON.stringify({ confirm: true }),
+    });
+    expect(purge.status).toBe(403);
+  });
+
+  it('honors an explicit permission set that scopes an operator down (read-only)', async () => {
+    const scopedAuth = { authorization: 'Bearer tok-scoped', 'content-type': 'application/json' };
+    // dave is an `operator` but explicitly scoped to tenant:read only → may read, not provision.
+    expect((await server().request('/v1/tenants', { headers: scopedAuth })).status).toBe(200);
+    const res = await server().request('/v1/tenants', {
+      method: 'POST',
+      headers: scopedAuth,
+      body: JSON.stringify({ slug: 'acme' }),
+    });
+    expect(res.status).toBe(403);
   });
 
   it('refuses to start with no authenticator, credential, or token (fail closed)', () => {

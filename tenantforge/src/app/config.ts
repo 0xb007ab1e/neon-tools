@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { KNOWN_REGIONS } from '../core/regions.js';
+import { ROLES, isRole } from '../core/index.js';
 import type { HttpCredential } from './http-server.js';
 
 /**
@@ -26,8 +27,10 @@ function parseHttpCredentials(raw: string | undefined): HttpCredential[] | undef
       const id = entry.slice(0, first);
       const role = entry.slice(first + 1, second);
       const token = entry.slice(second + 1);
-      if (role !== 'admin' && role !== 'readonly') {
-        throw new Error(`TENANTFORGE_HTTP_CREDENTIALS: role for "${id}" must be admin | readonly`);
+      if (!isRole(role)) {
+        throw new Error(
+          `TENANTFORGE_HTTP_CREDENTIALS: role for "${id}" must be ${ROLES.join(' | ')}`,
+        );
       }
       if (token === '') throw new Error(`TENANTFORGE_HTTP_CREDENTIALS: empty token for "${id}"`);
       if (seen.has(id)) throw new Error(`TENANTFORGE_HTTP_CREDENTIALS: duplicate id "${id}"`);
@@ -108,6 +111,8 @@ const EnvSchema = z
     // be `admin` | `readonly`; anything else is rejected (unauthenticated).
     TENANTFORGE_OIDC_SUBJECT_CLAIM: z.string().min(1).default('sub'),
     TENANTFORGE_OIDC_ROLE_CLAIM: z.string().min(1).default('role'),
+    // Optional claim carrying an explicit permission array (overrides the role's default grant).
+    TENANTFORGE_OIDC_PERMISSIONS_CLAIM: z.string().min(1).optional(),
     // Per-principal HTTP rate limit (fixed window).
     TENANTFORGE_RATE_LIMIT: z.coerce.number().int().positive().default(120),
     TENANTFORGE_RATE_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
@@ -259,6 +264,8 @@ export interface Config {
     subjectClaim: string;
     /** Claim carrying the role (default `role`). */
     roleClaim: string;
+    /** Optional claim carrying an explicit permission array. */
+    permissionsClaim?: string;
   };
   /** Admin-token shorthand for the HTTP entrypoint (required only when serving HTTP). */
   httpToken?: string;
@@ -315,6 +322,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       jwksUri: parsed.TENANTFORGE_OIDC_JWKS_URI!,
       subjectClaim: parsed.TENANTFORGE_OIDC_SUBJECT_CLAIM,
       roleClaim: parsed.TENANTFORGE_OIDC_ROLE_CLAIM,
+      ...(parsed.TENANTFORGE_OIDC_PERMISSIONS_CLAIM !== undefined
+        ? { permissionsClaim: parsed.TENANTFORGE_OIDC_PERMISSIONS_CLAIM }
+        : {}),
     };
   }
   const httpCredentials = parseHttpCredentials(parsed.TENANTFORGE_HTTP_CREDENTIALS);

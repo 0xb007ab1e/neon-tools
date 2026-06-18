@@ -22,6 +22,17 @@ export {
 } from './residency-router.js';
 export { isTerminal, canTransition, assertTransition } from './lifecycle.js';
 export { encodeCursor, decodeCursor, type TenantCursor } from './pagination.js';
+export {
+  can,
+  permissionsFor,
+  isRole,
+  isPermission,
+  ROLES,
+  PERMISSIONS,
+  type Role,
+  type Permission,
+  type Grant,
+} from './authz.js';
 export { assertRoutable, type RoutableTenant } from './routing.js';
 export { retentionCutoff, isPurgeable, type RetainableTenant } from './retention.js';
 export { redactSecrets, type TenantEvent } from './observability.js';
