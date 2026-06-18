@@ -411,6 +411,38 @@ const restoreSnapshot = defineCommand({
   },
 });
 
+const archive = defineCommand({
+  meta: {
+    name: 'archive',
+    description: 'Archive a tenant off-Neon (pg_dump → object store) — durable long-term backup',
+  },
+  args: { id: { type: 'positional', description: 'Tenant id (UUID)', required: true } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const { archive: result } = await tf.archive(args.id);
+      process.stdout.write(`archived tenant ${args.id} → ${result.location}\n`);
+    });
+  },
+});
+
+const archiveFleet = defineCommand({
+  meta: {
+    name: 'archive-fleet',
+    description: 'Archive every active tenant off-Neon (the scheduled long-term backup sweep)',
+  },
+  async run() {
+    await withTenantForge(async (tf) => {
+      const report = await tf.archiveFleet();
+      process.stdout.write(
+        `archive sweep: ${report.succeeded.length} archived, ${report.failed.length} failed ` +
+          `of ${report.scanned} active tenant(s)\n`,
+      );
+      for (const f of report.failed) process.stdout.write(`  FAILED ${f.tenantId}: ${f.error}\n`);
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -433,6 +465,8 @@ const main = defineCommand({
     'snapshot-fleet': snapshotFleet,
     'prune-snapshots': pruneSnapshots,
     'restore-snapshot': restoreSnapshot,
+    archive,
+    'archive-fleet': archiveFleet,
   },
 });
 

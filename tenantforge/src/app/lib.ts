@@ -48,6 +48,7 @@ import {
   createBackupEngine,
   type SnapshotResult,
   type BackupSweepReport,
+  type ArchiveResult,
 } from '../adapters/backup-engine.js';
 import type { SnapshotProvider } from '../ports/snapshot-provider.js';
 import type { RetentionPolicy } from '../core/index.js';
@@ -136,6 +137,12 @@ export interface TenantForgeDeps {
    * snapshot/backup methods ({@link TenantForge.snapshot} etc.); when absent, those fail closed.
    */
   snapshots?: SnapshotProvider;
+  /**
+   * Off-Neon archive exporter (pg_dump → object store) for the durable long-term backup tier.
+   * Required only for {@link TenantForge.archive} / {@link TenantForge.archiveFleet}; when absent,
+   * those fail closed.
+   */
+  archiveExporter?: TenantExporter;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -386,6 +393,24 @@ export interface TenantForge {
   restoreSnapshot(id: string, snapshotId: string): Promise<void>;
 
   /**
+   * Archive one active tenant off-Neon (pg_dump → object store) — the durable long-term backup tier.
+   * Requires a configured archive exporter; fails closed otherwise.
+   *
+   * @param id - The tenant to archive.
+   * @returns The archive result.
+   */
+  archive(id: string): Promise<ArchiveResult>;
+
+  /**
+   * Archive every active tenant off-Neon — the scheduled long-term backup sweep. Failure-isolated.
+   * Archive retention is the object store's lifecycle policy (S3/GCS), not app-managed.
+   *
+   * @param options - Optional scan cap.
+   * @returns Per-tenant sweep report.
+   */
+  archiveFleet(options?: { limit?: number }): Promise<BackupSweepReport>;
+
+  /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
    * tenant is active, provisioned, and has a stored connection secret. The id must be derived
    * server-side from the authenticated principal, never client-supplied (BOLA).
@@ -468,6 +493,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     return createBackupEngine({
       registry,
       snapshots: deps.snapshots,
+      ...(deps.archiveExporter !== undefined ? { archiveExporter: deps.archiveExporter } : {}),
       emit: (event) => eventSink.emit(event),
     });
   };
@@ -726,6 +752,14 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return backupEngine().restore(id, snapshotId);
     },
 
+    archive(id: string): Promise<ArchiveResult> {
+      return backupEngine().archive(id);
+    },
+
+    archiveFleet(options?: { limit?: number }): Promise<BackupSweepReport> {
+      return backupEngine().archiveAll(options);
+    },
+
     async purgeExpired(options: PurgeSweepOptions = {}): Promise<PurgeSweepReport> {
       const retentionDays = options.retentionDays ?? DEFAULT_RETENTION_DAYS;
       const cutoff = retentionCutoff(options.now ?? new Date(), retentionDays);
@@ -925,6 +959,19 @@ export function tenantForgeFromConfig(
       apiKey: config.neonApiKey,
       ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
     }),
+    // Off-Neon archive tier (pg_dump → object store) — enabled when an export object store is
+    // configured (TENANTFORGE_EXPORT_DIR); archives use the `archives/` key prefix. Retention is the
+    // object store's lifecycle policy. Without it, archive() fails closed.
+    ...(config.exportDir !== undefined
+      ? {
+          archiveExporter: createPgDumpExporter({
+            resolveConnectionUri: (tenant) => secretStore.get(tenant.id),
+            objectStore: createFilesystemObjectStore({ dir: config.exportDir }),
+            dump: (uri) => spawnPgDump(uri),
+            keyPrefix: 'archives',
+          }),
+        }
+      : {}),
   });
 }
 
