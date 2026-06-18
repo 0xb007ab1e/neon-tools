@@ -44,6 +44,11 @@ export {
 } from './azure-key-vault/secret-store.js';
 export { deriveKey, seal, open } from './secret-crypto.js';
 export { createConnectionRouter, type ConnectionRouterDeps } from './connection-router.js';
+export {
+  createCachingConnectionRouter,
+  type CachingConnectionRouter,
+  type CachingConnectionRouterDeps,
+} from './caching-connection-router.js';
 export { createNeonArchiveExporter } from './neon-archive-exporter.js';
 export {
   createPgDumpExporter,

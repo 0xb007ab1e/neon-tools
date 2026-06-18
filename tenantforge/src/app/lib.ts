@@ -29,6 +29,7 @@ import { createPgDumpExporter, spawnPgDump } from '../adapters/pg-dump/exporter.
 import { createFilesystemObjectStore } from '../adapters/object-store/filesystem.js';
 import { createJsonEventSink, createNoopEventSink } from '../adapters/event-sink.js';
 import { createErasureEngine, type EraseOptions } from '../adapters/erasure-engine.js';
+import { createCachingConnectionRouter } from '../adapters/caching-connection-router.js';
 import {
   createFleetOrchestrator,
   type FleetMigrationReport,
@@ -94,6 +95,15 @@ export interface TenantForgeDeps {
    * when absent, that method fails closed.
    */
   usageProvider?: UsageProvider;
+  /**
+   * Cache `getConnection` resolutions for this many ms (process-local, tenant-keyed, single-flight;
+   * see {@link import('../adapters/caching-connection-router.js').createCachingConnectionRouter}).
+   * `0`/omitted disables caching (resolve hits the registry + secret store every call). Entries are
+   * invalidated automatically on lifecycle transitions and erasure.
+   */
+  connectionCacheTtlMs?: number;
+  /** Max cached connection resolutions before the least-recently-used is evicted. Optional. */
+  connectionCacheMaxEntries?: number;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -299,7 +309,21 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const { registry, provisioning, defaultRegion, secretStore, exporter, migrationRunner } = deps;
   const usageProvider = deps.usageProvider;
   const allowedRegions = deps.allowedRegions ?? [];
-  const router = createConnectionRouter({ registry, secretStore });
+  const baseRouter = createConnectionRouter({ registry, secretStore });
+  // Optional process-local resolution cache (control-plane cost at fleet scale). When enabled, the
+  // cache is invalidated on every transition + erasure so a non-routable/re-keyed tenant is never served.
+  const cachingRouter =
+    (deps.connectionCacheTtlMs ?? 0) > 0
+      ? createCachingConnectionRouter({
+          inner: baseRouter,
+          ttlMs: deps.connectionCacheTtlMs!,
+          ...(deps.connectionCacheMaxEntries !== undefined
+            ? { maxEntries: deps.connectionCacheMaxEntries }
+            : {}),
+        })
+      : undefined;
+  const router = cachingRouter ?? baseRouter;
+  const invalidateConnection = (id: string): void => cachingRouter?.invalidate(id);
   const eventSink = deps.eventSink ?? createNoopEventSink();
 
   /** Emit a tenant-scoped event (best-effort, redacted; never throws / breaks the operation). */
@@ -345,6 +369,8 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       throw error;
     }
     await registry.setStatus(tenant.id, to);
+    // Any status change can flip routability (or precede a secret change) — drop the cached resolution.
+    invalidateConnection(tenant.id);
     observe('tenant.transition', {
       tenantId: tenant.id,
       outcome: 'ok',
@@ -467,7 +493,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return purgeTenant(await requireTenant(id));
     },
 
-    erase(id: string, options: EraseOptions): Promise<ErasureCertificate> {
+    async erase(id: string, options: EraseOptions): Promise<ErasureCertificate> {
       // Compose the ErasureEngine over the already-injected ports; audit through the same sink.
       const engine = createErasureEngine({
         registry,
@@ -476,7 +502,10 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         ...(exporter ? { exporter } : {}),
         emit: (event) => eventSink.emit(event),
       });
-      return engine.erase(id, options);
+      const certificate = await engine.erase(id, options);
+      // The engine sets status directly (bypassing `transition`) — drop any cached resolution.
+      invalidateConnection(id);
+      return certificate;
     },
 
     async purgeExpired(options: PurgeSweepOptions = {}): Promise<PurgeSweepReport> {
@@ -651,6 +680,7 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
     }),
     defaultRegion: config.defaultRegion,
     allowedRegions: config.allowedRegions,
+    connectionCacheTtlMs: config.connectionCacheTtlMs,
   });
 }
 

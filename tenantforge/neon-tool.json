@@ -185,6 +185,12 @@
       "description": "Rate-limit counter store: memory (default, per-instance) or pg (shared across instances via the control-plane DB)."
     },
     {
+      "name": "TENANTFORGE_CONNECTION_CACHE_TTL_MS",
+      "required": false,
+      "secret": false,
+      "description": "Cache getConnection resolutions for this many ms (0 = disabled). Process-local, tenant-keyed, invalidated on lifecycle changes."
+    },
+    {
       "name": "TENANTFORGE_BASE_URL",
       "required": false,
       "secret": false,
