@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
@@ -9,6 +10,8 @@ import type { JsonObject, TenantStatus } from '../core/index.js';
 import { decodeCursor, encodeCursor } from '../core/index.js';
 import type { RateLimitStore } from '../ports/rate-limit-store.js';
 import { createInMemoryRateLimitStore } from '../adapters/rate-limit-store.js';
+import type { IdempotencyStore } from '../ports/idempotency-store.js';
+import { createInMemoryIdempotencyStore } from '../adapters/idempotency-store.js';
 import type { Authenticator, HttpCredential, Principal } from '../ports/authenticator.js';
 import { createTokenAuthenticator } from '../adapters/auth/token-authenticator.js';
 import type { TenantForge } from './lib.js';
@@ -37,6 +40,8 @@ export interface HttpServerOptions {
   rateLimit?: RateLimitOptions;
   /** Counter store for the rate limiter. Defaults to in-memory (per-instance). */
   rateLimitStore?: RateLimitStore;
+  /** Store for HTTP idempotency keys (replay POST retries). Defaults to in-memory (per-instance). */
+  idempotencyStore?: IdempotencyStore;
   /** Injectable clock (ms) for rate limiting — defaults to `Date.now`. */
   now?: () => number;
   /**
@@ -141,6 +146,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
   const rateLimit = options.rateLimit ?? { limit: 120, windowMs: 60_000 };
   const now = options.now ?? ((): number => Date.now());
   const rateLimitStore = options.rateLimitStore ?? createInMemoryRateLimitStore();
+  const idempotencyStore = options.idempotencyStore ?? createInMemoryIdempotencyStore();
 
   app.use('*', secureHeaders());
 
@@ -192,9 +198,57 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     return next();
   };
 
+  // Idempotency: a client may set `Idempotency-Key` on a POST so a retry replays the original
+  // response instead of re-executing (topic-api-design / topic-reliability). The key is namespaced
+  // by principal so operators can't collide. A server error (5xx) is stored too — a genuine retry
+  // after one should use a fresh key. Runs after the body-size cap so we never hash an oversized body.
+  const idempotency: MiddlewareHandler<Env> = async (c, next) => {
+    const presented = c.req.header('Idempotency-Key');
+    if (c.req.method !== 'POST' || presented === undefined || presented === '') return next();
+    if (presented.length > 255) return problem(c, 400, 'Bad Request', 'Idempotency-Key too long');
+
+    const rawBody = await c.req.raw.clone().text();
+    const fingerprint = createHash('sha256')
+      .update(`${c.req.method}\n${c.req.path}\n${rawBody}`)
+      .digest('hex');
+    const key = `${c.get('principal').id}:${presented}`;
+
+    const begun = await idempotencyStore.begin(key, fingerprint, now());
+    if (begun.outcome === 'replay') {
+      return new Response(begun.response.body, {
+        status: begun.response.status,
+        headers: { 'content-type': begun.response.contentType, 'Idempotency-Replayed': 'true' },
+      });
+    }
+    if (begun.outcome === 'in_flight') {
+      return problem(c, 409, 'Conflict', 'a request with this Idempotency-Key is in progress');
+    }
+    if (begun.outcome === 'mismatch') {
+      return problem(
+        c,
+        422,
+        'Unprocessable Entity',
+        'Idempotency-Key reused with a different request',
+      );
+    }
+
+    await next();
+    const captured = c.res.clone();
+    await idempotencyStore.complete(
+      key,
+      {
+        status: captured.status,
+        body: await captured.text(),
+        contentType: captured.headers.get('content-type') ?? 'application/json',
+      },
+      now(),
+    );
+  };
+
   app.use('/v1/*', authenticate);
   app.use('/v1/*', rateLimiter);
   app.use('/v1/*', bodyLimit({ maxSize: 1024 * 1024 }));
+  app.use('/v1/*', idempotency);
 
   // AuthZ: mutating routes require the `admin` role; `readonly` principals get 403 (deny by default
   // — std-owasp-api API5 Broken Function Level Authorization).

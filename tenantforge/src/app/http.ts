@@ -1,5 +1,6 @@
 import { serve } from '@hono/node-server';
 import { createPgRateLimitStore } from '../adapters/neon-pg/rate-limit-store.js';
+import { createPgIdempotencyStore } from '../adapters/neon-pg/idempotency-store.js';
 import { createOidcAuthenticator } from '../adapters/auth/oidc-authenticator.js';
 import { createMetricsEventSink } from '../adapters/metrics-event-sink.js';
 import { createWebhookEventSink } from '../adapters/webhook-event-sink.js';
@@ -46,6 +47,11 @@ function main(): void {
     config.rateLimitStore === 'pg'
       ? createPgRateLimitStore({ connectionString: config.databaseUrl })
       : undefined;
+  // Shared (cross-instance) idempotency store when configured; else the in-memory default.
+  const idempotencyStore =
+    config.idempotencyStore === 'pg'
+      ? createPgIdempotencyStore({ connectionString: config.databaseUrl })
+      : undefined;
   // OIDC mode: verify Bearer JWTs against the issuer's JWKS; else use the static-token authenticator
   // built by createHttpServer from the credentials / admin-token shorthand.
   const authenticator =
@@ -64,6 +70,7 @@ function main(): void {
     ...(config.httpToken !== undefined ? { token: config.httpToken } : {}),
     rateLimit: config.rateLimit,
     ...(rateLimitStore !== undefined ? { rateLimitStore } : {}),
+    ...(idempotencyStore !== undefined ? { idempotencyStore } : {}),
     metrics: () => metrics.render(),
   });
 
@@ -73,7 +80,11 @@ function main(): void {
 
   const shutdown = (): void => {
     server.close();
-    void Promise.allSettled([tf.close(), rateLimitStore?.close()]).finally(() => process.exit(0));
+    void Promise.allSettled([
+      tf.close(),
+      rateLimitStore?.close(),
+      idempotencyStore?.close(),
+    ]).finally(() => process.exit(0));
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

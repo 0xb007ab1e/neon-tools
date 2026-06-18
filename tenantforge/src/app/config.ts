@@ -114,6 +114,9 @@ const EnvSchema = z
     // Rate-limit counter store: `memory` (default, per-instance) or `pg` (shared across instances
     // via the control-plane DB — use for multi-instance deployments).
     TENANTFORGE_RATE_LIMIT_STORE: z.enum(['memory', 'pg']).default('memory'),
+    // Idempotency-key store: `memory` (default, per-instance) or `pg` (shared across instances —
+    // use for multi-instance deployments so a retry on another replica still de-duplicates).
+    TENANTFORGE_IDEMPOTENCY_STORE: z.enum(['memory', 'pg']).default('memory'),
     // Cache getConnection resolutions for this many ms (0 = disabled). Process-local + tenant-keyed.
     TENANTFORGE_CONNECTION_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(0),
     // Outbound lifecycle webhook (optional): HMAC-signed POST of each event to an external endpoint.
@@ -265,6 +268,8 @@ export interface Config {
   rateLimit: { limit: number; windowMs: number };
   /** Rate-limit counter store: in-memory (per-instance) or Postgres (shared across instances). */
   rateLimitStore: 'memory' | 'pg';
+  /** Idempotency-key store: in-memory (per-instance) or Postgres (shared across instances). */
+  idempotencyStore: 'memory' | 'pg';
   /** Cache `getConnection` resolutions for this many ms (0 = disabled). */
   connectionCacheTtlMs: number;
   /** Outbound lifecycle webhook (set only when both URL + secret are configured). */
@@ -297,6 +302,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       windowMs: parsed.TENANTFORGE_RATE_WINDOW_MS,
     },
     rateLimitStore: parsed.TENANTFORGE_RATE_LIMIT_STORE,
+    idempotencyStore: parsed.TENANTFORGE_IDEMPOTENCY_STORE,
     connectionCacheTtlMs: parsed.TENANTFORGE_CONNECTION_CACHE_TTL_MS,
     authMode: parsed.TENANTFORGE_AUTH_MODE,
     port: parsed.TENANTFORGE_PORT,

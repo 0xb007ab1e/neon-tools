@@ -8,6 +8,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Idempotency-Key on HTTP mutations** (gap #11) — a client may set an `Idempotency-Key` header on
+  any `POST /v1/*` so a retry **replays the original response** (header `Idempotency-Replayed: true`)
+  instead of re-executing — most importantly for `provision`, whose once-only connection secret is
+  replayed verbatim if the first response was lost (topic-api-design / topic-reliability). Keys are
+  scoped per principal, fingerprinted by request (reuse with a different body → **422**; a still
+  in-flight key → **409**; over-long key → 400), and expire after 24h. New `IdempotencyStore` port
+  with an in-memory default and a cross-instance Postgres adapter (`tf_idempotency_keys`, migration 0005) selected via `TENANTFORGE_IDEMPOTENCY_STORE=pg` — so a retry landing on another replica still
+  de-duplicates. Documented in `openapi.yaml`. In-memory store + middleware unit-tested; pg adapter
+  integration-tested.
+
 - **Operator audit attribution** (gap #10) — every control-plane event now records **who** performed
   the action (`TenantEvent.actor = { id, role }`), closing the who-did-what-when gap for
   non-repudiation (NIST AU, SOC2 change management, OWASP A09). A request-scoped actor context
