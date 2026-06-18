@@ -8,6 +8,14 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **GCP Secret Manager secret backend** (`createGcpSecretManagerStore`) behind the `SecretStore`
+  port — the second deferred cloud secret manager. Zero new dependencies: it takes a minimal injected
+  client (the `@google-cloud/secret-manager` `SecretManagerServiceClient` satisfies it via a small
+  shim). `set` creates the secret container (tolerating `ALREADY_EXISTS`) then adds a version; `get`
+  accesses the `latest` version (null on `NOT_FOUND`); `delete` removes the secret and all versions
+  to crypto-shred on offboard (workflow-data-lifecycle) and is idempotent. Secret values never logged;
+  unhandled gRPC errors propagate. Hand-wired via `createTenantForge`. Unit-tested at 100%.
+
 - **S3 object store for export artifacts** (`createS3ObjectStore`) behind the `ObjectStore` port —
   the off-Neon `pg_dump` sink alongside the filesystem store. Zero new dependencies: it takes a
   minimal injected client (the AWS SDK v3 `S3Client` satisfies it via a small shim), the SQS-queue

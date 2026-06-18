@@ -33,6 +33,11 @@ export {
   type AwsSecretsManagerStoreOptions,
   type SecretsManagerClientLike,
 } from './aws-secrets-manager/secret-store.js';
+export {
+  createGcpSecretManagerStore,
+  type GcpSecretManagerStoreOptions,
+  type GcpSecretManagerClientLike,
+} from './gcp-secret-manager/secret-store.js';
 export { deriveKey, seal, open } from './secret-crypto.js';
 export { createConnectionRouter, type ConnectionRouterDeps } from './connection-router.js';
 export { createNeonArchiveExporter } from './neon-archive-exporter.js';
