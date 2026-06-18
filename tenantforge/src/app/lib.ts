@@ -17,6 +17,7 @@ import {
   type TenantStatus,
   type TenantUsage,
   type ErasureCertificate,
+  type FleetDriftReport,
 } from '../core/index.js';
 import { createNeonProvisioningProvider } from '../adapters/neon-api/provisioning-provider.js';
 import { createPgTenantRegistry } from '../adapters/neon-pg/registry.js';
@@ -351,6 +352,15 @@ export interface TenantForge {
     spec: FleetMigrationSpec,
     options?: MigrateFleetOptions,
   ): Promise<FleetMigrationReport>;
+
+  /**
+   * Report fleet migration **drift** (#8): which active tenants are behind the catalog's latest
+   * version or have failures, and which are up to date. Read-only — applies nothing.
+   *
+   * @param options - Optional scan cap.
+   * @returns The fleet drift report.
+   */
+  fleetStatus(options?: { limit?: number }): Promise<FleetDriftReport>;
 
   /**
    * Meter a tenant's resource consumption over a period (for billing) — resolves the tenant's Neon
@@ -699,6 +709,19 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         },
       });
       return report;
+    },
+
+    fleetStatus(options?: { limit?: number }): Promise<FleetDriftReport> {
+      // migrationStatus is read-only (no applies) — a placeholder runner suffices when none is wired.
+      const orchestrator = createFleetOrchestrator({
+        registry,
+        connectionRouter: router,
+        migrationRunner: migrationRunner ?? {
+          applyToTenant: () =>
+            Promise.reject(new Error('fleetStatus: no migration runner is configured')),
+        },
+      });
+      return orchestrator.migrationStatus(options);
     },
 
     async usage(id: string, period: BillingPeriod): Promise<TenantUsage> {

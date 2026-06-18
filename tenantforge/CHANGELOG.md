@@ -8,6 +8,14 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Fleet migration drift detection + canary rollout** (gap #8). **Canary:**
+  `migrateFleet(spec, { canaryTenantId })` applies to one tenant first and **aborts the fleet
+  rollout if it fails** (report `canaryAborted`), so a bad migration is caught on one tenant, not all
+  — the rest are untouched. **Drift:** `TenantForge.fleetStatus()` / `FleetOrchestrator.migrationStatus()`
+  report which active tenants are behind the catalog's latest version or failing, backed by the new
+  pure `computeFleetMigrationDrift` (core) and a new `TenantRegistry.listMigrations()`. Core + canary +
+  status paths unit-tested at 100%.
+
 - **Automated per-tenant secret rotation** (gap #7) — `TenantForge.rotateSecret(id)` /
   `rotateSecrets()` and `createSecretRotationEngine` automate the per-tenant connection-credential
   rotation that `docs/runbooks/secret-rotation.md` previously described manually. Rotating mints a new

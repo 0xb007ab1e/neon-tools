@@ -56,7 +56,10 @@ painful to build correctly.
 - **Route** an authenticated principal → its tenant's connection (tenant context derived
   server-side — never from the client).
 - **Migrate the fleet** — apply a versioned, backward-compatible schema change across all tenants,
-  batched/resumable with per-tenant status + rollback.
+  batched/resumable with per-tenant status + rollback. **Canary** a tenant first
+  (`migrateFleet(spec, { canaryTenantId })` aborts the rollout if the canary fails), and check
+  **drift** any time with `fleetStatus()` (which active tenants are behind the latest version or
+  failing).
 - **Lifecycle** — suspend / resume / **offboard** (archive: retain the project scaled-to-zero,
   reversible) → **purge** (irreversible delete). `purge-expired` is the scheduled sweep that purges
   archived tenants past `TENANTFORGE_RETENTION_DAYS` (run by a cron / K8s CronJob).

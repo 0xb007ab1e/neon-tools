@@ -18,6 +18,10 @@ interface RegistryOpts {
   driftChecksum?: string;
   /** Make recordTenantMigration reject (best-effort path). */
   recordThrows?: boolean;
+  /** Catalog returned by listMigrations (for migrationStatus). */
+  migrations?: FleetMigration[];
+  /** Per-migration states keyed by migration id (for migrationStatus). */
+  statesByMigration?: Record<string, TenantMigrationState[]>;
 }
 
 /** Configurable registry fake exposing the per-tenant states it recorded. */
@@ -28,7 +32,9 @@ function fakeRegistry(opts: RegistryOpts): TenantRegistry & { recorded: Recorded
     registerMigration: (m: { version: string; checksum: string }): Promise<FleetMigration> =>
       Promise.resolve({ id: 'm1', version: m.version, checksum: opts.driftChecksum ?? m.checksum }),
     list: () => Promise.resolve(opts.active.map((id) => ({ id }) as TenantRecord)),
-    listTenantMigrationStates: () => Promise.resolve(opts.states ?? []),
+    listMigrations: () => Promise.resolve(opts.migrations ?? []),
+    listTenantMigrationStates: (migrationId: string) =>
+      Promise.resolve(opts.statesByMigration?.[migrationId] ?? opts.states ?? []),
     recordTenantMigration: (
       tenantId: string,
       _migrationId: string,
@@ -222,5 +228,85 @@ describe('createFleetOrchestrator — load / bounded concurrency', () => {
     // Only the still-pending failing tenants surface as failures (applied ones were skipped).
     const pendingFailures = failing.filter((id) => !preApplied.some((p) => p.tenantId === id));
     expect(report.failed).toHaveLength(pendingFailures.length);
+  });
+});
+
+describe('createFleetOrchestrator.migrateFleet — canary', () => {
+  it('applies to the canary first, then the rest of the fleet', async () => {
+    const registry = fakeRegistry({ active: ['t1', 't2', 't3'] });
+    const orch = createFleetOrchestrator({
+      registry,
+      connectionRouter: router,
+      migrationRunner: fakeRunner(),
+    });
+    const report = await orch.migrateFleet(spec, { canaryTenantId: 't2' });
+    expect(report.canaryAborted).toBeUndefined();
+    expect(report.succeeded.sort()).toEqual(['t1', 't2', 't3']);
+    // The canary is applied exactly once (filtered out of the main batches).
+    expect(
+      registry.recorded.filter((r) => r.tenantId === 't2' && r.status === 'applied'),
+    ).toHaveLength(1);
+  });
+
+  it('aborts the fleet when the canary fails (the rest are untouched)', async () => {
+    const registry = fakeRegistry({ active: ['t1', 't2', 't3'] });
+    const orch = createFleetOrchestrator({
+      registry,
+      connectionRouter: router,
+      migrationRunner: fakeRunner({ t2: new Error('bad migration') }),
+    });
+    const report = await orch.migrateFleet(spec, { canaryTenantId: 't2' });
+    expect(report.canaryAborted).toBe(true);
+    expect(report.succeeded).toEqual([]);
+    expect(report.failed).toEqual([{ tenantId: 't2', error: 'bad migration' }]);
+    // No other tenant was applied (only the canary failure was recorded).
+    expect(registry.recorded.filter((r) => r.status === 'applied')).toHaveLength(0);
+  });
+
+  it('throws when the canary is not an active tenant', async () => {
+    const registry = fakeRegistry({ active: ['t1'] });
+    const orch = createFleetOrchestrator({
+      registry,
+      connectionRouter: router,
+      migrationRunner: fakeRunner(),
+    });
+    await expect(orch.migrateFleet(spec, { canaryTenantId: 'ghost' })).rejects.toThrow(
+      /canary tenant ghost is not an active tenant/,
+    );
+  });
+});
+
+describe('createFleetOrchestrator.migrationStatus', () => {
+  it('reports drift across the catalog for active tenants', async () => {
+    const registry = fakeRegistry({
+      active: ['t1', 't2', 't3'], // t3 is a brand-new tenant with no migration states
+      migrations: [
+        { id: 'm1', version: '0001', checksum: 'a' },
+        { id: 'm2', version: '0002', checksum: 'b' },
+      ],
+      statesByMigration: {
+        m1: [
+          { tenantId: 't1', migrationId: 'm1', status: 'applied' },
+          { tenantId: 't2', migrationId: 'm1', status: 'applied' },
+          { tenantId: 'gone', migrationId: 'm1', status: 'applied' }, // non-active → ignored
+        ],
+        m2: [
+          { tenantId: 't1', migrationId: 'm2', status: 'applied' },
+          { tenantId: 't2', migrationId: 'm2', status: 'failed', error: 'boom' },
+        ],
+      },
+    });
+    const orch = createFleetOrchestrator({
+      registry,
+      connectionRouter: router,
+      migrationRunner: fakeRunner(),
+    });
+    const report = await orch.migrationStatus();
+    expect(report.latest).toBe('0002');
+    expect(report.summary).toEqual({ total: 3, atLatest: 1, drifted: 2, withFailures: 1 });
+    const t2 = report.tenants.find((t) => t.tenantId === 't2')!;
+    expect(t2).toEqual({ tenantId: 't2', atLatest: false, missing: ['0002'], failed: ['0002'] });
+    const t3 = report.tenants.find((t) => t.tenantId === 't3')!;
+    expect(t3).toEqual({ tenantId: 't3', atLatest: false, missing: ['0001', '0002'], failed: [] });
   });
 });
