@@ -16,5 +16,8 @@ can execute them under pressure (`@rules/workflow-runbooks.md`). Linked from ale
 | [secret-rotation](./secret-rotation.md)                   | Rotate the Neon API key, registry creds, HTTP token, per-tenant secrets.          |
 | [dependency-patch](./dependency-patch.md)                 | Patch a vulnerable dependency (workspace overrides).                              |
 
-> **Status:** drafted in beta; **not yet drilled.** Each runbook's footer tracks its last
-> validation — validate in a game-day before relying on it in a real incident.
+> **Status:** first drill done (2026-06-17) — see the [drill report](./drill-report.md). The
+> registry & queue layers were **executed** against an ephemeral Postgres; all commands/queries
+> were traced to code (one `deploy.md` drift caught + fixed). The **live-Neon path** (real
+> provision/purge, key rotation, PITR restore) still needs an operator-run game-day — each
+> runbook's footer tracks its own validation state.

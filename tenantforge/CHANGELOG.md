@@ -4,6 +4,21 @@ All notable changes to TenantForge are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Runbook **drill report** (`docs/runbooks/drill-report.md`) and an automated registry-query drill
+  (`test/integration/drill.int.test.ts`) that runs the runbooks' documented `psql` assessment
+  queries against the real schema. The registry & queue layers were executed against an ephemeral
+  Postgres (7 integration tests pass); honest per-runbook validation footers replace the blanket
+  "not yet drilled".
+
+### Fixed
+
+- `deploy.md` smoke test cited non-existent `offboard` flags (`--yes --skip-export --reason`);
+  corrected to the real teardown (`offboard <id>` then `purge <id> --yes`).
+
 ## [0.1.0] - 2026-06-17
 
 First **beta**: feature-complete for the v1 scope, behind real Neon adapters, pending runbook drills
@@ -41,7 +56,8 @@ and real-world validation.
 
 ### Known gaps
 
-- Runbooks are drafted but have not been drilled (game-day pending).
+- Runbooks are drilled at the registry/queue layer (see `docs/runbooks/drill-report.md`); the
+  live-Neon game-day (real provision/purge, key rotation, PITR restore) is still pending.
 - Alternate adapters — other message brokers (SQS/NATS/Pub-Sub), Vault/cloud secret stores, and
   `pg_dump`→object-store exporters — are deferred to their own branches behind the existing ports.
 

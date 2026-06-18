@@ -59,4 +59,4 @@
 
 ---
 
-_Last validated: not yet drilled (beta). Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — registry status query executed in the drill ([drill-report](./drill-report.md)); Neon PITR/branch restore pending a Neon game-day. Owner: TenantForge maintainers._

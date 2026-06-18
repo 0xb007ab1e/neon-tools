@@ -128,4 +128,4 @@ already-registered version is rejected as **checksum drift** — bump to a new v
 
 ---
 
-_Last validated: not yet drilled (beta). Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — §2 assessment + failure-list queries executed in the drill ([drill-report](./drill-report.md)); live revert migration pending a Neon game-day. Owner: TenantForge maintainers._
