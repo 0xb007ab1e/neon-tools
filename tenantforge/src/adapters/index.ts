@@ -58,6 +58,12 @@ export {
   type DumpFn,
 } from './pg-dump/exporter.js';
 export {
+  createPgDataMover,
+  spawnPgRestore,
+  type PgDataMoverOptions,
+  type SpawnPgRestoreOptions,
+} from './pg-dump/data-mover.js';
+export {
   createFilesystemObjectStore,
   type FilesystemObjectStoreOptions,
 } from './object-store/filesystem.js';

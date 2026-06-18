@@ -26,6 +26,7 @@ import { deriveKey } from '../adapters/secret-crypto.js';
 import { createConnectionRouter } from '../adapters/connection-router.js';
 import { createNeonArchiveExporter } from '../adapters/neon-archive-exporter.js';
 import { createPgDumpExporter, spawnPgDump } from '../adapters/pg-dump/exporter.js';
+import { createPgDataMover } from '../adapters/pg-dump/data-mover.js';
 import { createFilesystemObjectStore } from '../adapters/object-store/filesystem.js';
 import { createJsonEventSink, createNoopEventSink } from '../adapters/event-sink.js';
 import { createErasureEngine, type EraseOptions } from '../adapters/erasure-engine.js';
@@ -761,6 +762,8 @@ export function tenantForgeFromConfig(
     defaultRegion: config.defaultRegion,
     allowedRegions: config.allowedRegions,
     connectionCacheTtlMs: config.connectionCacheTtlMs,
+    // pg_dump → pg_restore mover so re-homing works out of the box (needs pg_dump/pg_restore on PATH).
+    dataMover: createPgDataMover(),
   });
 }
 
