@@ -32,9 +32,13 @@
 ## Steps — a tenant's data
 
 1. Use Neon PITR / branch restore on **that tenant's** project (by `neon_project_id` from `tf_tenants`).
-2. For an **offboarded** (`offboarding`) tenant: it is **archived, not deleted** — the Neon project is
-   retained (scaled to zero) and the connection secret is intact. "Restore" = `tenantforge resume <id>`
-   (un-archive back to active) during the retention window; no data recovery needed.
+2. For an **offboarded** (`offboarding`) tenant with the default **neon-archive** exporter: it is
+   **archived, not deleted** — the Neon project is retained (scaled to zero) and the connection secret
+   is intact. "Restore" = `tenantforge resume <id>` (un-archive back to active) during the retention
+   window; no data recovery needed.
+   - With the **pg-dump** exporter instead, the offboard wrote a `pg_dump` artifact to the object
+     store (the `ExportResult.location`, e.g. `file://…/tenants/{id}/{ts}.dump`). Restore it into a
+     fresh project with `pg_restore -d "<new tenant connection URI>" <artifact>`.
 3. For a **purged** (`deleted`) tenant: the project is gone and the secret was crypto-shredded —
    **unrecoverable by design** (`@rules/std-privacy.md`). This is why `purge` runs only after the
    retention window.

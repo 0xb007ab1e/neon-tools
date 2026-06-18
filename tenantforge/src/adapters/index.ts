@@ -18,6 +18,18 @@ export { createVaultSecretStore, type VaultSecretStoreOptions } from './vault/se
 export { deriveKey, seal, open } from './secret-crypto.js';
 export { createConnectionRouter, type ConnectionRouterDeps } from './connection-router.js';
 export { createNeonArchiveExporter } from './neon-archive-exporter.js';
+export {
+  createPgDumpExporter,
+  spawnPgDump,
+  type PgDumpExporterDeps,
+  type SpawnPgDumpOptions,
+  type DumpFn,
+} from './pg-dump/exporter.js';
+export {
+  createFilesystemObjectStore,
+  type FilesystemObjectStoreOptions,
+} from './object-store/filesystem.js';
+export type { ObjectStore, PutResult } from '../ports/object-store.js';
 export { createJsonEventSink, createNoopEventSink } from './event-sink.js';
 export { parseLifecycleCommand, type LifecycleCommand } from './lifecycle-command.js';
 export { createInMemoryQueue, type InMemoryQueue } from './in-memory-queue.js';

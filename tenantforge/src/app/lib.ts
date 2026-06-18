@@ -23,6 +23,8 @@ import { createVaultSecretStore } from '../adapters/vault/secret-store.js';
 import { deriveKey } from '../adapters/secret-crypto.js';
 import { createConnectionRouter } from '../adapters/connection-router.js';
 import { createNeonArchiveExporter } from '../adapters/neon-archive-exporter.js';
+import { createPgDumpExporter, spawnPgDump } from '../adapters/pg-dump/exporter.js';
+import { createFilesystemObjectStore } from '../adapters/object-store/filesystem.js';
 import { createJsonEventSink, createNoopEventSink } from '../adapters/event-sink.js';
 import {
   createFleetOrchestrator,
@@ -577,12 +579,23 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
           connectionString: config.databaseUrl,
           key: deriveKey(config.secretKey!),
         });
+  // Offboard export: the Neon-prioritized default retains the project (scale-to-zero, no data
+  // movement); `pg-dump` instead dumps the tenant DB to an object store (filesystem for now —
+  // S3/GCS object stores follow behind the ObjectStore port). Both satisfy the TenantExporter port.
+  const exporter =
+    config.exporter === 'pg-dump'
+      ? createPgDumpExporter({
+          resolveConnectionUri: (tenant) => secretStore.get(tenant.id),
+          objectStore: createFilesystemObjectStore({ dir: config.exportDir! }),
+          dump: (uri) => spawnPgDump(uri),
+        })
+      : createNeonArchiveExporter();
   return createTenantForge({
     registry,
     provisioning,
     secretStore,
     migrationRunner: createPgMigrationRunner(),
-    exporter: createNeonArchiveExporter(),
+    exporter,
     eventSink: createJsonEventSink(),
     usageProvider: createNeonUsageProvider({
       apiKey: config.neonApiKey,
