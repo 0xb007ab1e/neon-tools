@@ -191,6 +191,24 @@
       "description": "Cache getConnection resolutions for this many ms (0 = disabled). Process-local, tenant-keyed, invalidated on lifecycle changes."
     },
     {
+      "name": "TENANTFORGE_WEBHOOK_URL",
+      "required": false,
+      "secret": false,
+      "description": "Outbound lifecycle webhook endpoint (https). HMAC-signed POST of each control-plane event. Set together with TENANTFORGE_WEBHOOK_SECRET."
+    },
+    {
+      "name": "TENANTFORGE_WEBHOOK_SECRET",
+      "required": false,
+      "secret": true,
+      "description": "HMAC-SHA256 signing key for outbound webhook payloads. Required when TENANTFORGE_WEBHOOK_URL is set."
+    },
+    {
+      "name": "TENANTFORGE_WEBHOOK_EVENTS",
+      "required": false,
+      "secret": false,
+      "description": "Comma-separated allow-list of event names to send to the webhook (empty = all events)."
+    },
+    {
       "name": "TENANTFORGE_BASE_URL",
       "required": false,
       "secret": false,

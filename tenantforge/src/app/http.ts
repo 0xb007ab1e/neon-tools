@@ -2,7 +2,9 @@ import { serve } from '@hono/node-server';
 import { createPgRateLimitStore } from '../adapters/neon-pg/rate-limit-store.js';
 import { createOidcAuthenticator } from '../adapters/auth/oidc-authenticator.js';
 import { createMetricsEventSink } from '../adapters/metrics-event-sink.js';
+import { createWebhookEventSink } from '../adapters/webhook-event-sink.js';
 import { createFanOutEventSink, createJsonEventSink } from '../adapters/event-sink.js';
+import type { EventSink } from '../ports/event-sink.js';
 import { loadConfig } from './config.js';
 import { createHttpServer } from './http-server.js';
 import { tenantForgeFromConfig } from './lib.js';
@@ -22,10 +24,23 @@ function main(): void {
   }
 
   // Derive RED metrics from the same event stream that feeds the JSON logs, and expose /metrics.
+  // Optionally fan out lifecycle events to a signed outbound webhook (notify billing/CRM/alerting).
   const metrics = createMetricsEventSink();
-  const tf = tenantForgeFromConfig(config, {
-    eventSink: createFanOutEventSink([createJsonEventSink(), metrics]),
-  });
+  const sinks: EventSink[] = [createJsonEventSink(), metrics];
+  if (config.webhook !== undefined) {
+    sinks.push(
+      createWebhookEventSink({
+        url: config.webhook.url,
+        secret: config.webhook.secret,
+        ...(config.webhook.eventTypes !== undefined
+          ? { eventTypes: config.webhook.eventTypes }
+          : {}),
+        onError: (event, error) =>
+          process.stderr.write(`webhook delivery failed for ${event.event}: ${error}\n`),
+      }),
+    );
+  }
+  const tf = tenantForgeFromConfig(config, { eventSink: createFanOutEventSink(sinks) });
   // Shared (cross-instance) rate-limit counter when configured; else the in-memory default.
   const rateLimitStore =
     config.rateLimitStore === 'pg'

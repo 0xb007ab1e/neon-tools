@@ -116,9 +116,35 @@ const EnvSchema = z
     TENANTFORGE_RATE_LIMIT_STORE: z.enum(['memory', 'pg']).default('memory'),
     // Cache getConnection resolutions for this many ms (0 = disabled). Process-local + tenant-keyed.
     TENANTFORGE_CONNECTION_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(0),
+    // Outbound lifecycle webhook (optional): HMAC-signed POST of each event to an external endpoint.
+    TENANTFORGE_WEBHOOK_URL: z.string().url().optional(),
+    TENANTFORGE_WEBHOOK_SECRET: z.string().min(1).optional(),
+    // Optional comma-separated allow-list of event names to send (empty = all events).
+    TENANTFORGE_WEBHOOK_EVENTS: z
+      .string()
+      .optional()
+      .transform((v) =>
+        v === undefined
+          ? undefined
+          : v
+              .split(',')
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0),
+      ),
     TENANTFORGE_PORT: z.coerce.number().int().positive().default(3000),
   })
   .superRefine((env, ctx) => {
+    // A webhook needs both a URL and a signing secret, or neither (fail fast on a half-config).
+    if (
+      (env.TENANTFORGE_WEBHOOK_URL === undefined) !==
+      (env.TENANTFORGE_WEBHOOK_SECRET === undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TENANTFORGE_WEBHOOK_SECRET'],
+        message: 'TENANTFORGE_WEBHOOK_URL and TENANTFORGE_WEBHOOK_SECRET must be set together',
+      });
+    }
     // The secret backend selects which credentials are mandatory (fail fast on misconfig).
     if (env.TENANTFORGE_SECRET_BACKEND === 'neon-pg' && env.TENANTFORGE_SECRET_KEY === undefined) {
       ctx.addIssue({
@@ -241,6 +267,8 @@ export interface Config {
   rateLimitStore: 'memory' | 'pg';
   /** Cache `getConnection` resolutions for this many ms (0 = disabled). */
   connectionCacheTtlMs: number;
+  /** Outbound lifecycle webhook (set only when both URL + secret are configured). */
+  webhook?: { url: string; secret: string; eventTypes?: string[] };
   /** Port for the HTTP entrypoint. */
   port: number;
 }
@@ -303,6 +331,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (parsed.TENANTFORGE_EXPORTER === 'pg-dump') {
     // superRefine guarantees TENANTFORGE_EXPORT_DIR is present for this exporter.
     config.exportDir = parsed.TENANTFORGE_EXPORT_DIR!;
+  }
+  if (parsed.TENANTFORGE_WEBHOOK_URL !== undefined) {
+    // superRefine guarantees the secret is present alongside the URL.
+    config.webhook = {
+      url: parsed.TENANTFORGE_WEBHOOK_URL,
+      secret: parsed.TENANTFORGE_WEBHOOK_SECRET!,
+      ...(parsed.TENANTFORGE_WEBHOOK_EVENTS !== undefined
+        ? { eventTypes: parsed.TENANTFORGE_WEBHOOK_EVENTS }
+        : {}),
+    };
   }
   if (parsed.NEON_API_BASE_URL !== undefined) {
     config.neonApiBaseUrl = parsed.NEON_API_BASE_URL;
