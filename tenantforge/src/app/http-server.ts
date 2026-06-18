@@ -1,18 +1,61 @@
+import { timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
-import { bearerAuth } from 'hono/bearer-auth';
 import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
 import { HTTPException } from 'hono/http-exception';
-import type { Context } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { TENANTFORGE } from '../meta.js';
 import type { JsonObject, TenantStatus } from '../core/index.js';
 import type { TenantForge } from './lib.js';
 
+/** A control-plane role: `admin` may mutate; `readonly` may only read. */
+export type HttpRole = 'admin' | 'readonly';
+
+/** A named operator credential — a bearer token attributable to a principal, with a role. */
+export interface HttpCredential {
+  /** Stable principal id (for attribution + per-operator rate limiting). */
+  id: string;
+  /** The bearer token (a secret). */
+  token: string;
+  /** The operator's role. */
+  role: HttpRole;
+}
+
+/** Fixed-window rate-limit settings (per principal). */
+export interface RateLimitOptions {
+  /** Max requests per window. */
+  limit: number;
+  /** Window length in ms. */
+  windowMs: number;
+}
+
 /** Options for {@link createHttpServer}. */
 export interface HttpServerOptions {
-  /** Bearer token required on every `/v1/*` request. */
-  token: string;
+  /** Admin-token shorthand for a single-operator deploy (≡ one `admin` credential). */
+  token?: string;
+  /** Per-operator credentials (preferred over `token`): attributable identity + role. */
+  credentials?: HttpCredential[];
+  /** Per-principal rate limit. Defaults to 120 requests / 60s. */
+  rateLimit?: RateLimitOptions;
+  /** Injectable clock (ms) for rate limiting — defaults to `Date.now`. */
+  now?: () => number;
+}
+
+/** The authenticated principal attached to a request. */
+interface Principal {
+  id: string;
+  role: HttpRole;
+}
+
+/** Hono Variables: the resolved principal, set by the auth middleware. */
+type Env = { Variables: { principal: Principal } };
+
+/** Constant-time bearer-token compare (avoids token timing leaks — topic-authn-authz). */
+function tokenEquals(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
 const TENANT_STATUSES = ['provisioning', 'active', 'suspended', 'offboarding', 'deleted'] as const;
@@ -30,7 +73,7 @@ const PurgeSchema = z.object({
 });
 
 /** Return an RFC 9457 problem+json response. */
-function problem(c: Context, status: number, title: string, detail?: string) {
+function problem(c: Context<Env>, status: number, title: string, detail?: string) {
   return c.json(
     { type: 'about:blank', title, status, ...(detail !== undefined ? { detail } : {}) },
     status as 400,
@@ -39,7 +82,7 @@ function problem(c: Context, status: number, title: string, detail?: string) {
 }
 
 /** Map a use-case error to a safe HTTP status; unexpected errors become a generic 500. */
-function handleError(c: Context, error: unknown) {
+function handleError(c: Context<Env>, error: unknown) {
   const message = error instanceof Error ? error.message : 'error';
   if (/not found/.test(message)) return problem(c, 404, 'Not Found', message);
   if (/invalid tenant slug|unknown region|requires a reason/.test(message)) {
@@ -55,7 +98,7 @@ function handleError(c: Context, error: unknown) {
 
 /** Parse + validate a JSON body against a schema, returning a 400 problem on failure. */
 async function readJson<T>(
-  c: Context,
+  c: Context<Env>,
   schema: z.ZodType<T>,
 ): Promise<{ ok: true; data: T } | { ok: false; res: Response }> {
   let raw: unknown;
@@ -86,8 +129,20 @@ async function readJson<T>(
  * @param options - The bearer token to require.
  * @returns A configured Hono app (use its `.fetch` with a server, or `.request` in tests).
  */
-export function createHttpServer(tf: TenantForge, options: HttpServerOptions): Hono {
-  const app = new Hono();
+export function createHttpServer(tf: TenantForge, options: HttpServerOptions): Hono<Env> {
+  const app = new Hono<Env>();
+
+  // Resolve credentials: explicit list, else the admin-token shorthand. Fail closed if neither —
+  // an unauthenticated control plane must not start.
+  const credentials: HttpCredential[] =
+    options.credentials ??
+    (options.token !== undefined ? [{ id: 'default', token: options.token, role: 'admin' }] : []);
+  if (credentials.length === 0) {
+    throw new Error('createHttpServer: at least one credential (or token) is required');
+  }
+  const rateLimit = options.rateLimit ?? { limit: 120, windowMs: 60_000 };
+  const now = options.now ?? ((): number => Date.now());
+  const windows = new Map<string, { count: number; start: number }>();
 
   app.use('*', secureHeaders());
 
@@ -95,10 +150,52 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     c.json({ status: 'ok', tool: TENANTFORGE.id, version: TENANTFORGE.version }),
   );
 
-  app.use('/v1/*', bearerAuth({ token: options.token }));
+  // AuthN: match the presented bearer token to a credential (constant-time) and attach the
+  // principal. Iterates all credentials (no early return) so timing doesn't reveal which matched.
+  const authenticate: MiddlewareHandler<Env> = (c, next) => {
+    const header = c.req.header('authorization') ?? '';
+    const presented = header.startsWith('Bearer ') ? header.slice(7) : '';
+    let principal: Principal | undefined;
+    for (const cred of credentials) {
+      if (presented !== '' && tokenEquals(presented, cred.token)) {
+        principal = { id: cred.id, role: cred.role };
+      }
+    }
+    if (principal === undefined) return Promise.resolve(problem(c, 401, 'Unauthorized'));
+    c.set('principal', principal);
+    return next();
+  };
+
+  // Per-principal fixed-window rate limit. In-memory / per-instance — a multi-instance deploy needs
+  // a shared store behind this seam (tracked: threat-model R2).
+  const rateLimiter: MiddlewareHandler<Env> = (c, next) => {
+    const key = c.get('principal').id;
+    const t = now();
+    const prev = windows.get(key);
+    const win = !prev || t - prev.start >= rateLimit.windowMs ? { count: 0, start: t } : prev;
+    win.count += 1;
+    windows.set(key, win);
+    if (win.count > rateLimit.limit) {
+      c.header('Retry-After', String(Math.ceil((win.start + rateLimit.windowMs - t) / 1000)));
+      return Promise.resolve(problem(c, 429, 'Too Many Requests'));
+    }
+    return next();
+  };
+
+  app.use('/v1/*', authenticate);
+  app.use('/v1/*', rateLimiter);
   app.use('/v1/*', bodyLimit({ maxSize: 1024 * 1024 }));
 
-  app.post('/v1/tenants', async (c) => {
+  // AuthZ: mutating routes require the `admin` role; `readonly` principals get 403 (deny by default
+  // — std-owasp-api API5 Broken Function Level Authorization).
+  const requireAdmin: MiddlewareHandler<Env> = (c, next) => {
+    if (c.get('principal').role !== 'admin') {
+      return Promise.resolve(problem(c, 403, 'Forbidden', 'admin role required'));
+    }
+    return next();
+  };
+
+  app.post('/v1/tenants', requireAdmin, async (c) => {
     const parsed = await readJson(c, ProvisionSchema);
     if (!parsed.ok) return parsed.res;
     const { slug, region, residency, metadata } = parsed.data;
@@ -147,7 +244,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
-  app.post('/v1/tenants/:id/suspend', async (c) => {
+  app.post('/v1/tenants/:id/suspend', requireAdmin, async (c) => {
     try {
       return c.json({ tenant: await tf.suspend(c.req.param('id')) });
     } catch (error) {
@@ -155,7 +252,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
-  app.post('/v1/tenants/:id/resume', async (c) => {
+  app.post('/v1/tenants/:id/resume', requireAdmin, async (c) => {
     try {
       return c.json({ tenant: await tf.resume(c.req.param('id')) });
     } catch (error) {
@@ -163,7 +260,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
-  app.post('/v1/tenants/:id/offboard', async (c) => {
+  app.post('/v1/tenants/:id/offboard', requireAdmin, async (c) => {
     // Reversible: archives (retains, scaled to zero) — no confirmation needed.
     try {
       const outcome = await tf.offboard(c.req.param('id'));
@@ -173,7 +270,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
-  app.post('/v1/tenants/:id/purge', async (c) => {
+  app.post('/v1/tenants/:id/purge', requireAdmin, async (c) => {
     const parsed = await readJson(c, PurgeSchema);
     if (!parsed.ok) return parsed.res;
     try {

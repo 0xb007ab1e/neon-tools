@@ -122,7 +122,25 @@
       "name": "TENANTFORGE_HTTP_TOKEN",
       "required": false,
       "secret": true,
-      "description": "Bearer token required to run the HTTP control-plane API."
+      "description": "Single-admin bearer-token shorthand for the HTTP control-plane API."
+    },
+    {
+      "name": "TENANTFORGE_HTTP_CREDENTIALS",
+      "required": false,
+      "secret": true,
+      "description": "Per-operator HTTP credentials as comma-separated id:role:token entries (role = admin | readonly) — enables attribution + RBAC."
+    },
+    {
+      "name": "TENANTFORGE_RATE_LIMIT",
+      "required": false,
+      "secret": false,
+      "description": "Max HTTP requests per principal per window (default 120)."
+    },
+    {
+      "name": "TENANTFORGE_RATE_WINDOW_MS",
+      "required": false,
+      "secret": false,
+      "description": "HTTP rate-limit window length in ms (default 60000)."
     },
     {
       "name": "TENANTFORGE_BASE_URL",

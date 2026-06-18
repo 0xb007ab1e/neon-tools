@@ -41,16 +41,17 @@ data). No tenant content is stored in the control plane.
 
 ### B1 — HTTP control-plane API (admin)
 
-- **S (spoofing):** bearer-token auth on every route (`src/app/http-server.ts`); the token is a
-  secret from env (`workflow-secrets`), rotatable (`docs/runbooks/secret-rotation.md`). _Note: a
-  single shared admin token — see Residual R1._
+- **S (spoofing):** **per-operator** bearer credentials (`id:role:token`) with **constant-time**
+  token compare (`src/app/http-server.ts`); tokens are secrets from env (`workflow-secrets`),
+  rotatable (`docs/runbooks/secret-rotation.md`). A single-admin token shorthand remains for simple
+  deploys. **AuthZ (RBAC, API5):** mutating routes require the `admin` role; `readonly` → 403.
 - **T (tampering):** request bodies validated with `zod` before use; TLS terminated at the edge
   (deploy concern). **I (disclosure):** the API **never returns connection URIs** — `provision`
   reports only that a secret was issued; errors return a stable shape, not internals
   (`@rules/topic-error-handling.md`). **R (repudiation):** structured, tenant-scoped audit events
   (`src/core/observability.ts`). **D (DoS):** a 1 MB request
-  **body-size cap** is enforced in-app (`bodyLimit`, `src/app/http-server.ts`); per-route **rate
-  limiting** is not yet in-app — see Residual R2. **E (EoP):** this is an _admin_ control plane: the
+  **body-size cap** + a **per-principal fixed-window rate limit** (429 + `Retry-After`) are enforced
+  in-app (`src/app/http-server.ts`). **E (EoP):** this is an _admin_ control plane: the
   `:id` is operator-supplied by design (not a tenant impersonating another); least-privilege token +
   network ACLs gate it. The destructive purge route additionally requires an explicit `confirm: true`.
 
@@ -97,12 +98,12 @@ data). No tenant content is stored in the control plane.
 
 ## Residual risks (tracked)
 
-- **R1 — single shared HTTP admin token.** No per-operator identity / RBAC on the control-plane API
-  (Medium). Mitigate with least-privilege network ACLs + token rotation now; per-operator auth
-  (OIDC) is a future hardening item.
-- **R2 — no in-app rate limiting** on the HTTP API (Medium, DoS). A 1 MB body-size cap **is**
-  enforced in-app; per-route rate limits/quotas are expected at the edge/gateway today
-  (`@rules/topic-reliability.md`) — add app-level rate limiting before a publicly-reachable deployment.
+- **R1 — addressed (Low residual).** Per-operator credentials + RBAC are now in-app (admin/readonly,
+  constant-time compare). Remaining: tokens are static bearer secrets — phishing-resistant,
+  externally-managed identity (OIDC) is a future enhancement, not a gap for an admin control plane.
+- **R2 — addressed (Low residual).** A 1 MB body cap **and** a per-principal rate limit are enforced
+  in-app. The limiter is **in-memory / per-instance** — a multi-instance deployment needs a shared
+  store (Redis) behind the same seam for a global limit.
 - **R3 — load/soak unverified.** Fleet-migration + provisioning throughput under load is not yet
   measured; the `stable` bar needs a soak/spike test against the real Neon-API rate limits
   (`docs/runbooks/scaling.md`).
@@ -122,6 +123,8 @@ Each boundary's key threat is pinned by a negative/abuse test (master §4, `@rul
 | Illegal lifecycle transition (B3) | exhaustive transition matrix — every disallowed `(from,to)` rejected            |
 | Excessive agency (B2)             | the MCP tool set exposes **no** `purge`/`purge-expired`                         |
 | Spoofing (B1)                     | HTTP returns 401 on a missing/incorrect bearer token                            |
+| Broken function authZ (B1, API5)  | a `readonly` operator gets 403 on a mutating route; `admin` may mutate          |
+| DoS / rate limit (B1)             | over-limit requests get 429 + `Retry-After`; the window refills                 |
 | Untrusted payload (B6)            | invalid queue payload is dead-lettered, never handled                           |
 | Residency (B7)                    | provisioning fails closed outside the region allow-list / required jurisdiction |
 | Secret disclosure (B7)            | connection URI never appears in events/registry records                         |
