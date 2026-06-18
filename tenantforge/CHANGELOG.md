@@ -8,6 +8,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **HashiCorp Vault secret backend** (`createVaultSecretStore`, KV v2 over the HTTP API) as an
+  alternative to the default `neon-pg` encrypted store, behind the same `SecretStore` port.
+  Selectable via `TENANTFORGE_SECRET_BACKEND=vault` (`VAULT_ADDR` + `VAULT_TOKEN`, optional
+  `VAULT_KV_MOUNT` / `VAULT_PATH_PREFIX` / `VAULT_NAMESPACE`); config fails fast if the chosen
+  backend's credentials are missing. `delete` removes all versions + metadata (true crypto-shred).
+  Cloud secret managers can follow behind the same port in their own branches.
 - **Live-Neon game-day** (`docs/runbooks/game-day.md`): a documented, opt-in drill of the runbooks
   against a non-prod Neon org. Backed by two new self-skipping integration tests —
   `lifecycle.int.test.ts` (provision → suspend → resume → offboard → resume-restore → purge) and

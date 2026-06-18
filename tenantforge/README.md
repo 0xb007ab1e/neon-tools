@@ -72,6 +72,13 @@ Secrets come from the environment (never committed). See [`.env.example`](./.env
 `NEON_API_KEY` + `NEON_ORG_ID` (provision projects — the account is org-scoped), `DATABASE_URL` (the
 control-plane registry DB), and `TENANTFORGE_HTTP_TOKEN` (HTTP server).
 
+**Secret backend** (where per-tenant connection secrets live) is selected by
+`TENANTFORGE_SECRET_BACKEND`: `neon-pg` (default — AES-256-GCM-encrypted in the control-plane DB,
+keyed by `TENANTFORGE_SECRET_KEY`) or `vault` (HashiCorp Vault KV v2, via `VAULT_ADDR` + `VAULT_TOKEN`,
+optional `VAULT_KV_MOUNT` / `VAULT_PATH_PREFIX` / `VAULT_NAMESPACE`). Both satisfy the same
+`SecretStore` port; config fails fast if the chosen backend's credentials are missing. Cloud secret
+managers (AWS/GCP/Azure) can follow behind the same port in their own branches.
+
 ## Operations
 
 Runbooks live in [`docs/runbooks/`](./docs/runbooks/) ([index](./docs/runbooks/README.md)) — deploy,

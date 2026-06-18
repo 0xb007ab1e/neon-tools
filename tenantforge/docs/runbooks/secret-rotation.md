@@ -10,12 +10,12 @@
 
 ## The secrets TenantForge holds
 
-| Secret                                  | Blast radius                                                | Notes                                      |
-| --------------------------------------- | ----------------------------------------------------------- | ------------------------------------------ |
-| `NEON_API_KEY`                          | **Highest** — can create/delete every tenant's Neon project | Org-scoped; rotate via the Neon org        |
-| `DATABASE_URL` (control-plane registry) | Tenant **metadata** + fleet state                           | Not tenant content; not connection secrets |
-| `TENANTFORGE_HTTP_TOKEN`                | HTTP control-plane API access                               | Bearer token for `/v1/*`                   |
-| Per-tenant connection secrets           | One tenant's DB                                             | In the `SecretStore`, keyed by tenant id   |
+| Secret                                  | Blast radius                                                | Notes                                                       |
+| --------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
+| `NEON_API_KEY`                          | **Highest** — can create/delete every tenant's Neon project | Org-scoped; rotate via the Neon org                         |
+| `DATABASE_URL` (control-plane registry) | Tenant **metadata** + fleet state                           | Not tenant content; not connection secrets                  |
+| `TENANTFORGE_HTTP_TOKEN`                | HTTP control-plane API access                               | Bearer token for `/v1/*`                                    |
+| Per-tenant connection secrets           | One tenant's DB                                             | In the `SecretStore` (neon-pg or Vault), keyed by tenant id |
 
 ## Steps (zero-downtime: add-new-before-revoke-old)
 

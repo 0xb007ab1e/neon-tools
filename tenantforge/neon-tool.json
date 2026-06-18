@@ -53,10 +53,46 @@
       "description": "Override for the Neon API base URL (defaults to the public API)."
     },
     {
+      "name": "TENANTFORGE_SECRET_BACKEND",
+      "required": false,
+      "secret": false,
+      "description": "Where per-tenant connection secrets live: neon-pg (default, AES-256-GCM in the control-plane DB) or vault (HashiCorp Vault KV v2)."
+    },
+    {
       "name": "TENANTFORGE_SECRET_KEY",
-      "required": true,
+      "required": false,
       "secret": true,
-      "description": "Passphrase that encrypts per-tenant connection secrets at rest (AES-256-GCM); separate from DATABASE_URL's credential (separation of duties)."
+      "description": "Passphrase that encrypts per-tenant connection secrets at rest (AES-256-GCM); separate from DATABASE_URL's credential. Required when TENANTFORGE_SECRET_BACKEND=neon-pg."
+    },
+    {
+      "name": "VAULT_ADDR",
+      "required": false,
+      "secret": false,
+      "description": "HashiCorp Vault server URL (use TLS). Required when TENANTFORGE_SECRET_BACKEND=vault."
+    },
+    {
+      "name": "VAULT_TOKEN",
+      "required": false,
+      "secret": true,
+      "description": "HashiCorp Vault token. Required when TENANTFORGE_SECRET_BACKEND=vault."
+    },
+    {
+      "name": "VAULT_KV_MOUNT",
+      "required": false,
+      "secret": false,
+      "description": "Vault KV v2 mount path for the vault backend (default: secret)."
+    },
+    {
+      "name": "VAULT_PATH_PREFIX",
+      "required": false,
+      "secret": false,
+      "description": "Path prefix under the Vault mount; secrets land at {prefix}/{tenantId} (default: tenantforge)."
+    },
+    {
+      "name": "VAULT_NAMESPACE",
+      "required": false,
+      "secret": false,
+      "description": "Vault Enterprise namespace for the vault backend, if any."
     },
     {
       "name": "TENANTFORGE_RETENTION_DAYS",

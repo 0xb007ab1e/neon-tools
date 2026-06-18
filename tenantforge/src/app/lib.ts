@@ -19,6 +19,7 @@ import {
 import { createNeonProvisioningProvider } from '../adapters/neon-api/provisioning-provider.js';
 import { createPgTenantRegistry } from '../adapters/neon-pg/registry.js';
 import { createNeonPgSecretStore } from '../adapters/neon-pg/secret-store.js';
+import { createVaultSecretStore } from '../adapters/vault/secret-store.js';
 import { deriveKey } from '../adapters/secret-crypto.js';
 import { createConnectionRouter } from '../adapters/connection-router.js';
 import { createNeonArchiveExporter } from '../adapters/neon-archive-exporter.js';
@@ -560,13 +561,22 @@ export function tenantForgeFromConfig(config: Config): TenantForge {
     orgId: config.neonOrgId,
     ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
   });
-  // Persistent, AES-256-GCM-encrypted secret store in the control-plane DB (the Neon-prioritized
-  // production adapter). The encryption key is separate from the DB credential (separation of
-  // duties). Vault / cloud-SM / fetch-from-Neon-API backends can be swapped in behind the port.
-  const secretStore = createNeonPgSecretStore({
-    connectionString: config.databaseUrl,
-    key: deriveKey(config.secretKey),
-  });
+  // Per-tenant connection secrets: the Neon-prioritized default is an AES-256-GCM-encrypted store in
+  // the control-plane DB (encryption key separate from the DB credential — separation of duties).
+  // `vault` selects the HashiCorp Vault backend instead; both satisfy the same SecretStore port.
+  const secretStore =
+    config.secretBackend === 'vault'
+      ? createVaultSecretStore({
+          address: config.vault!.address,
+          token: config.vault!.token,
+          mountPath: config.vault!.mount,
+          pathPrefix: config.vault!.pathPrefix,
+          ...(config.vault!.namespace !== undefined ? { namespace: config.vault!.namespace } : {}),
+        })
+      : createNeonPgSecretStore({
+          connectionString: config.databaseUrl,
+          key: deriveKey(config.secretKey!),
+        });
   return createTenantForge({
     registry,
     provisioning,
