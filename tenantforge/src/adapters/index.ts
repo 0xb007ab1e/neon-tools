@@ -66,6 +66,11 @@ export {
   type GcsObjectStoreOptions,
   type GcsClientLike,
 } from './object-store/gcs.js';
+export {
+  createAzureBlobObjectStore,
+  type AzureBlobObjectStoreOptions,
+  type AzureBlobClientLike,
+} from './object-store/azure-blob.js';
 export type { ObjectStore, PutResult } from '../ports/object-store.js';
 export { createJsonEventSink, createNoopEventSink } from './event-sink.js';
 export { parseLifecycleCommand, type LifecycleCommand } from './lifecycle-command.js';

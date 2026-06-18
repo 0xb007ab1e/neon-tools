@@ -118,7 +118,8 @@ sink is pluggable behind the `ObjectStore` port: a filesystem store ships, and a
 client (wrap your `@aws-sdk/client-s3` `S3Client`) so it adds **zero dependencies**, and the **same
 adapter serves Cloudflare R2 / MinIO / any S3-compatible store** by pointing the `S3Client` at that
 endpoint. A **GCS** store (`createGcsObjectStore`, over the `@google-cloud/storage` client, `gs://`
-references) ships the same way. Azure Blob follows behind the same port in its own branch.
+references) and an **Azure Blob** store (`createAzureBlobObjectStore`, over the `@azure/storage-blob`
+client) ship the same way — completing object-store parity across the big three.
 
 ## Operations
 
