@@ -128,4 +128,4 @@ already-registered version is rejected as **checksum drift** — bump to a new v
 
 ---
 
-_Last validated: not yet drilled (alpha). Owner: TenantForge maintainers._
+_Last validated: not yet drilled (beta). Owner: TenantForge maintainers._

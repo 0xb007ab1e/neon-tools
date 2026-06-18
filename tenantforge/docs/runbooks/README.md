@@ -16,5 +16,5 @@ can execute them under pressure (`@rules/workflow-runbooks.md`). Linked from ale
 | [secret-rotation](./secret-rotation.md)                   | Rotate the Neon API key, registry creds, HTTP token, per-tenant secrets.          |
 | [dependency-patch](./dependency-patch.md)                 | Patch a vulnerable dependency (workspace overrides).                              |
 
-> **Status:** drafted for the alpha; **not yet drilled.** Each runbook's footer tracks its last
+> **Status:** drafted in beta; **not yet drilled.** Each runbook's footer tracks its last
 > validation — validate in a game-day before relying on it in a real incident.
