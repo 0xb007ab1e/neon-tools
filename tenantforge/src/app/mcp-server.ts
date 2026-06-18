@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { TENANTFORGE } from '../meta.js';
 import type { JsonObject } from '../core/index.js';
+import { decodeCursor, encodeCursor } from '../core/index.js';
 import type { TenantForge } from './lib.js';
 
 /** Wrap a string as a tool text result. */
@@ -68,20 +69,32 @@ export function createMcpServer(tf: TenantForge): McpServer {
   server.registerTool(
     'tf_list_tenants',
     {
-      description: 'List tenants, most-recent first. Optional status filter and page size.',
+      description:
+        'List tenants, most-recent first. Optional status filter, page size, and ' +
+        'keyset cursor. Pass the returned nextCursor back as `cursor` for the next page.',
       inputSchema: {
         status: z
           .enum(['provisioning', 'active', 'suspended', 'offboarding', 'deleted'])
           .optional(),
         limit: z.number().int().min(1).max(1000).optional(),
+        cursor: z.string().optional(),
       },
     },
-    async ({ status, limit }) => {
+    async ({ status, limit, cursor }) => {
+      const decoded = cursor === undefined ? null : decodeCursor(cursor);
+      if (cursor !== undefined && decoded === null) return text('invalid cursor');
+      const effectiveLimit = limit ?? 100;
       const tenants = await tf.listTenants({
         ...(status ? { status } : {}),
-        ...(limit ? { limit } : {}),
+        limit: effectiveLimit,
+        ...(decoded ? { cursor: decoded } : {}),
       });
-      return json({ tenants });
+      const last = tenants[tenants.length - 1];
+      const nextCursor =
+        tenants.length === effectiveLimit && last !== undefined
+          ? encodeCursor({ createdAt: last.createdAt, id: last.id })
+          : null;
+      return json({ tenants, nextCursor });
     },
   );
 
