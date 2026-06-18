@@ -8,6 +8,15 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Programmatic restore + pg data mover** (gap #6) — `spawnPgRestore` restores a `pg_dump`
+  custom-format archive into a target database (archive on **stdin**, password via `PGPASSWORD` off
+  argv, fixed-arg `pg_restore`, timeout), the restore counterpart to the existing `spawnPgDump`
+  backup. `createPgDataMover` pipes `pg_dump` → `pg_restore` to copy a tenant between databases — the
+  concrete `TenantDataMover` for re-homing (#5), now **wired by default in the production composition
+  root** so `rehome` works out of the box (requires `pg_dump`/`pg_restore` on PATH). Unit-tested at
+  100% (safe args + PG\* env; no-`-d` when DB absent; non-zero exit / spawn error / no-stderr /
+  timeout; mover dump-then-restore + default-spawn path).
+
 - **Tenant re-homing** (gap #5) — `TenantForge.rehome(id, { region, residency? })` /
   `createRehomeEngine` relocates an **active** tenant to a new region (residency change / latency).
   A Neon project is region-bound, so it provisions a new project in the target region, **copies the

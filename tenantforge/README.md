@@ -165,6 +165,13 @@ emitted as a `tenant.erased` event (`outcome: 'error'` if a post-condition fails
 catches an incomplete erasure). The control-plane registry holds no tenant content, so this erases the
 personal data. `createErasureEngine` is also exported for standalone composition.
 
+**Backup & restore:** `pg_dump` backs the offboard exporter (backup); the matching **restore** is
+`spawnPgRestore` (archive → `pg_restore` into a target DB, password off-argv, archive on stdin), and
+`createPgDataMover` pipes **`pg_dump` → `pg_restore`** to copy a tenant between databases — the
+concrete `TenantDataMover` the re-home engine uses (wired by default in the production composition
+root, so it needs `pg_dump`/`pg_restore` on PATH). PITR recovery via Neon branches stays operator-run
+(`docs/runbooks/backup-restore.md`).
+
 **Re-homing (residency change):** `tf.rehome(id, { region, residency? })` relocates an **active**
 tenant to a new region — for a residency change (e.g. a customer moves to the EU) or latency. A Neon
 project is region-bound, so it **provisions a new project in the target region, copies the data**
