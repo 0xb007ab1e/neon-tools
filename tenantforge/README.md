@@ -107,8 +107,12 @@ offboard). GCP Secret Manager / Azure Key Vault follow the same shape in their o
 **Offboard export** is selected by `TENANTFORGE_EXPORTER`: `neon-archive` (default — retain the Neon
 project scaled-to-zero, no data movement) or `pg-dump` (dump the tenant DB to an object store; set
 `TENANTFORGE_EXPORT_DIR` to a durable mounted volume). Both satisfy the `TenantExporter` port and
-export is fail-closed (offboard aborts before delete if the export can't be produced). S3 / GCS / R2
-object stores can follow behind the `ObjectStore` port in their own branches.
+export is fail-closed (offboard aborts before delete if the export can't be produced). The `pg-dump`
+sink is pluggable behind the `ObjectStore` port: a filesystem store ships, and an **S3** store
+(`createS3ObjectStore`) ships for hand-wiring via `createTenantForge` — it takes a minimal injected
+client (wrap your `@aws-sdk/client-s3` `S3Client`) so it adds **zero dependencies**, and the **same
+adapter serves Cloudflare R2 / MinIO / any S3-compatible store** by pointing the `S3Client` at that
+endpoint. GCS / Azure Blob stores follow behind the same port in their own branches.
 
 ## Operations
 

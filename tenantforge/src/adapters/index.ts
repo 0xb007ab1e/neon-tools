@@ -47,6 +47,11 @@ export {
   createFilesystemObjectStore,
   type FilesystemObjectStoreOptions,
 } from './object-store/filesystem.js';
+export {
+  createS3ObjectStore,
+  type S3ObjectStoreOptions,
+  type S3ClientLike,
+} from './object-store/s3.js';
 export type { ObjectStore, PutResult } from '../ports/object-store.js';
 export { createJsonEventSink, createNoopEventSink } from './event-sink.js';
 export { parseLifecycleCommand, type LifecycleCommand } from './lifecycle-command.js';
