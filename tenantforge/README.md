@@ -5,12 +5,17 @@
 > the whole fleet, and handle suspend / offboard / residency — so you get hard data isolation and a
 > clean compliance story without building tenant provisioning, routing, and lifecycle yourself.
 
-**Status:** `alpha` — the walking skeleton is in: the pure core (slug/region validation, the
-tenant-lifecycle state machine, the fleet-migration planner), the Neon-API provisioning + Postgres
-registry adapters, and **`provision` / `list` / `get`** via the **library** and **CLI**, with the
-core enforced at 100% test coverage. Connection routing, fleet-migration orchestration, lifecycle
-(suspend/offboard), and the HTTP + MCP entrypoints are the next milestone. See
-[`ARCHITECTURE.md`](./ARCHITECTURE.md) for the design, scope, and milestones.
+**Status:** `beta` — feature-complete for the v1 scope below and usable behind real Neon adapters,
+pending hardening and real-world validation. Implemented: the pure core (slug/region validation, the
+tenant-lifecycle state machine, the fleet-migration planner) at 100% test coverage; the Neon-API
+provisioning and Postgres registry / encrypted secret-store adapters; the full lifecycle
+(`provision` / `suspend` / `resume` / `offboard` / `purge`, plus the scheduled `purge-expired`
+sweep); connection routing; fleet-migration orchestration; per-tenant observability and metering;
+residency enforcement; and a Neon-native (Postgres) queue + worker for async lifecycle — all reachable
+as a **library**, **CLI**, **HTTP** control-plane API, and **MCP** server. Known gaps: the runbooks
+are drafted but not yet drilled, and some adapters (alternate brokers / secret stores / exporters) are
+deferred to their own branches. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the design, scope, and
+milestones.
 
 ## Quickstart
 
@@ -41,7 +46,7 @@ and **scale-to-zero** means idle tenants cost ~$0. TenantForge is the managed co
 that primitive — the provisioning, routing, fleet-migration orchestration, and lifecycle that are
 painful to build correctly.
 
-## What v1 will do
+## What it does
 
 - **Provision** a tenant → an isolated Neon project (region-selectable), recorded in a control-plane
   registry. Idempotent + resumable.
@@ -73,7 +78,7 @@ Runbooks live in [`docs/runbooks/`](./docs/runbooks/) ([index](./docs/runbooks/R
 rollback, [fleet-migration rollback](./docs/runbooks/fleet-migration-rollback.md), incident-response,
 backup-restore, on-call, scaling, secret-rotation, and dependency-patch. A fleet migration is a
 release; a cross-tenant leak or Neon-API-key compromise is a SEV1. The HTTP API contract is
-[`openapi.yaml`](./openapi.yaml). _(Runbooks are drafted for the alpha and not yet drilled.)_
+[`openapi.yaml`](./openapi.yaml). _(Runbooks are drafted and not yet drilled (beta).)_
 
 **Per-tenant observability:** every control-plane operation emits a structured, tenant-scoped JSON
 event (provision / transition / connection-resolved-or-denied / fleet-migration / purge-sweep) to
