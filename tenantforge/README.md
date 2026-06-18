@@ -96,8 +96,13 @@ for multi-replica deployments (Neon-native, zero extra deps), behind the `RateLi
 `TENANTFORGE_SECRET_BACKEND`: `neon-pg` (default — AES-256-GCM-encrypted in the control-plane DB,
 keyed by `TENANTFORGE_SECRET_KEY`) or `vault` (HashiCorp Vault KV v2, via `VAULT_ADDR` + `VAULT_TOKEN`,
 optional `VAULT_KV_MOUNT` / `VAULT_PATH_PREFIX` / `VAULT_NAMESPACE`). Both satisfy the same
-`SecretStore` port; config fails fast if the chosen backend's credentials are missing. Cloud secret
-managers (AWS/GCP/Azure) can follow behind the same port in their own branches.
+`SecretStore` port; config fails fast if the chosen backend's credentials are missing. **Cloud secret
+managers** ship behind the same port for hand-wiring via `createTenantForge` (not env-selectable, since
+they need their SDK at the composition root — same approach as the SQS queue): **AWS Secrets Manager**
+(`createAwsSecretsManagerStore`) takes a minimal injected client (wrap your
+`@aws-sdk/client-secrets-manager` client with a small shim) so it adds **zero dependencies**; `set`
+creates-or-updates the secret and `delete` force-deletes without a recovery window (crypto-shred on
+offboard). GCP Secret Manager / Azure Key Vault follow the same shape in their own branches.
 
 **Offboard export** is selected by `TENANTFORGE_EXPORTER`: `neon-archive` (default — retain the Neon
 project scaled-to-zero, no data movement) or `pg-dump` (dump the tenant DB to an object store; set

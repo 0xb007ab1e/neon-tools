@@ -8,6 +8,15 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **AWS Secrets Manager secret backend** (`createAwsSecretsManagerStore`) behind the `SecretStore`
+  port — the first of the deferred cloud secret managers. Zero new dependencies: it takes a minimal
+  injected client (the AWS SDK v3 `SecretsManagerClient` satisfies it via a small shim), the same
+  pattern as the SQS queue adapter. `set` writes a new version and creates the secret on first use;
+  `get` returns null when absent; `delete` uses `ForceDeleteWithoutRecovery` to crypto-shred on
+  offboard (workflow-data-lifecycle) and is idempotent. Secret values are never logged; non-not-found
+  SDK errors propagate. Hand-wired via `createTenantForge` (not env-selectable — needs the SDK at the
+  composition root). Unit-tested at 100%.
+
 - **OIDC / JWT auth for the HTTP control plane** (threat-model R1, closed): authentication is now
   behind an `Authenticator` port (`src/ports/authenticator.ts`) with two adapters selected by
   `TENANTFORGE_AUTH_MODE`. `token` (default, unchanged) keeps the static per-operator credentials /
