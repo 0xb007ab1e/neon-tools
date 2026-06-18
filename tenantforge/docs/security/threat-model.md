@@ -104,9 +104,11 @@ data). No tenant content is stored in the control plane.
 - **R2 — addressed (Low residual).** A 1 MB body cap **and** a per-principal rate limit are enforced
   in-app. The limiter is **in-memory / per-instance** — a multi-instance deployment needs a shared
   store (Redis) behind the same seam for a global limit.
-- **R3 — load/soak unverified.** Fleet-migration + provisioning throughput under load is not yet
-  measured; the `stable` bar needs a soak/spike test against the real Neon-API rate limits
-  (`docs/runbooks/scaling.md`).
+- **R3 — addressed (Low residual).** A load/soak harness (`pnpm load`) drives the fleet fan-out over
+  a large synthetic fleet, and a CI test guards that concurrency stays within the batch bound (no
+  unbounded fan-out → no rate-limit/connection blowout). Remaining: the **live-Neon load profile**
+  (pacing provisioning + fleet migration into Neon's real `429` limits) is operator-run against a
+  non-prod org — documented in `docs/runbooks/scaling.md`.
 - **R4 — automated live-Neon game-day passed** (2026-06-17, non-prod org; 10/10 — see
   `docs/runbooks/drill-report.md`). Remaining: the manual-only `NEON_API_KEY` rotation + Neon PITR
   restore (console ops) to fully close it.

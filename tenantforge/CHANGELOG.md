@@ -17,6 +17,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Load/soak harness for the fleet fan-out** (threat-model R3): `pnpm load` (`src/app/load.ts`)
+  drives the real fleet orchestrator over a large synthetic fleet (configurable tenants / batch /
+  simulated per-apply latency / failure rate), reporting throughput + peak concurrency and exiting
+  non-zero if fan-out ever exceeds the batch bound. Backed by a fast CI regression test asserting
+  bounded concurrency + failure-isolation + resumability at scale. The live-Neon load profile
+  (pacing into real `429` limits) is documented as an operator-run procedure in `scaling.md`.
 - **Per-operator HTTP auth + RBAC, and per-principal rate limiting** (threat-model R1/R2). The HTTP
   control plane now accepts named credentials (`TENANTFORGE_HTTP_CREDENTIALS` = `id:role:token`,
   role `admin` | `readonly`) with **constant-time** token compare and attributable identities;

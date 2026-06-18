@@ -26,6 +26,7 @@
     "http": "node --env-file-if-exists=.env --import tsx src/app/http.ts",
     "mcp": "node --env-file-if-exists=.env --import tsx src/app/mcp.ts",
     "worker": "node --env-file-if-exists=.env --import tsx src/app/worker.ts",
+    "load": "node --import tsx src/app/load.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
