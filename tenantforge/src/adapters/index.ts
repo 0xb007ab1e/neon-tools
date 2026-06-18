@@ -13,6 +13,13 @@ export {
   type PgMigrationRunnerOptions,
 } from './neon-pg/migration-runner.js';
 export { createInMemorySecretStore } from './secret-store.js';
+export { createInMemoryRateLimitStore } from './rate-limit-store.js';
+export {
+  createPgRateLimitStore,
+  type PgRateLimitStore,
+  type PgRateLimitStoreOptions,
+} from './neon-pg/rate-limit-store.js';
+export type { RateLimitStore, RateLimitHit } from '../ports/rate-limit-store.js';
 export { createNeonPgSecretStore, type NeonPgSecretStoreOptions } from './neon-pg/secret-store.js';
 export { createVaultSecretStore, type VaultSecretStoreOptions } from './vault/secret-store.js';
 export { deriveKey, seal, open } from './secret-crypto.js';

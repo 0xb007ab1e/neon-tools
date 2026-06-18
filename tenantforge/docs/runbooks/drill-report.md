@@ -94,8 +94,9 @@ auto-created `<branch>_old_<ts>` backup) are documented in `backup-restore.md`.
 ## Residual work (all `stable` gates drilled)
 
 - **Accepted Low residuals** (not blockers — tracked in `docs/security/threat-model.md`): per-operator
-  OIDC vs. static bearer tokens; a shared rate-limit store for multi-instance deploys; the
-  registry-credential (`DATABASE_URL`) rotation (mechanically identical to the drilled API-key flow).
+  OIDC vs. static bearer tokens; the registry-credential (`DATABASE_URL`) rotation (mechanically
+  identical to the drilled API-key flow). _(The multi-instance rate-limit store is now resolved — a
+  Postgres-backed `RateLimitStore` ships behind the port.)_
 - Re-drill the automated suite after any change to the CLI surface, registry schema, or HTTP contract.
 - Re-drill the automated suite after any change to the CLI surface, registry schema, or HTTP contract.
 
