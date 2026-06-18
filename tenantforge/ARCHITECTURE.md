@@ -47,11 +47,17 @@ a managed primitive.
   reversible during retention) → **purge** (irreversible delete) — privacy / data-lifecycle.
 - Entrypoints: **library + CLI** (core), **HTTP control-plane API** + **MCP server** (management).
 
+**Now in (previously deferred):**
+
+- **ResidencyRouter (#16)** — `selectRegion` chooses a residency-compliant region from a jurisdiction
+  within the org allow-list; `provision` auto-selects when given a `residency` but no region.
+- **ErasureEngine (#17)** — `TenantForge.erase` / `createErasureEngine`: automated, audited
+  right-to-erasure (export → delete project → crypto-shred secret → verify → certificate).
+
 **Out (deferred / other tools):**
 
 - Cross-tenant analytics / fan-in reporting (a separate read-side concern).
 - Per-tenant billing/usage metering (graduates into its own concern; v1 emits the events).
-- Data-residency policy engine → **ResidencyRouter (#16)**; automated erasure → **ErasureEngine (#17)**.
 - Shared-schema (`tenant_id`) multitenancy — explicitly **not** TenantForge's model.
 
 ## 3. Architecture style (per the SSDLC rules)
