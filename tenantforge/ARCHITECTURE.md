@@ -4,8 +4,9 @@ _Status: **beta** — feature-complete for the v1 scope: pure core (100% coverag
 provisioning + Postgres registry / encrypted secret-store adapters, the full tenant lifecycle,
 connection routing, fleet-migration orchestration, per-tenant observability + metering, residency
 enforcement, and a Neon-native queue + worker — across the library, CLI, HTTP, and MCP entrypoints.
-The live-Neon runbook game-day passed 2026-06-17 (10/10 against a non-prod org); pending: the
-manual-only key-rotation + PITR-restore console steps and the deferred alternate adapters. Decisions
+The live-Neon runbook game-day passed 2026-06-17 (10/10 against a non-prod org) and the
+`NEON_API_KEY` rotation was drilled; pending: the manual-only Neon PITR-restore console step and the
+deferred alternate adapters. Decisions
 trace to
 [`../research/product-concepts.md`](../research/product-concepts.md) (#2) and
 [`../research/teardown-finalists.md`](../research/teardown-finalists.md)._

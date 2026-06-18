@@ -63,4 +63,4 @@
 
 ---
 
-_Last validated: 2026-06-17 — **partially** in the live-Neon game-day: per-tenant connection secrets were set/resolved/shredded end-to-end against a non-prod org (provision/getConnection/purge). Rotating the **NEON_API_KEY** / registry credential (org-level) is still manual-only and not yet drilled. Commands traced to code in the drill. See [drill-report](./drill-report.md). Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — **NEON_API_KEY rotation drilled** against a non-prod org: the full game-day suite (10/10) verified provisioning works on the **rotated** key (the runbook's verification step). Per-tenant connection secrets were also set/resolved/shredded end-to-end. Remaining manual: the registry-credential (`DATABASE_URL`) rotation; revoking the old API key is the operator's console step after verification. See [drill-report](./drill-report.md). Owner: TenantForge maintainers._

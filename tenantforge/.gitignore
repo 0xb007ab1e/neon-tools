@@ -13,5 +13,12 @@ docs/api
 .env.*
 !.env.example
 
+# Editor swap/backup files (can mirror an open .env — keep them out of VCS)
+*.swp
+*.swo
+*~
+.*.kate-swp
+.*.kate-swp.*
+
 # Node
 node_modules
