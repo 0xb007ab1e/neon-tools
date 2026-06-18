@@ -8,6 +8,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **AWS SQS message-queue backend** (`createSqsMessageQueue`) behind the `MessageQueue` port — an
+  alternative to the default Postgres broker. **Zero new dependencies**: it takes a minimal injected
+  client (`SqsClientLike`) that the AWS SDK v3 `SQSClient` satisfies via a small shim, so the SDK
+  tree stays out of the project; wired via `createTenantForge`. `receive` long-polls and maps each
+  message to `{ id: ReceiptHandle, body }`; `ack`→DeleteMessage; `deadLetter`→the app DLQ
+  (SendMessage + delete) or, if unset, SQS's native redrive policy; `enqueue`→SendMessage. Fully
+  unit-tested via a fake client (adapter at 100%).
 - **`pg_dump` tenant exporter** (`createPgDumpExporter` + `spawnPgDump`) behind the `TenantExporter`
   port — the off-Neon, real-data-movement alternative to the retain-the-project archiver. Dumps a
   tenant's DB (custom format) and writes it to an `ObjectStore`; selectable via

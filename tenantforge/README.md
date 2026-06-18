@@ -122,8 +122,11 @@ pnpm --filter tenantforge cli enqueue suspend --tenant-id <uuid>
 ```
 
 The worker polls every `TENANTFORGE_QUEUE_POLL_MS` (default 5000) and shuts down gracefully on
-SIGINT/SIGTERM. A different broker (SQS/NATS/Pub/Sub) can implement the same `MessageQueue` port in
-its own branch; an in-memory adapter backs tests/dev.
+SIGINT/SIGTERM. An **AWS SQS** backend (`createSqsMessageQueue`) implements the same `MessageQueue`
+port — it carries **zero new dependencies** by taking a minimal injected client (wrap your
+`@aws-sdk/client-sqs` `SQSClient` with a small shim, per the adapter's doc comment) and hand-wiring it
+via `createTenantForge`; `ack`→DeleteMessage, `deadLetter`→DLQ (or SQS native redrive). Other brokers
+(NATS/Pub/Sub) can follow behind the same port; an in-memory adapter backs tests/dev.
 
 ## Discoverability & rules
 
