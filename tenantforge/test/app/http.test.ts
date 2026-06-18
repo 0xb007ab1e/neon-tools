@@ -98,6 +98,73 @@ describe('HTTP control-plane', () => {
     });
   });
 
+  it('replays a POST response for a repeated Idempotency-Key (executes once)', async () => {
+    let calls = 0;
+    const server = app({
+      provision: async () => {
+        calls += 1;
+        return { tenant, connectionUri: 'postgresql://secret@host/db' };
+      },
+    });
+    const headers = { ...auth, 'Idempotency-Key': 'key-1' };
+    const body = JSON.stringify({ slug: 'acme' });
+    const first = await server.request('/v1/tenants', { method: 'POST', headers, body });
+    const second = await server.request('/v1/tenants', { method: 'POST', headers, body });
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.headers.get('Idempotency-Replayed')).toBe('true');
+    // The retry replays the original body verbatim — including the once-only connection secret.
+    expect(await second.json()).toEqual({
+      tenant: tenantJson,
+      connectionUri: 'postgresql://secret@host/db',
+    });
+    expect(calls).toBe(1); // executed once; the retry did not re-provision
+  });
+
+  it('rejects an Idempotency-Key reused with a different request (422)', async () => {
+    const server = app({ provision: async () => ({ tenant, connectionUri: null }) });
+    const headers = { ...auth, 'Idempotency-Key': 'key-2' };
+    await server.request('/v1/tenants', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ slug: 'acme' }),
+    });
+    const res = await server.request('/v1/tenants', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ slug: 'different' }),
+    });
+    expect(res.status).toBe(422);
+  });
+
+  it('rejects an over-long Idempotency-Key (400)', async () => {
+    const res = await app().request('/v1/tenants', {
+      method: 'POST',
+      headers: { ...auth, 'Idempotency-Key': 'x'.repeat(256) },
+      body: JSON.stringify({ slug: 'acme' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 409 while a request with the same Idempotency-Key is in flight', async () => {
+    const server = createHttpServer(
+      fakeTf({ provision: async () => ({ tenant, connectionUri: null }) }),
+      {
+        token: TOKEN,
+        idempotencyStore: {
+          begin: () => Promise.resolve({ outcome: 'in_flight' as const }),
+          complete: () => Promise.resolve(),
+        },
+      },
+    );
+    const res = await server.request('/v1/tenants', {
+      method: 'POST',
+      headers: { ...auth, 'Idempotency-Key': 'key-3' },
+      body: JSON.stringify({ slug: 'acme' }),
+    });
+    expect(res.status).toBe(409);
+  });
+
   it('returns RFC 9457 problem+json on validation failure (400)', async () => {
     const res = await app().request('/v1/tenants', {
       method: 'POST',

@@ -65,6 +65,8 @@ paths:
     post:
       tags: [tenants]
       summary: Provision a tenant (isolated Neon project). Idempotent on slug.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -91,6 +93,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
     get:
       tags: [tenants]
       summary: List tenants, most-recent first.
@@ -143,6 +146,7 @@ paths:
       summary: Suspend an active tenant (reversible).
       parameters:
         - { $ref: '#/components/parameters/TenantId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
       responses:
         '200': { $ref: '#/components/responses/TenantEnvelope' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -150,12 +154,14 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /v1/tenants/{id}/resume:
     post:
       tags: [tenants]
       summary: Resume a suspended tenant back to active.
       parameters:
         - { $ref: '#/components/parameters/TenantId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
       responses:
         '200': { $ref: '#/components/responses/TenantEnvelope' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -163,6 +169,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /v1/tenants/{id}/offboard:
     post:
       tags: [tenants]
@@ -171,6 +178,7 @@ paths:
         REVERSIBLE via resume until purged; no confirmation needed.
       parameters:
         - { $ref: '#/components/parameters/TenantId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
       responses:
         '200':
           description: Archived (tenant is `offboarding`, pending purge).
@@ -190,6 +198,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /v1/tenants/{id}/purge:
     post:
       tags: [tenants]
@@ -198,6 +207,7 @@ paths:
         connection secret. Requires `confirm: true`. The deferred hard-delete after retention.
       parameters:
         - { $ref: '#/components/parameters/TenantId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody:
         required: true
         content:
@@ -211,6 +221,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
 components:
   securitySchemes:
     bearerAuth:
@@ -226,6 +237,16 @@ components:
       required: true
       description: The tenant id (UUID), derived server-side from the authenticated principal.
       schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >
+        Optional client-chosen key (≤255 chars). A retry of the same POST with the same key replays
+        the original response (header `Idempotency-Replayed: true`) instead of re-executing. Reusing a
+        key with a different request body returns 422; a still-in-flight request returns 409. Keys are
+        scoped per principal and expire after 24h.
+      schema: { type: string, maxLength: 255 }
   schemas:
     TenantStatus:
       type: string
@@ -319,6 +340,11 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
     TooManyRequests:
       description: Per-principal rate limit exceeded; see the `Retry-After` header.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnprocessableEntity:
+      description: Idempotency-Key reused with a different request body.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
