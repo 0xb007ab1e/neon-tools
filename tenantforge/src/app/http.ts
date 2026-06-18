@@ -6,13 +6,19 @@ import { tenantForgeFromConfig } from './lib.js';
 /** Entry point: serve the TenantForge HTTP control-plane API. Fails closed without a bearer token. */
 function main(): void {
   const config = loadConfig();
-  if (!config.httpToken) {
-    process.stderr.write('TENANTFORGE_HTTP_TOKEN is required to run the HTTP server\n');
+  if (config.httpCredentials === undefined && config.httpToken === undefined) {
+    process.stderr.write(
+      'TENANTFORGE_HTTP_TOKEN or TENANTFORGE_HTTP_CREDENTIALS is required to run the HTTP server\n',
+    );
     process.exit(1);
   }
 
   const tf = tenantForgeFromConfig(config);
-  const app = createHttpServer(tf, { token: config.httpToken });
+  const app = createHttpServer(tf, {
+    ...(config.httpCredentials !== undefined ? { credentials: config.httpCredentials } : {}),
+    ...(config.httpToken !== undefined ? { token: config.httpToken } : {}),
+    rateLimit: config.rateLimit,
+  });
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     process.stderr.write(`tenantforge http listening on :${info.port}\n`);

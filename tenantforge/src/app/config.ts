@@ -1,5 +1,40 @@
 import { z } from 'zod';
 import { KNOWN_REGIONS } from '../core/regions.js';
+import type { HttpCredential } from './http-server.js';
+
+/**
+ * Parse the `TENANTFORGE_HTTP_CREDENTIALS` env (`id:role:token` entries, comma-separated). The token
+ * may contain colons — only the first two colons split the entry.
+ *
+ * @param raw - The raw env value (may be undefined/empty).
+ * @returns The parsed credentials, or undefined when unset.
+ * @throws Error on a malformed entry, unknown role, or duplicate id.
+ */
+function parseHttpCredentials(raw: string | undefined): HttpCredential[] | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const seen = new Set<string>();
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map((entry) => {
+      const first = entry.indexOf(':');
+      const second = entry.indexOf(':', first + 1);
+      if (first <= 0 || second <= first) {
+        throw new Error(`TENANTFORGE_HTTP_CREDENTIALS: malformed entry (want id:role:token)`);
+      }
+      const id = entry.slice(0, first);
+      const role = entry.slice(first + 1, second);
+      const token = entry.slice(second + 1);
+      if (role !== 'admin' && role !== 'readonly') {
+        throw new Error(`TENANTFORGE_HTTP_CREDENTIALS: role for "${id}" must be admin | readonly`);
+      }
+      if (token === '') throw new Error(`TENANTFORGE_HTTP_CREDENTIALS: empty token for "${id}"`);
+      if (seen.has(id)) throw new Error(`TENANTFORGE_HTTP_CREDENTIALS: duplicate id "${id}"`);
+      seen.add(id);
+      return { id, role, token };
+    });
+}
 
 /**
  * Environment schema. Validated at startup so the process fails fast on misconfiguration
@@ -57,8 +92,14 @@ const EnvSchema = z
     TENANTFORGE_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(30),
     // Worker poll interval (ms) between lifecycle-queue drains.
     TENANTFORGE_QUEUE_POLL_MS: z.coerce.number().int().positive().default(5000),
-    // HTTP entrypoint (required only when running the HTTP server — a later milestone).
+    // HTTP entrypoint auth. TENANTFORGE_HTTP_TOKEN is the single-admin shorthand. For per-operator
+    // identity + RBAC, set TENANTFORGE_HTTP_CREDENTIALS as comma-separated `id:role:token` entries
+    // (role = admin | readonly; the token may itself contain colons — only the first two split).
     TENANTFORGE_HTTP_TOKEN: z.string().optional(),
+    TENANTFORGE_HTTP_CREDENTIALS: z.string().optional(),
+    // Per-principal HTTP rate limit (fixed window).
+    TENANTFORGE_RATE_LIMIT: z.coerce.number().int().positive().default(120),
+    TENANTFORGE_RATE_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
     TENANTFORGE_PORT: z.coerce.number().int().positive().default(3000),
   })
   .superRefine((env, ctx) => {
@@ -135,8 +176,12 @@ export interface Config {
   retentionDays: number;
   /** Worker poll interval (ms) between lifecycle-queue drains. */
   queuePollMs: number;
-  /** Bearer token for the HTTP entrypoint (required only when serving HTTP). */
+  /** Admin-token shorthand for the HTTP entrypoint (required only when serving HTTP). */
   httpToken?: string;
+  /** Per-operator HTTP credentials (preferred over httpToken); set when configured. */
+  httpCredentials?: HttpCredential[];
+  /** Per-principal HTTP rate limit (fixed window). */
+  rateLimit: { limit: number; windowMs: number };
   /** Port for the HTTP entrypoint. */
   port: number;
 }
@@ -160,8 +205,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     exporter: parsed.TENANTFORGE_EXPORTER,
     retentionDays: parsed.TENANTFORGE_RETENTION_DAYS,
     queuePollMs: parsed.TENANTFORGE_QUEUE_POLL_MS,
+    rateLimit: {
+      limit: parsed.TENANTFORGE_RATE_LIMIT,
+      windowMs: parsed.TENANTFORGE_RATE_WINDOW_MS,
+    },
     port: parsed.TENANTFORGE_PORT,
   };
+  const httpCredentials = parseHttpCredentials(parsed.TENANTFORGE_HTTP_CREDENTIALS);
+  if (httpCredentials !== undefined) {
+    config.httpCredentials = httpCredentials;
+  }
   if (parsed.TENANTFORGE_SECRET_KEY !== undefined) {
     config.secretKey = parsed.TENANTFORGE_SECRET_KEY;
   }

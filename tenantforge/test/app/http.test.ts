@@ -183,3 +183,87 @@ describe('HTTP control-plane', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('HTTP per-operator auth + RBAC', () => {
+  const tenant: TenantRecord = {
+    id: 't1',
+    slug: 'acme',
+    region: 'aws-us-east-1',
+    status: 'active',
+    neonProjectId: 'proj-1',
+    metadata: {},
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  };
+  const tf = (): TenantForge =>
+    fakeTf({
+      listTenants: async () => [tenant],
+      provision: async () => ({ tenant, connectionUri: 'postgresql://secret@host/db' }),
+    });
+  const creds = [
+    { id: 'alice', token: 'tok-admin', role: 'admin' as const },
+    { id: 'bob', token: 'tok-read', role: 'readonly' as const },
+  ];
+  const server = () => createHttpServer(tf(), { credentials: creds });
+
+  it('rejects an unknown token (401) and accepts each operator’s own token', async () => {
+    expect(
+      (await server().request('/v1/tenants', { headers: { authorization: 'Bearer nope' } })).status,
+    ).toBe(401);
+    expect(
+      (await server().request('/v1/tenants', { headers: { authorization: 'Bearer tok-admin' } }))
+        .status,
+    ).toBe(200);
+    expect(
+      (await server().request('/v1/tenants', { headers: { authorization: 'Bearer tok-read' } }))
+        .status,
+    ).toBe(200);
+  });
+
+  it('lets a readonly operator GET but forbids mutations (403)', async () => {
+    const readAuth = { authorization: 'Bearer tok-read', 'content-type': 'application/json' };
+    expect((await server().request('/v1/tenants', { headers: readAuth })).status).toBe(200);
+    const res = await server().request('/v1/tenants', {
+      method: 'POST',
+      headers: readAuth,
+      body: JSON.stringify({ slug: 'acme' }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('lets an admin operator mutate (201)', async () => {
+    const res = await server().request('/v1/tenants', {
+      method: 'POST',
+      headers: { authorization: 'Bearer tok-admin', 'content-type': 'application/json' },
+      body: JSON.stringify({ slug: 'acme' }),
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it('refuses to start with no credential or token (fail closed)', () => {
+    expect(() => createHttpServer(tf(), {})).toThrow(/at least one credential/);
+  });
+});
+
+describe('HTTP rate limiting (per principal, fixed window)', () => {
+  const server = (nowRef: { t: number }) =>
+    createHttpServer(fakeTf({ listTenants: async () => [] }), {
+      token: 'tok',
+      rateLimit: { limit: 2, windowMs: 1000 },
+      now: () => nowRef.t,
+    });
+  const hdr = { authorization: 'Bearer tok' };
+
+  it('allows up to the limit, then returns 429 with Retry-After, and resets after the window', async () => {
+    const nowRef = { t: 0 };
+    const app = server(nowRef);
+    expect((await app.request('/v1/tenants', { headers: hdr })).status).toBe(200);
+    expect((await app.request('/v1/tenants', { headers: hdr })).status).toBe(200);
+    const limited = await app.request('/v1/tenants', { headers: hdr });
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('Retry-After')).toBe('1');
+    // After the window elapses, the budget refills.
+    nowRef.t = 1000;
+    expect((await app.request('/v1/tenants', { headers: hdr })).status).toBe(200);
+  });
+});

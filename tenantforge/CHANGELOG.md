@@ -8,6 +8,15 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Per-operator HTTP auth + RBAC, and per-principal rate limiting** (threat-model R1/R2). The HTTP
+  control plane now accepts named credentials (`TENANTFORGE_HTTP_CREDENTIALS` = `id:role:token`,
+  role `admin` | `readonly`) with **constant-time** token compare and attributable identities;
+  mutating routes require `admin` (`readonly` → 403, OWASP API5). A 1 MB body cap is joined by an
+  in-app **fixed-window rate limit** per principal (429 + `Retry-After`; `TENANTFORGE_RATE_LIMIT` /
+  `TENANTFORGE_RATE_WINDOW_MS`). The single-admin `TENANTFORGE_HTTP_TOKEN` remains as a shorthand
+  (default behavior unchanged). OpenAPI documents 403/429 + the role model. No new dependencies
+  (built-in `node:crypto`); the limiter is in-memory/per-instance (multi-instance needs a shared
+  store — tracked).
 - **Security hardening pass (toward `stable`).** A STRIDE **threat model**
   (`docs/security/threat-model.md`) documenting every trust boundary, its in-code mitigation,
   tracked residual risks (no in-app rate limiting, load/soak unverified, per-operator auth), and an

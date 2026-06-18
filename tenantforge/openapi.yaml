@@ -8,6 +8,9 @@ info:
     migrations are intentionally not exposed over HTTP — use the CLI (`tenantforge migrate-fleet`).
     Every `/v1/*` route requires a bearer token; tenant scope is derived server-side from the
     authenticated principal (a client-supplied id is never trusted — std-owasp-api BOLA).
+    Tokens are per-operator with a role: `readonly` may read (GET), `admin` may mutate — a `readonly`
+    principal calling a mutating route gets 403. Every `/v1/*` route is rate-limited per principal
+    (429 with `Retry-After` when exceeded).
 servers:
   - url: '{baseUrl}'
     variables:
@@ -66,6 +69,8 @@ paths:
                 required: [tenant, connectionUri]
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '409': { $ref: '#/components/responses/Conflict' }
     get:
       tags: [tenants]
@@ -93,6 +98,7 @@ paths:
                 required: [tenants]
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/tenants/{id}:
     get:
       tags: [tenants]
@@ -110,6 +116,7 @@ paths:
                   tenant: { $ref: '#/components/schemas/Tenant' }
                 required: [tenant]
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '404': { $ref: '#/components/responses/NotFound' }
   /v1/tenants/{id}/suspend:
     post:
@@ -120,6 +127,8 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/TenantEnvelope' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
   /v1/tenants/{id}/resume:
@@ -131,6 +140,8 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/TenantEnvelope' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
   /v1/tenants/{id}/offboard:
@@ -156,6 +167,8 @@ paths:
                       - { type: 'null' }
                 required: [tenant, archive]
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
   /v1/tenants/{id}/purge:
@@ -175,6 +188,8 @@ paths:
         '200': { $ref: '#/components/responses/TenantEnvelope' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 components:
@@ -182,6 +197,9 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+      description: >
+        A per-operator bearer token. Each token maps to a principal id (for attribution +
+        per-principal rate limiting) and a role (`admin` may mutate; `readonly` may only read).
   parameters:
     TenantId:
       name: id
@@ -262,6 +280,16 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
     Unauthorized:
       description: Missing or invalid bearer token.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Authenticated but lacking the required role (e.g. a readonly principal mutating).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    TooManyRequests:
+      description: Per-principal rate limit exceeded; see the `Retry-After` header.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
