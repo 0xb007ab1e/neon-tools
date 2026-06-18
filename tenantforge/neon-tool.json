@@ -95,6 +95,18 @@
       "description": "Vault Enterprise namespace for the vault backend, if any."
     },
     {
+      "name": "TENANTFORGE_EXPORTER",
+      "required": false,
+      "secret": false,
+      "description": "Offboard export strategy: neon-archive (default, retain the project scaled-to-zero) or pg-dump (dump the tenant DB to an object store)."
+    },
+    {
+      "name": "TENANTFORGE_EXPORT_DIR",
+      "required": false,
+      "secret": false,
+      "description": "Absolute directory for pg-dump artifacts (a durable mounted volume). Required when TENANTFORGE_EXPORTER=pg-dump."
+    },
+    {
       "name": "TENANTFORGE_RETENTION_DAYS",
       "required": false,
       "secret": false,

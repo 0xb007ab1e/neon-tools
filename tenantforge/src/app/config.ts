@@ -47,6 +47,12 @@ const EnvSchema = z
       .refine((regions) => regions.every((r) => KNOWN_REGIONS.includes(r)), {
         message: `TENANTFORGE_ALLOWED_REGIONS may only contain known regions: ${KNOWN_REGIONS.join(', ')}`,
       }),
+    // Offboard export strategy: `neon-archive` (default — retain the project, scale-to-zero) or
+    // `pg-dump` (dump the tenant DB to an object store; needs TENANTFORGE_EXPORT_DIR for now).
+    TENANTFORGE_EXPORTER: z.enum(['neon-archive', 'pg-dump']).default('neon-archive'),
+    // Absolute directory (e.g. a mounted volume) where `pg-dump` artifacts are written. Required
+    // when TENANTFORGE_EXPORTER=pg-dump (until S3/GCS object-store backends land).
+    TENANTFORGE_EXPORT_DIR: z.string().optional(),
     // Retention window (days) an archived (offboarding) tenant is kept before the purge sweep.
     TENANTFORGE_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(30),
     // Worker poll interval (ms) between lifecycle-queue drains.
@@ -79,6 +85,14 @@ const EnvSchema = z
           message: 'VAULT_TOKEN is required when TENANTFORGE_SECRET_BACKEND=vault',
         });
       }
+    }
+    // The pg-dump exporter needs a destination directory until S3/GCS object stores land.
+    if (env.TENANTFORGE_EXPORTER === 'pg-dump' && env.TENANTFORGE_EXPORT_DIR === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TENANTFORGE_EXPORT_DIR'],
+        message: 'TENANTFORGE_EXPORT_DIR is required when TENANTFORGE_EXPORTER=pg-dump',
+      });
     }
   });
 
@@ -113,6 +127,10 @@ export interface Config {
     /** Vault Enterprise namespace, if any. */
     namespace?: string;
   };
+  /** Offboard export strategy. */
+  exporter: 'neon-archive' | 'pg-dump';
+  /** Filesystem directory for `pg-dump` artifacts (set when `exporter` is `pg-dump`). */
+  exportDir?: string;
   /** Retention window (days) before an archived tenant is purged. */
   retentionDays: number;
   /** Worker poll interval (ms) between lifecycle-queue drains. */
@@ -139,6 +157,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     defaultRegion: parsed.TENANTFORGE_DEFAULT_REGION,
     allowedRegions: parsed.TENANTFORGE_ALLOWED_REGIONS,
     secretBackend: parsed.TENANTFORGE_SECRET_BACKEND,
+    exporter: parsed.TENANTFORGE_EXPORTER,
     retentionDays: parsed.TENANTFORGE_RETENTION_DAYS,
     queuePollMs: parsed.TENANTFORGE_QUEUE_POLL_MS,
     port: parsed.TENANTFORGE_PORT,
@@ -155,6 +174,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       pathPrefix: parsed.VAULT_PATH_PREFIX,
       ...(parsed.VAULT_NAMESPACE !== undefined ? { namespace: parsed.VAULT_NAMESPACE } : {}),
     };
+  }
+  if (parsed.TENANTFORGE_EXPORTER === 'pg-dump') {
+    // superRefine guarantees TENANTFORGE_EXPORT_DIR is present for this exporter.
+    config.exportDir = parsed.TENANTFORGE_EXPORT_DIR!;
   }
   if (parsed.NEON_API_BASE_URL !== undefined) {
     config.neonApiBaseUrl = parsed.NEON_API_BASE_URL;

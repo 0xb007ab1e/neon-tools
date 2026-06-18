@@ -8,6 +8,14 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **`pg_dump` tenant exporter** (`createPgDumpExporter` + `spawnPgDump`) behind the `TenantExporter`
+  port — the off-Neon, real-data-movement alternative to the retain-the-project archiver. Dumps a
+  tenant's DB (custom format) and writes it to an `ObjectStore`; selectable via
+  `TENANTFORGE_EXPORTER=pg-dump` with `TENANTFORGE_EXPORT_DIR`. `pg_dump` runs securely — password
+  via `PGPASSWORD` env, never on argv; fixed arg array, no shell. Introduces the `ObjectStore` port
+  with a **filesystem** adapter (`createFilesystemObjectStore`, path-traversal-confined); S3 / GCS /
+  R2 adapters can follow behind it. Export stays fail-closed (offboard aborts before delete if the
+  dump can't be produced).
 - **HashiCorp Vault secret backend** (`createVaultSecretStore`, KV v2 over the HTTP API) as an
   alternative to the default `neon-pg` encrypted store, behind the same `SecretStore` port.
   Selectable via `TENANTFORGE_SECRET_BACKEND=vault` (`VAULT_ADDR` + `VAULT_TOKEN`, optional

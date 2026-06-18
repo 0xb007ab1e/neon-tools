@@ -79,6 +79,12 @@ optional `VAULT_KV_MOUNT` / `VAULT_PATH_PREFIX` / `VAULT_NAMESPACE`). Both satis
 `SecretStore` port; config fails fast if the chosen backend's credentials are missing. Cloud secret
 managers (AWS/GCP/Azure) can follow behind the same port in their own branches.
 
+**Offboard export** is selected by `TENANTFORGE_EXPORTER`: `neon-archive` (default — retain the Neon
+project scaled-to-zero, no data movement) or `pg-dump` (dump the tenant DB to an object store; set
+`TENANTFORGE_EXPORT_DIR` to a durable mounted volume). Both satisfy the `TenantExporter` port and
+export is fail-closed (offboard aborts before delete if the export can't be produced). S3 / GCS / R2
+object stores can follow behind the `ObjectStore` port in their own branches.
+
 ## Operations
 
 Runbooks live in [`docs/runbooks/`](./docs/runbooks/) ([index](./docs/runbooks/README.md)) — deploy,
