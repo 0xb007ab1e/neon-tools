@@ -8,6 +8,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Outbound lifecycle webhooks** (gap #4) — `createWebhookEventSink` delivers control-plane events
+  to an operator-configured endpoint so external systems (billing/CRM/alerting) learn about
+  provision / transition / erase as they happen (topic-webhooks, topic-notifications). Each POST is
+  **HMAC-SHA256 signed** (`X-TenantForge-Signature` over `"{timestamp}.{body}"` + `X-TenantForge-Timestamp`
+  for replay defence), **https-only** (construction fails closed otherwise), **never follows
+  redirects** (SSRF defence), and **retries with exponential backoff + jitter** up to `maxAttempts`
+  before dead-lettering via `onError`. Delivery is best-effort/non-blocking (fire-and-forget `emit`).
+  Wired in the HTTP entrypoint via `TENANTFORGE_WEBHOOK_URL` + `TENANTFORGE_WEBHOOK_SECRET` (set
+  together) with an optional `TENANTFORGE_WEBHOOK_EVENTS` allow-list; composes through the same
+  fan-out as JSON + metrics. The signing secret is never logged. Unit-tested at 100%.
+
 - **Prometheus metrics** (gap #3) — `createMetricsEventSink` derives **RED metrics** (rate / errors /
   duration) from the existing control-plane event stream (no scattered instrumentation): a
   `tenantforge_events_total{event,outcome}` counter and a `tenantforge_event_duration_ms` histogram,

@@ -144,6 +144,14 @@ extra instrumentation) via `createMetricsEventSink` fanned out alongside the JSO
 `tenantforge_events_total{event,outcome}` (rate + errors) and a `tenantforge_event_duration_ms`
 histogram (duration). The endpoint is unauthenticated (an internal scrape target, like the probes).
 
+**Outbound webhooks (optional):** set `TENANTFORGE_WEBHOOK_URL` (https) + `TENANTFORGE_WEBHOOK_SECRET`
+to fan lifecycle events out to an external endpoint (billing/CRM/alerting) via `createWebhookEventSink`.
+Each POST is **HMAC-SHA256 signed** (`X-TenantForge-Signature: sha256=…` over `"{timestamp}.{body}"`,
+with `X-TenantForge-Timestamp` for replay defence), **never follows redirects** (SSRF defence), and
+**retries with exponential backoff + jitter** before dead-lettering (logged via `onError`). Scope it
+with `TENANTFORGE_WEBHOOK_EVENTS` (comma-separated allow-list). Delivery is best-effort and
+non-blocking — it never delays or breaks a control-plane operation.
+
 **Per-tenant metering:** `usage <id> [--from --to]` reports a tenant's Neon resource consumption
 (compute/active seconds, bytes written, peak storage) over a period for billing — pulled on demand
 from Neon's consumption API via the `UsageProvider` port (no usage data stored in the control plane).
