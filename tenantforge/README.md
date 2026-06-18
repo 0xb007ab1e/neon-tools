@@ -13,10 +13,10 @@ full lifecycle (`provision` / `suspend` / `resume` / `offboard` / `purge`, plus 
 and metering; residency enforcement; and a Neon-native (Postgres) queue + worker for async lifecycle
 — all reachable as a **library**, **CLI**, **HTTP** control-plane API, and **MCP** server. Hardening
 is complete: STRIDE threat model + abuse tests, per-operator auth + RBAC + rate limiting, a load/soak
-harness, and the runbooks drilled — the live-Neon game-day (local + CI), the `NEON_API_KEY` rotation,
-and a PITR row-level recovery all passed against a non-prod org. Tracked **Low residuals** (per-operator
-OIDC) and the deferred alternate adapters (other brokers /
-secret stores / exporters) are documented in [`docs/security/threat-model.md`](./docs/security/threat-model.md)
+harness, and the runbooks drilled — the live-Neon game-day (local + CI), the `NEON_API_KEY` and
+`DATABASE_URL` (registry-credential) rotations, and a PITR row-level recovery all passed against a
+non-prod org. The remaining **Low residuals** — the deferred alternate adapters (other brokers /
+secret stores / exporters) — are documented in [`docs/security/threat-model.md`](./docs/security/threat-model.md)
 and deferred to their own branches. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the design, scope,
 and milestones.
 
@@ -114,7 +114,7 @@ release; a cross-tenant leak or Neon-API-key compromise is a SEV1. The STRIDE
 [threat model](./docs/security/threat-model.md) maps each trust boundary to its mitigation, residual
 risks, and abuse tests. The HTTP API contract is
 [`openapi.yaml`](./openapi.yaml). _(All runbook gates drilled against a non-prod org — game-day
-(local + CI), `NEON_API_KEY` rotation, and a PITR row-level recovery; see the
+(local + CI), `NEON_API_KEY` and `DATABASE_URL` rotations, and a PITR row-level recovery; see the
 [drill report](./docs/runbooks/drill-report.md).)_
 
 **Per-tenant observability:** every control-plane operation emits a structured, tenant-scoped JSON
