@@ -100,6 +100,9 @@ const EnvSchema = z
     // Per-principal HTTP rate limit (fixed window).
     TENANTFORGE_RATE_LIMIT: z.coerce.number().int().positive().default(120),
     TENANTFORGE_RATE_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+    // Rate-limit counter store: `memory` (default, per-instance) or `pg` (shared across instances
+    // via the control-plane DB — use for multi-instance deployments).
+    TENANTFORGE_RATE_LIMIT_STORE: z.enum(['memory', 'pg']).default('memory'),
     TENANTFORGE_PORT: z.coerce.number().int().positive().default(3000),
   })
   .superRefine((env, ctx) => {
@@ -182,6 +185,8 @@ export interface Config {
   httpCredentials?: HttpCredential[];
   /** Per-principal HTTP rate limit (fixed window). */
   rateLimit: { limit: number; windowMs: number };
+  /** Rate-limit counter store: in-memory (per-instance) or Postgres (shared across instances). */
+  rateLimitStore: 'memory' | 'pg';
   /** Port for the HTTP entrypoint. */
   port: number;
 }
@@ -209,6 +214,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       limit: parsed.TENANTFORGE_RATE_LIMIT,
       windowMs: parsed.TENANTFORGE_RATE_WINDOW_MS,
     },
+    rateLimitStore: parsed.TENANTFORGE_RATE_LIMIT_STORE,
     port: parsed.TENANTFORGE_PORT,
   };
   const httpCredentials = parseHttpCredentials(parsed.TENANTFORGE_HTTP_CREDENTIALS);

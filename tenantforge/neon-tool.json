@@ -143,6 +143,12 @@
       "description": "HTTP rate-limit window length in ms (default 60000)."
     },
     {
+      "name": "TENANTFORGE_RATE_LIMIT_STORE",
+      "required": false,
+      "secret": false,
+      "description": "Rate-limit counter store: memory (default, per-instance) or pg (shared across instances via the control-plane DB)."
+    },
+    {
       "name": "TENANTFORGE_BASE_URL",
       "required": false,
       "secret": false,

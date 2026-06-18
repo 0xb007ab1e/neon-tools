@@ -101,9 +101,10 @@ data). No tenant content is stored in the control plane.
 - **R1 — addressed (Low residual).** Per-operator credentials + RBAC are now in-app (admin/readonly,
   constant-time compare). Remaining: tokens are static bearer secrets — phishing-resistant,
   externally-managed identity (OIDC) is a future enhancement, not a gap for an admin control plane.
-- **R2 — addressed (Low residual).** A 1 MB body cap **and** a per-principal rate limit are enforced
-  in-app. The limiter is **in-memory / per-instance** — a multi-instance deployment needs a shared
-  store (Redis) behind the same seam for a global limit.
+- **R2 — closed.** A 1 MB body cap **and** a per-principal rate limit are enforced in-app, behind a
+  `RateLimitStore` port: the default is in-memory (per-instance); a **Postgres-backed** store
+  (`tf_rate_limits`, migration 0004, `TENANTFORGE_RATE_LIMIT_STORE=pg`) makes the limit **global
+  across instances** for multi-replica deployments — no extra deps.
 - **R3 — addressed (Low residual).** A load/soak harness (`pnpm load`) drives the fleet fan-out over
   a large synthetic fleet, and a CI test guards that concurrency stays within the batch bound (no
   unbounded fan-out → no rate-limit/connection blowout). Remaining: the **live-Neon load profile**

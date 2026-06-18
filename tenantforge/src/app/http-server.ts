@@ -7,6 +7,8 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { TENANTFORGE } from '../meta.js';
 import type { JsonObject, TenantStatus } from '../core/index.js';
+import type { RateLimitStore } from '../ports/rate-limit-store.js';
+import { createInMemoryRateLimitStore } from '../adapters/rate-limit-store.js';
 import type { TenantForge } from './lib.js';
 
 /** A control-plane role: `admin` may mutate; `readonly` may only read. */
@@ -38,6 +40,8 @@ export interface HttpServerOptions {
   credentials?: HttpCredential[];
   /** Per-principal rate limit. Defaults to 120 requests / 60s. */
   rateLimit?: RateLimitOptions;
+  /** Counter store for the rate limiter. Defaults to in-memory (per-instance). */
+  rateLimitStore?: RateLimitStore;
   /** Injectable clock (ms) for rate limiting — defaults to `Date.now`. */
   now?: () => number;
 }
@@ -142,7 +146,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
   }
   const rateLimit = options.rateLimit ?? { limit: 120, windowMs: 60_000 };
   const now = options.now ?? ((): number => Date.now());
-  const windows = new Map<string, { count: number; start: number }>();
+  const rateLimitStore = options.rateLimitStore ?? createInMemoryRateLimitStore();
 
   app.use('*', secureHeaders());
 
@@ -166,18 +170,18 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     return next();
   };
 
-  // Per-principal fixed-window rate limit. In-memory / per-instance — a multi-instance deploy needs
-  // a shared store behind this seam (tracked: threat-model R2).
-  const rateLimiter: MiddlewareHandler<Env> = (c, next) => {
-    const key = c.get('principal').id;
+  // Per-principal fixed-window rate limit, counted via the injected store (in-memory by default; a
+  // Postgres-backed store makes the limit global across instances — threat-model R2).
+  const rateLimiter: MiddlewareHandler<Env> = async (c, next) => {
     const t = now();
-    const prev = windows.get(key);
-    const win = !prev || t - prev.start >= rateLimit.windowMs ? { count: 0, start: t } : prev;
-    win.count += 1;
-    windows.set(key, win);
-    if (win.count > rateLimit.limit) {
-      c.header('Retry-After', String(Math.ceil((win.start + rateLimit.windowMs - t) / 1000)));
-      return Promise.resolve(problem(c, 429, 'Too Many Requests'));
+    const { count, windowStartMs } = await rateLimitStore.increment(
+      c.get('principal').id,
+      rateLimit.windowMs,
+      t,
+    );
+    if (count > rateLimit.limit) {
+      c.header('Retry-After', String(Math.ceil((windowStartMs + rateLimit.windowMs - t) / 1000)));
+      return problem(c, 429, 'Too Many Requests');
     }
     return next();
   };

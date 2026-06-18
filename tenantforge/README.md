@@ -15,7 +15,7 @@ and metering; residency enforcement; and a Neon-native (Postgres) queue + worker
 is complete: STRIDE threat model + abuse tests, per-operator auth + RBAC + rate limiting, a load/soak
 harness, and the runbooks drilled — the live-Neon game-day (local + CI), the `NEON_API_KEY` rotation,
 and a PITR row-level recovery all passed against a non-prod org. Tracked **Low residuals** (per-operator
-OIDC, a multi-instance shared rate-limit store) and the deferred alternate adapters (other brokers /
+OIDC) and the deferred alternate adapters (other brokers /
 secret stores / exporters) are documented in [`docs/security/threat-model.md`](./docs/security/threat-model.md)
 and deferred to their own branches. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the design, scope,
 and milestones.
@@ -80,7 +80,9 @@ shorthand, or set `TENANTFORGE_HTTP_CREDENTIALS` (comma-separated `id:role:token
 `admin` | `readonly`) for attributable identities — `readonly` may GET, only `admin` may mutate
 (403 otherwise; constant-time token compare). Every `/v1/*` route is **rate-limited per principal**
 (`TENANTFORGE_RATE_LIMIT` / `TENANTFORGE_RATE_WINDOW_MS`; 429 + `Retry-After` when exceeded). The
-limiter is in-memory/per-instance — a multi-instance deploy needs a shared store (tracked).
+counter store is selected by `TENANTFORGE_RATE_LIMIT_STORE`: `memory` (default, per-instance) or
+`pg` — a Postgres-backed (`tf_rate_limits`) store that makes the limit **global across instances**
+for multi-replica deployments (Neon-native, zero extra deps), behind the `RateLimitStore` port.
 
 **Secret backend** (where per-tenant connection secrets live) is selected by
 `TENANTFORGE_SECRET_BACKEND`: `neon-pg` (default — AES-256-GCM-encrypted in the control-plane DB,

@@ -6,6 +6,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-instance rate limiting** (threat-model R2, closed): the HTTP rate limiter now counts via a
+  `RateLimitStore` port — the default `createInMemoryRateLimitStore` (per-instance) plus a
+  **Postgres-backed** `createPgRateLimitStore` (`tf_rate_limits`, migration 0004) that makes the
+  per-principal limit **global across instances**. Selected by `TENANTFORGE_RATE_LIMIT_STORE`
+  (`memory` | `pg`); wired in the HTTP entrypoint. No new dependencies (reuses `pg`); the in-memory
+  store is unit-tested at 100% and the pg store has a self-skipping integration test (cross-instance
+  sharing verified against an ephemeral Postgres).
+
 ## [0.3.0] - 2026-06-18
 
 First **stable** release. Every gating risk (R1–R4) is addressed/drilled — STRIDE threat model +
