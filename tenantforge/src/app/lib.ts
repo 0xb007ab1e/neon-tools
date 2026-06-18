@@ -45,6 +45,13 @@ import {
   type RotationSweepReport,
 } from '../adapters/secret-rotation-engine.js';
 import {
+  createBackupEngine,
+  type SnapshotResult,
+  type BackupSweepReport,
+} from '../adapters/backup-engine.js';
+import type { SnapshotProvider } from '../ports/snapshot-provider.js';
+import type { RetentionPolicy } from '../core/index.js';
+import {
   createFleetOrchestrator,
   type FleetMigrationReport,
   type FleetMigrationSpec,
@@ -52,6 +59,7 @@ import {
 } from '../adapters/fleet-orchestrator.js';
 import { createPgMigrationRunner } from '../adapters/neon-pg/migration-runner.js';
 import { createNeonUsageProvider } from '../adapters/neon-api/usage-provider.js';
+import { createNeonSnapshotProvider } from '../adapters/neon-api/snapshot-provider.js';
 import type { LifecycleCommand } from '../adapters/lifecycle-command.js';
 import type { ProvisioningProvider } from '../ports/provisioning-provider.js';
 import type { TenantRegistry } from '../ports/tenant-registry.js';
@@ -123,6 +131,11 @@ export interface TenantForgeDeps {
    * absent, that method fails closed.
    */
   dataMover?: TenantDataMover;
+  /**
+   * Takes/lists/prunes/restores per-tenant database snapshots (Neon branches). Required only for the
+   * snapshot/backup methods ({@link TenantForge.snapshot} etc.); when absent, those fail closed.
+   */
+  snapshots?: SnapshotProvider;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -335,6 +348,44 @@ export interface TenantForge {
   rotateSecrets(options?: { limit?: number }): Promise<RotationSweepReport>;
 
   /**
+   * Take a point-in-time snapshot of one active tenant's database (a Neon branch — instant,
+   * copy-on-write). Requires a configured snapshot provider; fails closed otherwise.
+   *
+   * @param id - The tenant to snapshot.
+   * @returns The snapshot result.
+   */
+  snapshot(id: string): Promise<SnapshotResult>;
+
+  /**
+   * Snapshot every active tenant — the scheduled backup sweep (cron / CronJob). Failure-isolated.
+   *
+   * @param options - Optional scan cap.
+   * @returns Per-tenant sweep report.
+   */
+  snapshotFleet(options?: { limit?: number }): Promise<BackupSweepReport>;
+
+  /**
+   * Prune every active tenant's snapshots under the retention policy — the scheduled retention
+   * sweep. Failure-isolated.
+   *
+   * @param options - Optional scan cap and retention override (defaults to keeping the 7 newest).
+   * @returns Per-tenant sweep report.
+   */
+  pruneSnapshots(options?: {
+    limit?: number;
+    policy?: RetentionPolicy;
+  }): Promise<BackupSweepReport>;
+
+  /**
+   * Restore a tenant's database to a snapshot (destructive recovery — overwrites live data).
+   * Requires a configured snapshot provider; fails closed otherwise.
+   *
+   * @param id - The tenant to restore.
+   * @param snapshotId - The snapshot (branch) id to restore from.
+   */
+  restoreSnapshot(id: string, snapshotId: string): Promise<void>;
+
+  /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
    * tenant is active, provisioned, and has a stored connection secret. The id must be derived
    * server-side from the authenticated principal, never client-supplied (BOLA).
@@ -408,6 +459,18 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const router = cachingRouter ?? baseRouter;
   const invalidateConnection = (id: string): void => cachingRouter?.invalidate(id);
   const eventSink = deps.eventSink ?? createNoopEventSink();
+
+  /** Build the backup engine on demand; fails closed if no snapshot provider was configured. */
+  const backupEngine = (): ReturnType<typeof createBackupEngine> => {
+    if (deps.snapshots === undefined) {
+      throw new Error('snapshot operations require a configured snapshot provider');
+    }
+    return createBackupEngine({
+      registry,
+      snapshots: deps.snapshots,
+      emit: (event) => eventSink.emit(event),
+    });
+  };
 
   /** Emit a tenant-scoped event (best-effort, redacted; never throws / breaks the operation). */
   const observe = (
@@ -644,6 +707,25 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       }).rotateAll(options);
     },
 
+    snapshot(id: string): Promise<SnapshotResult> {
+      return backupEngine().snapshot(id);
+    },
+
+    snapshotFleet(options?: { limit?: number }): Promise<BackupSweepReport> {
+      return backupEngine().snapshotAll(options);
+    },
+
+    pruneSnapshots(options?: {
+      limit?: number;
+      policy?: RetentionPolicy;
+    }): Promise<BackupSweepReport> {
+      return backupEngine().pruneAll(options);
+    },
+
+    restoreSnapshot(id: string, snapshotId: string): Promise<void> {
+      return backupEngine().restore(id, snapshotId);
+    },
+
     async purgeExpired(options: PurgeSweepOptions = {}): Promise<PurgeSweepReport> {
       const retentionDays = options.retentionDays ?? DEFAULT_RETENTION_DAYS;
       const cutoff = retentionCutoff(options.now ?? new Date(), retentionDays);
@@ -838,6 +920,11 @@ export function tenantForgeFromConfig(
     connectionCacheTtlMs: config.connectionCacheTtlMs,
     // pg_dump → pg_restore mover so re-homing works out of the box (needs pg_dump/pg_restore on PATH).
     dataMover: createPgDataMover(),
+    // Neon-branch snapshots for scheduled backups (instant, copy-on-write restore points).
+    snapshots: createNeonSnapshotProvider({
+      apiKey: config.neonApiKey,
+      ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
+    }),
   });
 }
 
