@@ -22,6 +22,12 @@ const fakeRegistry = (rec: TenantRecord | null): TenantRegistry =>
     getById: (id: string) => Promise.resolve(rec && rec.id === id ? rec : null),
   }) as TenantRegistry;
 
+/** Registry fake backed by many records, looked up by id (for cross-tenant tests). */
+const multiRegistry = (recs: TenantRecord[]): TenantRegistry =>
+  ({
+    getById: (id: string) => Promise.resolve(recs.find((r) => r.id === id) ?? null),
+  }) as TenantRegistry;
+
 describe('createConnectionRouter', () => {
   it('resolves an active tenant with a stored secret', async () => {
     const secretStore = createInMemorySecretStore();
@@ -57,5 +63,32 @@ describe('createConnectionRouter', () => {
       secretStore: createInMemorySecretStore(), // empty
     });
     await expect(router.resolve('t1')).rejects.toThrow(/no stored connection secret/);
+  });
+
+  // The defining isolation guarantee (BOLA / cross-tenant — std-owasp-api, topic-multi-tenancy):
+  // each tenant resolves to ITS OWN connection and never another's, even with both active.
+  it('isolates connections per tenant (no cross-tenant bleed)', async () => {
+    const secretStore = createInMemorySecretStore();
+    await secretStore.set('tenant-a', 'postgresql://a@host/a');
+    await secretStore.set('tenant-b', 'postgresql://b@host/b');
+    const router = createConnectionRouter({
+      registry: multiRegistry([
+        record({ id: 'tenant-a', neonProjectId: 'proj-a' }),
+        record({ id: 'tenant-b', neonProjectId: 'proj-b' }),
+      ]),
+      secretStore,
+    });
+
+    expect(await router.resolve('tenant-a')).toEqual({
+      tenantId: 'tenant-a',
+      connectionUri: 'postgresql://a@host/a',
+    });
+    expect(await router.resolve('tenant-b')).toEqual({
+      tenantId: 'tenant-b',
+      connectionUri: 'postgresql://b@host/b',
+    });
+    // Neither resolution returned the other tenant's URI.
+    const a = await router.resolve('tenant-a');
+    expect(a.connectionUri).not.toContain('b@host');
   });
 });

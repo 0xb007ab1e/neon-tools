@@ -36,6 +36,19 @@ describe('HTTP control-plane', () => {
     expect(res.status).toBe(401);
   });
 
+  it('rejects /v1 routes with a wrong bearer token (401)', async () => {
+    const res = await app().request('/v1/tenants', {
+      headers: { authorization: 'Bearer not-the-token' },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects an over-large request body (413)', async () => {
+    const huge = JSON.stringify({ slug: 'acme', metadata: { blob: 'x'.repeat(1024 * 1024 + 16) } });
+    const res = await app().request('/v1/tenants', { method: 'POST', headers: auth, body: huge });
+    expect(res.status).toBe(413);
+  });
+
   it('provisions a tenant (201) and returns the connection secret to the authed caller', async () => {
     const res = await app({
       provision: async () => ({ tenant, connectionUri: 'postgresql://secret@host/db' }),
