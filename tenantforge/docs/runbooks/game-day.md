@@ -117,5 +117,7 @@ Expected: all integration tests **pass** (none skipped). What each validates:
 
 ---
 
-_Last validated: 2026-06-17 — procedure authored; the automated suite self-skips here (no live
-credentials in CI yet). Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — **automated suite executed live against a non-prod Neon org: 10/10
+passed, 0 skipped** (provision→purge lifecycle, fleet migrate + revert, queue/worker, registry
+assessment queries). The two manual-only steps (NEON_API_KEY rotation, Neon PITR restore) remain to
+be drilled. Owner: TenantForge maintainers._

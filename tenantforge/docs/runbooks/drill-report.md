@@ -27,11 +27,11 @@ Three layers of validation, strongest first:
    (`src/app/cli.ts`, `src/app/http-server.ts`, `migrations/`, `src/ports/`, `src/app/lib.ts`).
    Findings below.
 
-3. **Pending — the live-Neon path.** Steps that provision/delete real Neon projects, rotate the
-   real `NEON_API_KEY`, or do Neon PITR/branch restore were **not** executed here (no live Neon
-   credentials in this environment, and provisioning real cloud resources is a gated action). The
-   `provision.int.test.ts` round-trip (provision → get → idempotent re-provision → teardown) is the
-   automated form of that drill and runs when an operator supplies `NEON_API_KEY` + `NEON_ORG_ID`.
+3. **Executed live — the automated Neon path (2026-06-17).** With a non-prod org's credentials the
+   full integration suite ran against real Neon (10/10 passed) — provision/delete projects, the
+   lifecycle smoke, and the fleet migrate + revert. See the dedicated section below. The two
+   **manual-only console** steps (real `NEON_API_KEY` rotation, Neon PITR/branch restore) remain
+   to be drilled by hand.
 
 ## Finding (fixed in this pass)
 
@@ -59,15 +59,23 @@ All other referenced commands, flags, HTTP routes (`/health`, `/v1/*`), registry
 | incident-response        | Traced (procedural — containment-by-vector; SecretStore-vs-registry payoff confirmed).     |
 | dependency-patch         | Already exercised for real in the vitest/vite/esbuild remediation.                         |
 
-## Residual work (to fully retire "not yet drilled")
+## Live-Neon game-day — executed 2026-06-17
 
-- A **live-Neon game-day** with a non-prod org — now a documented, one-click procedure:
-  [`game-day.md`](./game-day.md). It is automated (the `lifecycle` / `fleet` / `provision` / `queue`
-  integration tests + the manual `NEON_API_KEY`-rotation and PITR-restore steps) and runnable via the
-  `tenantforge-game-day` CI workflow or `pnpm --filter tenantforge test:int` with non-prod
-  credentials. **Still pending execution** against a real non-prod org (no live credentials wired into
-  CI yet); once run clean, stamp the live date into each footer here and in the runbooks.
-- Re-drill after any change to the CLI surface, registry schema, or HTTP contract.
+The automated suite ([`game-day.md`](./game-day.md)) ran against a dedicated **non-prod Neon org**
+via `pnpm --filter tenantforge test:int`: **10/10 tests passed, 0 skipped** (~20s) — the full lifecycle
+smoke (provision → suspend → resume → offboard → resume → purge), a fleet migration + idempotent
+re-run + compensating revert on a canary, the provision round-trip, the Postgres queue/worker, and
+the registry assessment queries. All provisioned `gd-*`/canary projects were auto-purged.
+
+- Observation: a `pg` deprecation warning — `sslmode=require` is currently treated as `verify-full`;
+  `pg` v9 will change that. Prefer `sslmode=verify-full` in production DSNs (no action required now).
+
+## Residual work
+
+- **Manual-only steps not yet drilled:** the **NEON_API_KEY / registry-credential rotation** and the
+  **Neon PITR / branch restore** (both console operations) — see `secret-rotation.md` /
+  `backup-restore.md`. Run them by hand against a non-prod org to fully close R4.
+- Re-drill the automated suite after any change to the CLI surface, registry schema, or HTTP contract.
 
 ---
 

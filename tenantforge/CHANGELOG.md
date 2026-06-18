@@ -6,6 +6,15 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Live-Neon game-day executed (2026-06-17, threat-model R4).** The integration suite ran against a
+  dedicated non-prod Neon org — **10/10 passed, 0 skipped**: the full provision→purge lifecycle, a
+  fleet migration + idempotent re-run + compensating revert on a canary, the provision round-trip,
+  the Postgres queue/worker, and the registry assessment queries (all `gd-*`/canary projects
+  auto-purged). Runbook footers + the drill report are stamped with the live result; only the
+  manual-only `NEON_API_KEY` rotation and Neon PITR restore (console ops) remain to drill.
+
 ### Added
 
 - **Per-operator HTTP auth + RBAC, and per-principal rate limiting** (threat-model R1/R2). The HTTP

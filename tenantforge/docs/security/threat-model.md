@@ -107,7 +107,9 @@ data). No tenant content is stored in the control plane.
 - **R3 — load/soak unverified.** Fleet-migration + provisioning throughput under load is not yet
   measured; the `stable` bar needs a soak/spike test against the real Neon-API rate limits
   (`docs/runbooks/scaling.md`).
-- **R4 — live-Neon runbook game-day pending** (`docs/runbooks/game-day.md`).
+- **R4 — automated live-Neon game-day passed** (2026-06-17, non-prod org; 10/10 — see
+  `docs/runbooks/drill-report.md`). Remaining: the manual-only `NEON_API_KEY` rotation + Neon PITR
+  restore (console ops) to fully close it.
 
 Residual risks are owned by the maintainers, time-boxed at the next review, and gate the
 `beta → stable` promotion.

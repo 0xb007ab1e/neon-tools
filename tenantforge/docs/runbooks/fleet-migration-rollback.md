@@ -128,4 +128,4 @@ already-registered version is rejected as **checksum drift** — bump to a new v
 
 ---
 
-_Last validated: 2026-06-17 — §2 assessment + failure-list queries executed in the drill ([drill-report](./drill-report.md)); live revert migration pending a Neon game-day. Owner: TenantForge maintainers._
+_Last validated: 2026-06-17 — **live-Neon game-day passed**: a fleet migration applied across a canary tenant, was idempotent on re-run, and a compensating revert applied — against a non-prod org. §2 assessment queries also executed in the drill. See [drill-report](./drill-report.md). Owner: TenantForge maintainers._
