@@ -60,11 +60,12 @@
 - Keep the pure `core/` free of I/O so it's unit-testable without mocks; provisioning/registry/
   routing are integration-tested against an ephemeral Neon branch in CI.
 - Secrets from env only (`.env` git-ignored, `.env.example` committed).
-- **User-feedback mechanism per feature (provisional rule, 2026-06; may be promoted to a global
-  rule once validated).** Every **new** feature must ship some way for the user to _see_ its output —
-  a user dashboard or similar surface — not just a library/CLI/HTTP/MCP call. "Or similar" is
-  satisfied by the lowest-ceremony surface that fits: a read HTTP endpoint + `--json` CLI already
-  count; a dedicated dashboard view is preferred when the feature produces fleet-wide state worth
-  monitoring (e.g. the compliance report, fleet drift, cost/margin). Any actual web UI is **WCAG 2.2
-  AA** from the start (master §1, `@rules/topic-accessibility.md`); a dev/preview UI is tailnet-only,
-  never public (`@rules/topic-tailnet-dev-access.md`). Pre-rule features are grandfathered.
+- **Web dashboard per feature (provisional rule, 2026-06; may be promoted to a global rule once
+  validated).** Every **new** feature must ship a **web dashboard view** that lets the user _see_ its
+  output in a browser — not only a library/CLI/HTTP/MCP call. The CLI/HTTP/MCP surfaces remain
+  required for automation; the dashboard is **additional**, the human-facing window onto the feature
+  (e.g. the compliance report, fleet drift, cost/margin all get a panel). The dashboard is **WCAG 2.2
+  AA** from the start (master §1, `@rules/topic-accessibility.md`): semantic HTML, keyboard-operable,
+  sufficient contrast, no meaning by color alone. In dev/preview it is **tailnet-only, never public**
+  (`@rules/topic-tailnet-dev-access.md`) and keeps app auth on (tailnet ≠ no-auth). Pre-rule features
+  are grandfathered, but each gets a dashboard panel as the dashboard grows.
