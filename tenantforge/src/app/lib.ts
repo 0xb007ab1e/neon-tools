@@ -12,6 +12,7 @@ import {
   selectRegion,
   buildComplianceReport,
   type ComplianceReport,
+  type ComplianceReportOptions,
   type BillingPeriod,
   type Jurisdiction,
   type JsonObject,
@@ -31,7 +32,13 @@ import { createNeonArchiveExporter } from '../adapters/neon-archive-exporter.js'
 import { createPgDumpExporter, spawnPgDump } from '../adapters/pg-dump/exporter.js';
 import { createPgDataMover } from '../adapters/pg-dump/data-mover.js';
 import { createFilesystemObjectStore } from '../adapters/object-store/filesystem.js';
-import { createJsonEventSink, createNoopEventSink } from '../adapters/event-sink.js';
+import {
+  createJsonEventSink,
+  createNoopEventSink,
+  createFanOutEventSink,
+  createAuditLogEventSink,
+} from '../adapters/event-sink.js';
+import { createPgAuditLogStore } from '../adapters/neon-pg/audit-log-store.js';
 import { currentActor } from './actor-context.js';
 import { createErasureEngine, type EraseOptions } from '../adapters/erasure-engine.js';
 import { createCachingConnectionRouter } from '../adapters/caching-connection-router.js';
@@ -75,6 +82,7 @@ import type { TenantRegistry } from '../ports/tenant-registry.js';
 import type { ExportResult, TenantExporter } from '../ports/tenant-exporter.js';
 import type { SecretStore } from '../ports/secret-store.js';
 import type { EventSink } from '../ports/event-sink.js';
+import type { AuditLogStore } from '../ports/audit-log-store.js';
 import type { UsageProvider } from '../ports/usage-provider.js';
 import type { MigrationRunner } from '../ports/migration-runner.js';
 import type { TenantConnection } from '../ports/connection-router.js';
@@ -162,6 +170,12 @@ export interface TenantForgeDeps {
   archiveExporter?: TenantExporter;
   /** Unit cost rates (USD) for {@link TenantForge.costReport}; defaults to empty (zero cost). */
   costRates?: CostRates;
+  /**
+   * Persisted audit trail. When provided, {@link TenantForge.complianceReport} includes erasure
+   * history + a recent audit excerpt; absent = the report omits the `audit` section. (Wire the
+   * matching {@link createAuditLogEventSink} into the event sink so the trail is populated.)
+   */
+  auditLog?: AuditLogStore;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -549,6 +563,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const router = cachingRouter ?? baseRouter;
   const invalidateConnection = (id: string): void => cachingRouter?.invalidate(id);
   const eventSink = deps.eventSink ?? createNoopEventSink();
+  const auditLog = deps.auditLog;
 
   /** Build the backup engine on demand; fails closed if no snapshot provider was configured. */
   const backupEngine = (): ReturnType<typeof createBackupEngine> => {
@@ -999,7 +1014,20 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
 
     async complianceReport(): Promise<ComplianceReportResult> {
       const tenants = await registry.list({ limit: MAX_SWEEP });
-      const report = buildComplianceReport(tenants, { allowedRegions, now: new Date() });
+      // When an audit store is wired, attest erasure history (transitions to `deleted` — the
+      // right-to-erasure evidence) plus a recent excerpt of control-plane activity.
+      let audit: ComplianceReportOptions['audit'];
+      if (auditLog !== undefined) {
+        const transitions = await auditLog.query({ events: ['tenant.transition'], limit: 500 });
+        const erasures = transitions.filter((e) => e.context?.['to'] === 'deleted');
+        const recent = await auditLog.query({ limit: 25 });
+        audit = { erasures, recent };
+      }
+      const report = buildComplianceReport(tenants, {
+        allowedRegions,
+        now: new Date(),
+        ...(audit !== undefined ? { audit } : {}),
+      });
       // Integrity anchor over the canonical report JSON (deterministic field order from the builder).
       const digest = createHash('sha256').update(JSON.stringify(report)).digest('hex');
       observe('compliance.report_generated', {
@@ -1020,6 +1048,8 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     },
 
     async close(): Promise<void> {
+      // Release the audit store's own pool (the pg adapter owns one) before the registry.
+      await (auditLog as { close?: () => Promise<void> } | undefined)?.close?.();
       await registry.close();
     },
   };
@@ -1071,13 +1101,26 @@ export function tenantForgeFromConfig(
           dump: (uri) => spawnPgDump(uri),
         })
       : createNeonArchiveExporter();
+  // Persisted audit trail (compliance evidence): when enabled, store events in Postgres and fan the
+  // event stream out to it as well, so the compliance report can attest erasure history + a recent
+  // excerpt. Disabled by default (the stdout JSON stream remains the only record).
+  const baseSink = opts?.eventSink ?? createJsonEventSink();
+  const auditLog =
+    config.auditLog === 'pg'
+      ? createPgAuditLogStore({ connectionString: config.databaseUrl })
+      : undefined;
+  const eventSink =
+    auditLog !== undefined
+      ? createFanOutEventSink([baseSink, createAuditLogEventSink(auditLog)])
+      : baseSink;
   return createTenantForge({
     registry,
     provisioning,
     secretStore,
     migrationRunner: createPgMigrationRunner(),
     exporter,
-    eventSink: opts?.eventSink ?? createJsonEventSink(),
+    eventSink,
+    ...(auditLog !== undefined ? { auditLog } : {}),
     usageProvider: createNeonUsageProvider({
       apiKey: config.neonApiKey,
       orgId: config.neonOrgId,

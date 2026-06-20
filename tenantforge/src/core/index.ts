@@ -33,6 +33,7 @@ export {
   buildComplianceReport,
   type ComplianceReport,
   type ComplianceReportOptions,
+  type ComplianceAuditEntry,
 } from './compliance.js';
 export {
   estimateCostUsd,

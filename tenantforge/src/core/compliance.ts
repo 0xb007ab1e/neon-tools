@@ -1,6 +1,7 @@
 import { regionJurisdiction } from './residency.js';
 import { isValidRegion } from './regions.js';
 import type { TenantRecord, TenantStatus } from './domain.js';
+import type { TenantEvent } from './observability.js';
 
 /** Statuses whose tenants are expected to have a provisioned Neon project. */
 const PROVISIONED_STATUSES: ReadonlySet<TenantStatus> = new Set<TenantStatus>([
@@ -8,6 +9,20 @@ const PROVISIONED_STATUSES: ReadonlySet<TenantStatus> = new Set<TenantStatus>([
   'suspended',
   'offboarding',
 ]);
+
+/** A compact, redacted audit-trail entry included in the compliance report. */
+export interface ComplianceAuditEntry {
+  /** Event instant (ISO-8601 UTC). */
+  at: string;
+  /** Dotted event name. */
+  event: string;
+  /** Whether the operation succeeded. */
+  outcome: 'ok' | 'error';
+  /** The operator who performed the action (absent for scheduled sweeps). */
+  actor?: { id: string; role: string };
+  /** The tenant the event concerns (absent for fleet-level events). */
+  tenantId?: string;
+}
 
 /** A point-in-time compliance attestation derived from the control-plane registry. */
 export interface ComplianceReport {
@@ -39,6 +54,17 @@ export interface ComplianceReport {
     /** Tenants whose region is outside the allow-list or has no known jurisdiction. */
     violations: { tenantId: string; region: string; reason: string }[];
   };
+  /**
+   * Audit-trail evidence from the persisted audit log (present only when an audit store is wired):
+   * **erasure history** (transitions to `deleted` — right-to-erasure evidence) and a **recent
+   * excerpt** of control-plane activity. Both newest-first; omitted entirely when no store exists.
+   */
+  audit?: {
+    /** Erasure (tenant deletion) events, newest-first. */
+    erasures: ComplianceAuditEntry[];
+    /** A recent excerpt of control-plane events, newest-first. */
+    recent: ComplianceAuditEntry[];
+  };
 }
 
 /** Options for {@link buildComplianceReport}. */
@@ -47,6 +73,32 @@ export interface ComplianceReportOptions {
   allowedRegions?: readonly string[];
   /** The generation instant (injected for determinism). */
   now: Date;
+  /**
+   * Audit-trail events fetched from the persisted store (already redacted). When provided, the
+   * report includes an `audit` section; omitted = no audit store, no `audit` section.
+   */
+  audit?: {
+    /** Erasure (tenant-deletion) events. */
+    erasures: readonly TenantEvent[];
+    /** A recent excerpt of control-plane events. */
+    recent: readonly TenantEvent[];
+  };
+}
+
+/** Map a full event to the compact, redacted entry the report exposes. */
+function toAuditEntry(e: TenantEvent): ComplianceAuditEntry {
+  return {
+    at: e.at,
+    event: e.event,
+    outcome: e.outcome,
+    ...(e.actor !== undefined ? { actor: { id: e.actor.id, role: e.actor.role } } : {}),
+    ...(e.tenantId !== undefined ? { tenantId: e.tenantId } : {}),
+  };
+}
+
+/** Sort events newest-first and map to compact entries (deterministic, hashable output). */
+function auditEntries(events: readonly TenantEvent[]): ComplianceAuditEntry[] {
+  return [...events].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).map(toAuditEntry);
 }
 
 /**
@@ -127,5 +179,13 @@ export function buildComplianceReport(
       byJurisdiction,
       violations,
     },
+    ...(options.audit !== undefined
+      ? {
+          audit: {
+            erasures: auditEntries(options.audit.erasures),
+            recent: auditEntries(options.audit.recent),
+          },
+        }
+      : {}),
   };
 }

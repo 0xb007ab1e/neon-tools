@@ -13,6 +13,20 @@ export interface ComplianceReport {
     byJurisdiction: Record<string, number>;
     violations: { tenantId: string; region: string; reason: string }[];
   };
+  /** Present only when a persisted audit store is wired (erasure history + recent excerpt). */
+  audit?: {
+    erasures: AuditEntry[];
+    recent: AuditEntry[];
+  };
+}
+
+/** A compact audit-trail entry (mirrors core ComplianceAuditEntry). */
+export interface AuditEntry {
+  at: string;
+  event: string;
+  outcome: 'ok' | 'error';
+  actor?: { id: string; role: string };
+  tenantId?: string;
 }
 
 /** The authenticated operator. */

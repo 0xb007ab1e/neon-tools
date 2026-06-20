@@ -1,5 +1,6 @@
 import type { TenantEvent } from '../core/observability.js';
 import type { EventSink } from '../ports/event-sink.js';
+import type { AuditLogStore } from '../ports/audit-log-store.js';
 
 /**
  * Create an {@link EventSink} that writes one JSON object per line (a 12-Factor event stream).
@@ -30,6 +31,29 @@ export function createJsonEventSink(write?: (line: string) => void): EventSink {
  */
 export function createNoopEventSink(): EventSink {
   return { emit: () => undefined };
+}
+
+/**
+ * Create an {@link EventSink} that **persists** each event to an {@link AuditLogStore} (the durable,
+ * queryable audit trail behind the compliance report). Append is fire-and-forget and best-effort —
+ * `emit` must not block or throw (the port contract); a store failure is swallowed (and optionally
+ * reported via `onError`). Events are expected to already be redacted by the caller (master §5).
+ *
+ * @param store - The audit-log store to append to.
+ * @param onError - Optional callback for an append failure (e.g. to a fallback log).
+ * @returns An event sink that writes to the audit trail.
+ */
+export function createAuditLogEventSink(
+  store: AuditLogStore,
+  onError?: (event: TenantEvent, error: unknown) => void,
+): EventSink {
+  return {
+    emit(event: TenantEvent): void {
+      void store.append(event).catch((error: unknown) => {
+        if (onError !== undefined) onError(event, error);
+      });
+    },
+  };
 }
 
 /**

@@ -15,6 +15,8 @@ import type {
   ProvisionRequest,
 } from '../../src/ports/provisioning-provider.js';
 import { createInMemorySecretStore } from '../../src/adapters/secret-store.js';
+import { createInMemoryAuditLogStore } from '../../src/adapters/audit-log-store.js';
+import { createAuditLogEventSink } from '../../src/adapters/event-sink.js';
 import { createLifecycleHandler, createTenantForge } from '../../src/app/lib.js';
 import { runWithActor } from '../../src/app/actor-context.js';
 
@@ -397,6 +399,48 @@ describe('createTenantForge.getConnection caching', () => {
     await tf.resume(tenant.id);
     await tf.getConnection(tenant.id);
     expect(getSpy.mock.calls.length).toBeGreaterThan(1); // cache was invalidated, re-resolved
+  });
+});
+
+describe('createTenantForge.complianceReport with a persisted audit log', () => {
+  it('omits the audit section without an audit store', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    expect((await tf.complianceReport()).report.audit).toBeUndefined();
+  });
+
+  it('attests erasure history + a recent excerpt from the audit trail', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      auditLog,
+      // Persist the operation events so the report can read them back.
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    // A full lifecycle to deletion produces a `tenant.transition` to `deleted` (the erasure record),
+    // attributed to the operator in scope (who-did-what-when).
+    let tenantId = '';
+    await runWithActor({ id: 'op', role: 'admin' }, async () => {
+      const { tenant } = await tf.provision({ slug: 'acme' });
+      tenantId = tenant.id;
+      await tf.offboard(tenant.id);
+      await tf.purge(tenant.id);
+    });
+    await Promise.resolve(); // let fire-and-forget appends settle
+
+    const { report } = await tf.complianceReport();
+    expect(report.audit).toBeDefined();
+    expect(report.audit?.erasures.map((e) => e.tenantId)).toEqual([tenantId]);
+    expect(report.audit?.erasures[0]?.actor).toEqual({ id: 'op', role: 'admin' });
+    // The recent excerpt carries the broader activity (provision/transition/compliance events).
+    expect(report.audit?.recent.length).toBeGreaterThan(0);
   });
 });
 
