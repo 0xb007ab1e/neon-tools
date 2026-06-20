@@ -60,6 +60,13 @@ painful to build correctly.
   (`migrateFleet(spec, { canaryTenantId })` aborts the rollout if the canary fails), and check
   **drift** any time with `fleetStatus()` (which active tenants are behind the latest version or
   failing).
+- **Reconcile the fleet** — the actuator behind drift: `reconcileFleet(catalog, opts)` (CLI
+  `reconcile-fleet <migrations-dir>`) brings every behind/failed tenant up to the target by applying
+  its **missing versions in order, stopping at a tenant's first failure** (ordered-dependency-safe),
+  failure-isolated and idempotent/resumable, with an optional **canary**. Preview first with
+  `reconcilePlan()` / `reconcile-fleet --plan` / HTTP `GET /v1/fleet/reconcile` / the dashboard
+  reconcile panel (read-only — no SQL needed). Execution needs the SQL catalog, so it's a
+  library/CLI op.
 - **Lifecycle** — suspend / resume / **offboard** (archive: retain the project scaled-to-zero,
   reversible) → **purge** (irreversible delete). `purge-expired` is the scheduled sweep that purges
   archived tenants past `TENANTFORGE_RETENTION_DAYS` (run by a cron / K8s CronJob).

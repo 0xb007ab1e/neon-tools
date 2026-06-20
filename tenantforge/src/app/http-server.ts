@@ -372,6 +372,19 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Fleet reconcile PLAN (read-only preview — which tenants are behind + what they'd receive).
+  // Execution needs the migration SQL catalog, so it stays a library/CLI operation, not HTTP.
+  app.get('/v1/fleet/reconcile', requirePermission('tenant:read'), async (c) => {
+    const targetVersion = c.req.query('target');
+    try {
+      return c.json(
+        await tf.reconcilePlan(targetVersion !== undefined ? { targetVersion } : undefined),
+      );
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.post('/v1/tenants/:id/suspend', requirePermission('tenant:suspend'), async (c) => {
     try {
       return c.json({ tenant: await tf.suspend(c.req.param('id')) });

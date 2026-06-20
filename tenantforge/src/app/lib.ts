@@ -21,6 +21,7 @@ import {
   type TenantUsage,
   type ErasureCertificate,
   type FleetDriftReport,
+  type FleetReconcilePlan,
 } from '../core/index.js';
 import { createNeonProvisioningProvider } from '../adapters/neon-api/provisioning-provider.js';
 import { createPgTenantRegistry } from '../adapters/neon-pg/registry.js';
@@ -72,6 +73,8 @@ import {
   type FleetMigrationReport,
   type FleetMigrationSpec,
   type MigrateFleetOptions,
+  type ReconcileFleetOptions,
+  type FleetReconcileReport,
 } from '../adapters/fleet-orchestrator.js';
 import { createPgMigrationRunner } from '../adapters/neon-pg/migration-runner.js';
 import { createNeonUsageProvider } from '../adapters/neon-api/usage-provider.js';
@@ -102,6 +105,8 @@ export type {
   FleetMigrationSpec,
   MigrateFleetOptions,
   FleetMigrationReport,
+  ReconcileFleetOptions,
+  FleetReconcileReport,
 } from '../adapters/fleet-orchestrator.js';
 
 /** Collaborators injected into {@link createTenantForge} (ports & adapters). */
@@ -521,6 +526,30 @@ export interface TenantForge {
    * @returns The fleet drift report.
    */
   fleetStatus(options?: { limit?: number }): Promise<FleetDriftReport>;
+
+  /**
+   * Preview a fleet **reconciliation** (#2, read-only): which active tenants are behind the target
+   * and exactly which versions each would receive. No SQL needed — derived from the catalog + state.
+   *
+   * @param options - Optional target version, batch size, and scan cap.
+   * @returns The reconcile plan.
+   */
+  reconcilePlan(options?: ReconcileFleetOptions): Promise<FleetReconcilePlan>;
+
+  /**
+   * **Reconcile** the fleet (#2): bring every behind/failed active tenant up to the target by
+   * applying its missing catalog versions in order, stopping at a tenant's first failure.
+   * Failure-isolated, idempotent/resumable, optional canary. A fleet change is a release. Requires a
+   * migration runner.
+   *
+   * @param specs - The ordered migration catalog (version + SQL) to reconcile toward.
+   * @param options - Target version, batch size, canary tenant.
+   * @returns A per-tenant reconcile report.
+   */
+  reconcileFleet(
+    specs: readonly FleetMigrationSpec[],
+    options?: ReconcileFleetOptions,
+  ): Promise<FleetReconcileReport>;
 
   /**
    * Meter a tenant's resource consumption over a period (for billing) — resolves the tenant's Neon
@@ -949,6 +978,46 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         },
       });
       return orchestrator.migrationStatus(options);
+    },
+
+    reconcilePlan(options?: ReconcileFleetOptions): Promise<FleetReconcilePlan> {
+      // Read-only (no applies) — a placeholder runner suffices when none is wired.
+      const orchestrator = createFleetOrchestrator({
+        registry,
+        connectionRouter: router,
+        migrationRunner: migrationRunner ?? {
+          applyToTenant: () =>
+            Promise.reject(new Error('reconcilePlan: no migration runner is configured')),
+        },
+      });
+      return orchestrator.reconcilePlan(options);
+    },
+
+    async reconcileFleet(
+      specs: readonly FleetMigrationSpec[],
+      options?: ReconcileFleetOptions,
+    ): Promise<FleetReconcileReport> {
+      if (!migrationRunner) {
+        throw new Error('reconcileFleet: no migration runner configured');
+      }
+      const orchestrator = createFleetOrchestrator({
+        registry,
+        connectionRouter: router,
+        migrationRunner,
+      });
+      const report = await orchestrator.reconcileFleet(specs, options);
+      observe('fleet.reconcile', {
+        outcome: report.partial.length > 0 || report.canaryAborted === true ? 'error' : 'ok',
+        context: {
+          target: report.target,
+          total: report.total,
+          reconciled: report.reconciled.length,
+          partial: report.partial.length,
+          alreadyAtLatest: report.alreadyAtLatest,
+          ...(report.canaryAborted === true ? { canaryAborted: true } : {}),
+        },
+      });
+      return report;
     },
 
     async usage(id: string, period: BillingPeriod): Promise<TenantUsage> {

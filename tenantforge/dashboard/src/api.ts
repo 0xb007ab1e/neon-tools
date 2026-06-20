@@ -111,3 +111,19 @@ export async function fetchCost(): Promise<CostReport> {
   if (!res.ok) throw new Error('Could not load the cost report');
   return (await res.json()) as CostReport;
 }
+
+/** A fleet reconcile plan (mirrors core FleetReconcilePlan; read-only preview). */
+export interface ReconcilePlan {
+  target: string | null;
+  perTenant: { tenantId: string; missing: string[] }[];
+  pendingTenants: string[];
+  upToDate: string[];
+  totalMissing: number;
+}
+
+/** Load the fleet reconcile plan (read-only preview — applies nothing). */
+export async function fetchReconcilePlan(): Promise<ReconcilePlan> {
+  const res = await fetch(`${BASE}/reconcile`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load the reconcile plan');
+  return (await res.json()) as ReconcilePlan;
+}
