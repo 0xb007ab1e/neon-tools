@@ -324,6 +324,15 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  app.get('/v1/compliance/report', requirePermission('tenant:read'), async (c) => {
+    try {
+      const { report, digest } = await tf.complianceReport();
+      return c.json({ report, digest });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.post('/v1/tenants/:id/suspend', requirePermission('tenant:suspend'), async (c) => {
     try {
       return c.json({ tenant: await tf.suspend(c.req.param('id')) });

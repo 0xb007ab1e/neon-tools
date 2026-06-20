@@ -8,6 +8,18 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Compliance report (fleet attestation)** — first build of the Neon-extension repositioning
+  (`docs/research/pivot-directions.md` #1): `TenantForge.complianceReport()` (CLI `compliance-report
+[--json]`, HTTP `GET /v1/compliance/report`) emits a point-in-time, registry-derived attestation
+  with a SHA-256 integrity digest. The pure `buildComplianceReport` (core, 100% covered) attests
+  **physical isolation** (each live tenant has its own dedicated Neon project; flags missing or
+  **shared** project ids — a cross-tenant violation) and **data residency** (region→jurisdiction,
+  within the org allow-list; flags out-of-allow-list or unknown-jurisdiction regions), plus a
+  status inventory. Deleted tenants are inventoried but excluded from attestations. Assembles
+  existing assets (residency core, registry, audit event, allow-list); the CLI exits non-zero on any
+  violation so a cron/CI can gate. It emits **evidence (queryable facts), not a legal certification**;
+  erasure-history + full audit-trail excerpts are a follow-on (they need a persisted audit store).
+
 - **Per-tenant quota enforcement** (gap #14) — meter each tenant's consumption (via the existing
   Neon usage provider) and evaluate it against per-tenant resource limits. The pure `evaluateQuota`
   (core, 100% covered) compares a `Quota` (`maxComputeTimeSeconds` / `maxActiveTimeSeconds` /

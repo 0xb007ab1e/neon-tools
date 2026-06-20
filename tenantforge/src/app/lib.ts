@@ -10,6 +10,8 @@ import {
   redactSecrets,
   retentionCutoff,
   selectRegion,
+  buildComplianceReport,
+  type ComplianceReport,
   type BillingPeriod,
   type Jurisdiction,
   type JsonObject,
@@ -75,9 +77,18 @@ import type { EventSink } from '../ports/event-sink.js';
 import type { UsageProvider } from '../ports/usage-provider.js';
 import type { MigrationRunner } from '../ports/migration-runner.js';
 import type { TenantConnection } from '../ports/connection-router.js';
+import { createHash } from 'node:crypto';
 import { loadConfig, type Config } from './config.js';
 
 export type { Config } from './config.js';
+
+/** A compliance report plus a tamper-evidence digest over its canonical JSON. */
+export interface ComplianceReportResult {
+  /** The point-in-time attestation. */
+  report: ComplianceReport;
+  /** SHA-256 hex digest of the report JSON (integrity anchor; not an authenticity signature). */
+  digest: string;
+}
 export type {
   FleetMigrationSpec,
   MigrateFleetOptions,
@@ -441,6 +452,15 @@ export interface TenantForge {
     quota: Quota,
     options?: { limit?: number; enforce?: boolean },
   ): Promise<QuotaSweepReport>;
+
+  /**
+   * Generate a point-in-time **compliance report** over the fleet — physical-isolation and
+   * data-residency attestations derived from the registry — with a SHA-256 integrity digest. Emits
+   * *evidence* (queryable facts), not a legal certification.
+   *
+   * @returns The report and its digest.
+   */
+  complianceReport(): Promise<ComplianceReportResult>;
 
   /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
@@ -950,6 +970,23 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       cursor?: { createdAt: Date; id: string };
     }): Promise<TenantRecord[]> {
       return registry.list(options);
+    },
+
+    async complianceReport(): Promise<ComplianceReportResult> {
+      const tenants = await registry.list({ limit: MAX_SWEEP });
+      const report = buildComplianceReport(tenants, { allowedRegions, now: new Date() });
+      // Integrity anchor over the canonical report JSON (deterministic field order from the builder).
+      const digest = createHash('sha256').update(JSON.stringify(report)).digest('hex');
+      observe('compliance.report_generated', {
+        outcome: report.isolation.compliant && report.residency.compliant ? 'ok' : 'error',
+        context: {
+          digest,
+          tenants: report.inventory.total,
+          isolationCompliant: report.isolation.compliant,
+          residencyCompliant: report.residency.compliant,
+        },
+      });
+      return { report, digest };
     },
 
     async close(): Promise<void> {

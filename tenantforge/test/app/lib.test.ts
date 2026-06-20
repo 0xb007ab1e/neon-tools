@@ -938,3 +938,38 @@ describe('createLifecycleHandler', () => {
     expect(calls).toEqual(['provision:acme', 'suspend:t1', 'resume:t1', 'offboard:t1']);
   });
 });
+
+describe('createTenantForge.complianceReport', () => {
+  const rec = (over: Partial<TenantRecord>): TenantRecord => ({
+    id: 'x',
+    slug: 'x',
+    region: 'aws-us-east-1',
+    status: 'active',
+    neonProjectId: 'p',
+    metadata: {},
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    ...over,
+  });
+
+  it('builds a fleet report, stamps a sha256 digest, and emits an audit event', async () => {
+    const events: TenantEvent[] = [];
+    const registry = fakeRegistry();
+    registry.seed(rec({ id: 'a', neonProjectId: 'shared' }));
+    registry.seed(rec({ id: 'b', neonProjectId: 'shared' })); // shared project → isolation violation
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      eventSink: { emit: (e: TenantEvent) => events.push(e) },
+      defaultRegion: 'aws-us-east-1',
+    });
+
+    const { report, digest } = await tf.complianceReport();
+    expect(report.inventory.total).toBe(2);
+    expect(report.isolation.compliant).toBe(false); // shared project caught
+    expect(digest).toMatch(/^[0-9a-f]{64}$/); // sha256 hex
+    const ev = events.find((e) => e.event === 'compliance.report_generated');
+    expect(ev?.outcome).toBe('error'); // a violation → error outcome
+  });
+});

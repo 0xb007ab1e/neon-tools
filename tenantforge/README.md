@@ -162,6 +162,11 @@ non-blocking — it never delays or breaks a control-plane operation.
 (compute/active seconds, bytes written, peak storage) over a period for billing — pulled on demand
 from Neon's consumption API via the `UsageProvider` port (no usage data stored in the control plane).
 
+**Compliance report:** `tf.complianceReport()` (CLI `compliance-report`, HTTP `GET
+/v1/compliance/report`) emits a registry-derived **isolation + residency attestation** with a
+SHA-256 integrity digest — flags shared/missing tenant projects and out-of-allow-list regions; CLI
+exits non-zero on a violation (cron/CI gate). Evidence, not legal certification.
+
 **Per-tenant quotas:** `tf.checkQuota(id, period, quota)` / `checkQuotas(...)` (CLI `check-quotas
 --max-storage-gb / --max-compute-seconds`) meter consumption and evaluate it against per-tenant
 limits with the pure `evaluateQuota`, emitting `tenant.quota_exceeded` on a breach. **Enforcement is

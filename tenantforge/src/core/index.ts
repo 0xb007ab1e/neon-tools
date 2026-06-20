@@ -30,6 +30,11 @@ export {
 } from './snapshot.js';
 export { evaluateQuota, type Quota, type QuotaBreach, type QuotaStatus } from './quota.js';
 export {
+  buildComplianceReport,
+  type ComplianceReport,
+  type ComplianceReportOptions,
+} from './compliance.js';
+export {
   can,
   permissionsFor,
   isRole,
