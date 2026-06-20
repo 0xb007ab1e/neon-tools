@@ -149,6 +149,10 @@ const EnvSchema = z
     // Path to the built SPA (`dashboard/dist`); when set, the dashboard also serves the front-end,
     // so a production deploy needs no separate static web server. Unset = JSON API only.
     TENANTFORGE_DASHBOARD_DIST: z.string().min(1).optional(),
+    // Directory of ordered migration `.sql` files (the catalog). When set, the dashboard can EXECUTE
+    // a fleet reconcile (tenant:provision-gated) — the server loads the SQL from here. Unset =
+    // reconcile is preview-only in the browser (execution stays a CLI op).
+    TENANTFORGE_MIGRATIONS_DIR: z.string().min(1).optional(),
     // Unit cost rates for the cost/margin report, as a JSON object of USD-per-unit numbers, e.g.
     // {"computeSecondUsd":0.00016,"storageByteUsd":1.5e-10}. Unset = zero cost (margin = price).
     TENANTFORGE_COST_RATES: z.string().optional(),
@@ -317,6 +321,8 @@ export interface Config {
   dashboardSecret?: string;
   /** Path to the built SPA (`dashboard/dist`); set ⇒ the dashboard also serves the front-end. */
   dashboardDist?: string;
+  /** Directory of ordered migration `.sql` files; set ⇒ the dashboard can execute a reconcile. */
+  migrationsDir?: string;
   /** Unit cost rates (USD) for the cost/margin report; absent ⇒ zero cost. */
   costRates?: CostRates;
   /** Per-unit billing (sell) rates (USD) for invoice generation; absent ⇒ usage not billed. */
@@ -358,6 +364,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: parsed.TENANTFORGE_PORT,
     ...(parsed.TENANTFORGE_DASHBOARD_SECRET !== undefined
       ? { dashboardSecret: parsed.TENANTFORGE_DASHBOARD_SECRET }
+      : {}),
+    ...(parsed.TENANTFORGE_MIGRATIONS_DIR !== undefined
+      ? { migrationsDir: parsed.TENANTFORGE_MIGRATIONS_DIR }
       : {}),
     ...(parsed.TENANTFORGE_DASHBOARD_DIST !== undefined
       ? { dashboardDist: parsed.TENANTFORGE_DASHBOARD_DIST }

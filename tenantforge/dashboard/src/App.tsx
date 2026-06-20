@@ -6,6 +6,8 @@ import {
   fetchInvoices,
   fetchReconcilePlan,
   fetchReconcileHistory,
+  fetchReconcileCapabilities,
+  runReconcile,
   fetchSession,
   login,
   logout,
@@ -13,6 +15,7 @@ import {
   type CostReport,
   type DriftReport,
   type FleetInvoiceReport,
+  type ReconcileCapabilities,
   type ReconcilePlan,
   type ReconcileHistoryEntry,
   type Session,
@@ -271,6 +274,29 @@ function DriftPanel(): React.JSX.Element {
 function ReconcilePanel(): React.JSX.Element {
   const { data, error } = usePanelData<ReconcilePlan>(fetchReconcilePlan);
   const history = usePanelData<ReconcileHistoryEntry[]>(fetchReconcileHistory);
+  const caps = usePanelData<ReconcileCapabilities>(fetchReconcileCapabilities);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const canRun = caps.data?.executable === true && caps.data?.mayExecute === true;
+
+  const onRun = async (): Promise<void> => {
+    if (
+      !window.confirm('Reconcile the whole fleet now? This applies migrations to behind tenants.')
+    ) {
+      return;
+    }
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await runReconcile();
+      setResult(`Reconciled ${r.reconciled.length} tenant(s), ${r.partial.length} with failures.`);
+    } catch (e) {
+      setResult(e instanceof Error ? e.message : 'Reconcile failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Panel id="reconcile-h" title="Fleet reconcile (plan)" error={error} loading={data === null}>
       {data !== null && (
@@ -280,7 +306,16 @@ function ReconcilePanel(): React.JSX.Element {
             <strong>{data.target ?? 'none'}</strong> · {data.totalMissing} migration application(s)
             · {data.upToDate.length} up to date
           </p>
-          <p>Preview only — run `reconcile-fleet` (CLI) to apply.</p>
+          {canRun ? (
+            <p>
+              <button type="button" onClick={() => void onRun()} disabled={busy}>
+                {busy ? 'Reconciling…' : 'Run reconcile'}
+              </button>
+            </p>
+          ) : (
+            <p>Preview only — run `reconcile-fleet` (CLI) to apply.</p>
+          )}
+          {result !== null && <p role="status">{result}</p>}
           {history.data !== null && history.data.length > 0 && (
             <table>
               <caption>Recent reconcile runs (audit trail)</caption>

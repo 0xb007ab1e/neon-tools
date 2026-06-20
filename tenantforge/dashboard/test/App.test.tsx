@@ -67,8 +67,10 @@ const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 let authed = false;
+let reconcileExecutable = false;
 beforeEach(() => {
   authed = false;
+  reconcileExecutable = false;
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -86,6 +88,10 @@ beforeEach(() => {
       if (url.endsWith('/drift')) return Promise.resolve(json(drift));
       if (url.endsWith('/reconcile-history'))
         return Promise.resolve(json({ history: reconcileHistory }));
+      if (url.endsWith('/reconcile/capabilities'))
+        return Promise.resolve(json({ executable: reconcileExecutable, mayExecute: true }));
+      if (url.endsWith('/reconcile') && method === 'POST')
+        return Promise.resolve(json({ target: '0003', reconciled: ['t1', 't2'], partial: [] }));
       if (url.endsWith('/reconcile')) return Promise.resolve(json(reconcile));
       if (url.endsWith('/invoices')) return Promise.resolve(json(invoices));
       if (url.endsWith('/cost')) return Promise.resolve(json(cost));
@@ -134,6 +140,25 @@ describe('dashboard App', () => {
       await screen.findByRole('heading', { name: 'Invoices (this month)' }),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-billed')).toBeInTheDocument();
+    // Reconcile execution is not enabled by default → preview-only, no Run button.
+    expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);
+  });
+
+  it('runs a reconcile from the dashboard when executable + permitted (confirmed)', async () => {
+    reconcileExecutable = true;
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText('Operator token'), {
+      target: { value: 'op-token' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    const run = await screen.findByRole('button', { name: 'Run reconcile' });
+    fireEvent.click(run);
+    expect(confirmSpy).toHaveBeenCalled();
+    // The POST result is surfaced.
+    expect(await screen.findByText('Reconciled 2 tenant(s), 0 with failures.')).toBeInTheDocument();
+    confirmSpy.mockRestore();
   });
 });

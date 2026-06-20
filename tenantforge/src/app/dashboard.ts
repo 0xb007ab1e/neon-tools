@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { can } from '../core/index.js';
 import type { Authenticator, Principal } from '../ports/authenticator.js';
 import type { TenantForge } from './lib.js';
+import type { FleetMigrationSpec } from '../adapters/fleet-orchestrator.js';
 
 /** Session cookie name (scoped to the dashboard path). */
 const COOKIE = 'tf_dash';
@@ -32,6 +33,12 @@ export interface DashboardOptions {
    * SPA is served by Vite in dev).
    */
   staticRoot?: string;
+  /**
+   * The migration SQL catalog (ordered). When set, the dashboard exposes a **`tenant:provision`-gated
+   * POST** to *execute* a fleet reconcile from the browser (the mutating action behind the read-only
+   * plan). Unset = preview only (execution stays a CLI op — the server has no SQL to apply).
+   */
+  reconcileCatalog?: readonly FleetMigrationSpec[];
 }
 
 const LoginSchema = z.object({ token: z.string().min(1) });
@@ -187,6 +194,31 @@ export function createDashboard(options: DashboardOptions): Hono {
     if (principal === null) return c.json({ error: 'not authenticated' }, 401);
     if (!can(principal, 'tenant:read')) return c.json({ error: 'forbidden' }, 403);
     return c.json({ history: await options.tf.reconcileHistory() });
+  });
+
+  // Whether reconcile can be EXECUTED from the dashboard (a SQL catalog is wired) and whether this
+  // principal may (tenant:provision). The SPA uses this to decide whether to show the Run button.
+  app.get('/api/reconcile/capabilities', (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    return c.json({
+      executable: options.reconcileCatalog !== undefined,
+      mayExecute: can(principal, 'tenant:provision'),
+    });
+  });
+
+  // EXECUTE a fleet reconcile (mutating, gated). Requires a session, `tenant:provision` (deny by
+  // default — readonly/operator-without-it get 403), and a server-configured SQL catalog. The
+  // SameSite=Strict session cookie defends against CSRF. Audited via the fleet.reconcile event.
+  app.post('/api/reconcile', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'tenant:provision')) return c.json({ error: 'forbidden' }, 403);
+    if (options.reconcileCatalog === undefined) {
+      return c.json({ error: 'reconcile execution is not enabled on this server' }, 409);
+    }
+    const report = await options.tf.reconcileFleet(options.reconcileCatalog);
+    return c.json(report);
   });
 
   // Serve the built SPA (registered AFTER the /api routes so it never shadows them). serveStatic

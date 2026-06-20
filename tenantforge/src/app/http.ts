@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { serve } from '@hono/node-server';
 import { createPgRateLimitStore } from '../adapters/neon-pg/rate-limit-store.js';
 import { createPgIdempotencyStore } from '../adapters/neon-pg/idempotency-store.js';
@@ -9,6 +11,14 @@ import type { EventSink } from '../ports/event-sink.js';
 import { loadConfig } from './config.js';
 import { createHttpServer } from './http-server.js';
 import { tenantForgeFromConfig } from './lib.js';
+
+/** Read an ordered migration catalog from a directory of `*.sql` files (sorted by filename). */
+function readMigrationCatalog(dir: string): { version: string; sql: string }[] {
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.sql') && !f.endsWith('.down.sql'))
+    .sort()
+    .map((f) => ({ version: f.replace(/\.sql$/, ''), sql: readFileSync(join(dir, f), 'utf8') }));
+}
 
 /** Entry point: serve the TenantForge HTTP control-plane API. Fails closed without a way to authenticate. */
 function main(): void {
@@ -76,6 +86,10 @@ function main(): void {
     ...(idempotencyStore !== undefined ? { idempotencyStore } : {}),
     ...(config.dashboardSecret !== undefined ? { dashboardSecret: config.dashboardSecret } : {}),
     ...(config.dashboardDist !== undefined ? { dashboardStaticRoot: config.dashboardDist } : {}),
+    // Load the ordered SQL catalog so the dashboard can execute a reconcile (tenant:provision-gated).
+    ...(config.migrationsDir !== undefined
+      ? { dashboardReconcileCatalog: readMigrationCatalog(config.migrationsDir) }
+      : {}),
     metrics: () => metrics.render(),
   });
 
