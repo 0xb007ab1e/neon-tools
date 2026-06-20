@@ -60,3 +60,11 @@
 - Keep the pure `core/` free of I/O so it's unit-testable without mocks; provisioning/registry/
   routing are integration-tested against an ephemeral Neon branch in CI.
 - Secrets from env only (`.env` git-ignored, `.env.example` committed).
+- **User-feedback mechanism per feature (provisional rule, 2026-06; may be promoted to a global
+  rule once validated).** Every **new** feature must ship some way for the user to _see_ its output —
+  a user dashboard or similar surface — not just a library/CLI/HTTP/MCP call. "Or similar" is
+  satisfied by the lowest-ceremony surface that fits: a read HTTP endpoint + `--json` CLI already
+  count; a dedicated dashboard view is preferred when the feature produces fleet-wide state worth
+  monitoring (e.g. the compliance report, fleet drift, cost/margin). Any actual web UI is **WCAG 2.2
+  AA** from the start (master §1, `@rules/topic-accessibility.md`); a dev/preview UI is tailnet-only,
+  never public (`@rules/topic-tailnet-dev-access.md`). Pre-rule features are grandfathered.
