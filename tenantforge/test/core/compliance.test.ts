@@ -110,4 +110,58 @@ describe('buildComplianceReport', () => {
     // identical inputs (modulo order) → identical serialization
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
+
+  it('omits the audit section when no audit events are supplied', () => {
+    expect(build([tenant()]).audit).toBeUndefined();
+  });
+
+  it('maps + sorts audit events newest-first (erasures + recent excerpt)', () => {
+    const r = buildComplianceReport([tenant()], {
+      now,
+      audit: {
+        // Deliberately out of order (mid, new, old) so the sort comparator exercises both the
+        // ascending and descending branches.
+        erasures: [
+          {
+            event: 'tenant.transition',
+            at: '2026-06-05T00:00:00.000Z',
+            outcome: 'ok',
+            actor: { id: 'op-mid', role: 'admin' },
+            tenantId: 't-mid',
+            context: { to: 'deleted' },
+          },
+          {
+            event: 'tenant.transition',
+            at: '2026-06-10T00:00:00.000Z',
+            outcome: 'ok',
+            actor: { id: 'op2', role: 'admin' },
+            tenantId: 't-new',
+            context: { to: 'deleted' },
+          },
+          {
+            event: 'tenant.transition',
+            at: '2026-06-01T00:00:00.000Z',
+            outcome: 'ok',
+            actor: { id: 'op', role: 'admin' },
+            tenantId: 't-old',
+            context: { to: 'deleted' },
+          },
+        ],
+        // Fleet-level events with no actor/tenant exercise the optional-field branches; the two
+        // identical timestamps exercise the sort comparator's equal-keys branch.
+        recent: [
+          { event: 'fleet.migration', at: '2026-06-11T00:00:00.000Z', outcome: 'ok' },
+          { event: 'compliance.report_generated', at: '2026-06-11T00:00:00.000Z', outcome: 'ok' },
+        ],
+      },
+    });
+    expect(r.audit?.erasures.map((e) => e.tenantId)).toEqual(['t-new', 't-mid', 't-old']); // newest-first
+    expect(r.audit?.erasures[0]?.actor).toEqual({ id: 'op2', role: 'admin' });
+    expect(r.audit?.recent.map((e) => e.event)).toEqual([
+      'fleet.migration',
+      'compliance.report_generated',
+    ]);
+    expect(r.audit?.recent[0]?.actor).toBeUndefined();
+    expect(r.audit?.recent[0]?.tenantId).toBeUndefined();
+  });
 });

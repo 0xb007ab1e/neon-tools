@@ -165,7 +165,10 @@ from Neon's consumption API via the `UsageProvider` port (no usage data stored i
 **Compliance report:** `tf.complianceReport()` (CLI `compliance-report`, HTTP `GET
 /v1/compliance/report`) emits a registry-derived **isolation + residency attestation** with a
 SHA-256 integrity digest — flags shared/missing tenant projects and out-of-allow-list regions; CLI
-exits non-zero on a violation (cron/CI gate). Evidence, not legal certification.
+exits non-zero on a violation (cron/CI gate). Evidence, not legal certification. With a **persisted
+audit trail** (`TENANTFORGE_AUDIT_LOG=pg`; the `AuditLogStore` port + `tf_audit_log`) the report also
+attests **erasure history** (tenant deletions, with operator attribution) and a **recent audit
+excerpt** — the durable, queryable record behind the ephemeral stdout event stream.
 
 **Cost / margin:** `tf.costReport(period)` (CLI `cost-report`, HTTP `GET /v1/cost/report`, dashboard panel) estimates each tenant's Neon cost (from `TENANTFORGE_COST_RATES`) vs. its price (`metadata.priceUsd`) and flags unprofitable/unpriced tenants — a read-only **cost-attribution estimate**, not an invoice.
 

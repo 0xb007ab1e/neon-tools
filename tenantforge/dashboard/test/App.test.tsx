@@ -18,6 +18,18 @@ const report = {
       { tenantId: 'tenant-b', region: 'aws-eu-central-1', reason: 'region not in org allow-list' },
     ],
   },
+  audit: {
+    erasures: [
+      {
+        at: '2026-06-19T00:00:00.000Z',
+        event: 'tenant.transition',
+        outcome: 'ok',
+        actor: { id: 'op', role: 'admin' },
+        tenantId: 'tenant-gone',
+      },
+    ],
+    recent: [{ at: '2026-06-19T00:00:00.000Z', event: 'tenant.transition', outcome: 'ok' }],
+  },
 };
 const drift = {
   latest: '0003',
@@ -83,6 +95,9 @@ describe('dashboard App', () => {
     expect(await screen.findByRole('heading', { name: 'Cost & margin' })).toBeInTheDocument();
     // The unprofitable tenant row is rendered.
     expect(await screen.findByText('tenant-a')).toBeInTheDocument();
+    // Erasure history (from the persisted audit trail) is shown.
+    expect(await screen.findByText('Erasures recorded: 1')).toBeInTheDocument();
+    expect(await screen.findByText('tenant-gone')).toBeInTheDocument();
     expect((await axe(container)).violations).toEqual([]);
   });
 });

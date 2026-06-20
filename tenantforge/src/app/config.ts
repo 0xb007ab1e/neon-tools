@@ -133,6 +133,10 @@ const EnvSchema = z
     // Idempotency-key store: `memory` (default, per-instance) or `pg` (shared across instances —
     // use for multi-instance deployments so a retry on another replica still de-duplicates).
     TENANTFORGE_IDEMPOTENCY_STORE: z.enum(['memory', 'pg']).default('memory'),
+    // Persisted audit trail: `none` (default — stdout JSON stream only) or `pg` (durable,
+    // queryable `tf_audit_log`). `pg` enables erasure-history + recent-excerpt in the compliance
+    // report and survives restarts/multi-instance. Requires migration 0006.
+    TENANTFORGE_AUDIT_LOG: z.enum(['none', 'pg']).default('none'),
     // Cache getConnection resolutions for this many ms (0 = disabled). Process-local + tenant-keyed.
     TENANTFORGE_CONNECTION_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(0),
     // Web dashboard: when set, mount the cookie-session dashboard backend at /dashboard. The value
@@ -297,6 +301,8 @@ export interface Config {
   rateLimitStore: 'memory' | 'pg';
   /** Idempotency-key store: in-memory (per-instance) or Postgres (shared across instances). */
   idempotencyStore: 'memory' | 'pg';
+  /** Persisted audit trail: none (stdout only) or Postgres (durable, queryable). */
+  auditLog: 'none' | 'pg';
   /** Cache `getConnection` resolutions for this many ms (0 = disabled). */
   connectionCacheTtlMs: number;
   /** Dashboard session-cookie HMAC key; set ⇒ the /dashboard backend is mounted. */
@@ -336,6 +342,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     rateLimitStore: parsed.TENANTFORGE_RATE_LIMIT_STORE,
     idempotencyStore: parsed.TENANTFORGE_IDEMPOTENCY_STORE,
+    auditLog: parsed.TENANTFORGE_AUDIT_LOG,
     connectionCacheTtlMs: parsed.TENANTFORGE_CONNECTION_CACHE_TTL_MS,
     authMode: parsed.TENANTFORGE_AUTH_MODE,
     port: parsed.TENANTFORGE_PORT,

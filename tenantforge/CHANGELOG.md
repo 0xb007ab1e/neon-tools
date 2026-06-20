@@ -24,6 +24,19 @@ All notable changes to TenantForge are documented here. The format follows
   at lint time, not just hand-verified + axe-tested. `npm run lint` (CI `quality`) covers the
   dashboard; no new findings (clean).
 
+- **Persisted audit trail → erasure history + audit excerpt in the compliance report** — closes the
+  follow-on the compliance report flagged. A new **`AuditLogStore`** port with an **in-memory**
+  adapter (default/tests) and a **Postgres** adapter (`tf_audit_log`, migration 0006 — durable,
+  queryable, cross-instance), plus `createAuditLogEventSink` which fans the existing event stream
+  into the store (best-effort, never blocks/throws — the redacted events, no secrets/PII; master §5).
+  Enable with `TENANTFORGE_AUDIT_LOG=pg`. When wired, `complianceReport()` attests **erasure history**
+  (transitions to `deleted` — right-to-erasure evidence, with operator attribution) and a **recent
+  excerpt** of control-plane activity; the pure `buildComplianceReport` maps them to a compact,
+  newest-first, hashable `audit` section (core stays 100% covered; section omitted entirely when no
+  store is configured). The dashboard compliance panel renders the erasure history. Covered by core,
+  in-memory adapter, event-sink, facade (full lifecycle → attributed erasure), and dashboard (axe)
+  tests; the pg adapter is integration/game-day-covered.
+
 - **Per-tenant cost / margin report + dashboard panels (cost, drift)** — the second Neon-extension
   direction (`docs/research/pivot-directions.md` #3) plus dashboard backfill. The pure
   `buildCostReport` (core, 100%) estimates each tenant's Neon cost from configured unit rates

@@ -197,6 +197,32 @@ function CompliancePanel(): React.JSX.Element {
               </tbody>
             </table>
           )}
+          {data.report.audit !== undefined && (
+            <>
+              <p>Erasures recorded: {data.report.audit.erasures.length}</p>
+              {data.report.audit.erasures.length > 0 && (
+                <table>
+                  <caption>Erasure history (right-to-erasure evidence)</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">When</th>
+                      <th scope="col">Tenant</th>
+                      <th scope="col">Operator</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.report.audit.erasures.map((e) => (
+                      <tr key={`${e.at}-${e.tenantId ?? ''}`}>
+                        <td>{e.at}</td>
+                        <td>{e.tenantId ?? '—'}</td>
+                        <td>{e.actor !== undefined ? `${e.actor.id} (${e.actor.role})` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
+          )}
         </div>
       )}
     </Panel>
