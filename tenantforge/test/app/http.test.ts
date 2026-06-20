@@ -213,6 +213,25 @@ describe('HTTP control-plane', () => {
     expect(await res.json()).toEqual(result);
   });
 
+  it('serves the cost report (tenant:read) and 400s a bad period', async () => {
+    const cost = {
+      generatedAt: 'x',
+      rows: [],
+      unmetered: [],
+      totals: { tenants: 0, costUsd: 0, priceUsd: 0, marginUsd: 0, unprofitable: 0, unpriced: 0 },
+    };
+    const server = app({ costReport: async () => cost });
+    const ok = await server.request('/v1/cost/report', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual(cost);
+    const bad = await server.request('/v1/cost/report?from=not-a-date', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it('emits a keyset nextCursor on a full page and forwards it to the next request', async () => {
     const calls: Array<{ limit?: number; cursor?: { createdAt: Date; id: string } }> = [];
     const server = createHttpServer(

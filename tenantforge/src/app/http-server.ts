@@ -349,6 +349,24 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  app.get('/v1/cost/report', requirePermission('tenant:read'), async (c) => {
+    // Default to the current calendar month; allow ?from / ?to ISO overrides.
+    const t = new Date(now());
+    const fromParam = c.req.query('from');
+    const toParam = c.req.query('to');
+    const from =
+      fromParam !== undefined ? new Date(fromParam) : new Date(t.getFullYear(), t.getMonth(), 1);
+    const to = toParam !== undefined ? new Date(toParam) : t;
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      return problem(c, 400, 'Bad Request', 'from/to must be ISO-8601 dates');
+    }
+    try {
+      return c.json(await tf.costReport({ from, to }));
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.post('/v1/tenants/:id/suspend', requirePermission('tenant:suspend'), async (c) => {
     try {
       return c.json({ tenant: await tf.suspend(c.req.param('id')) });

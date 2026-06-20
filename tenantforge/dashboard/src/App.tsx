@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
 import {
-  fetchSession,
   fetchCompliance,
+  fetchCost,
+  fetchDrift,
+  fetchSession,
   login,
   logout,
   type ComplianceReport,
+  type CostReport,
+  type DriftReport,
   type Session,
 } from './api';
 
-/** Root dashboard app: auth gate → compliance panel. */
+/** Root dashboard app: auth gate → panels. */
 export function App(): React.JSX.Element {
-  // undefined = checking session; null = not authenticated; Session = signed in.
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,7 +30,6 @@ export function App(): React.JSX.Element {
       </main>
     );
   }
-
   if (session === null) {
     return (
       <LoginView
@@ -43,7 +45,6 @@ export function App(): React.JSX.Element {
       />
     );
   }
-
   return (
     <DashboardView
       session={session}
@@ -93,20 +94,11 @@ function LoginView(props: {
   );
 }
 
-/** Signed-in shell: header + the compliance panel. */
+/** Signed-in shell: header + the panels. */
 function DashboardView(props: {
   session: Session;
   onLogout: () => void | Promise<void>;
 }): React.JSX.Element {
-  const [data, setData] = useState<{ report: ComplianceReport; digest: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchCompliance()
-      .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'));
-  }, []);
-
   return (
     <div className="app">
       <header className="topbar">
@@ -119,89 +111,163 @@ function DashboardView(props: {
         </p>
       </header>
       <main>
-        <h2>Compliance report</h2>
-        {error !== null && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-        {data === null && error === null && <p role="status">Loading report…</p>}
-        {data !== null && <CompliancePanel report={data.report} digest={data.digest} />}
+        <CompliancePanel />
+        <DriftPanel />
+        <CostPanel />
       </main>
     </div>
   );
 }
 
-/** Renders the compliance attestation as accessible sections + tables. */
-function CompliancePanel(props: { report: ComplianceReport; digest: string }): React.JSX.Element {
-  const { report, digest } = props;
-  const status = (ok: boolean): React.JSX.Element => (
+/** Load panel data once; expose loading/error/data. */
+function usePanelData<T>(load: () => Promise<T>): { data: T | null; error: string | null } {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    load()
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'));
+    // load is stable per panel; intentional one-shot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return { data, error };
+}
+
+/** A section wrapper with heading + loading/error states. */
+function Panel(props: {
+  id: string;
+  title: string;
+  error: string | null;
+  loading: boolean;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <section aria-labelledby={props.id}>
+      <h2 id={props.id}>{props.title}</h2>
+      {props.error !== null && (
+        <p role="alert" className="error">
+          {props.error}
+        </p>
+      )}
+      {props.loading && props.error === null && <p role="status">Loading…</p>}
+      {props.children}
+    </section>
+  );
+}
+
+function statusText(ok: boolean): React.JSX.Element {
+  return (
     <span className={ok ? 'status status-ok' : 'status status-bad'}>
       {ok ? '✓ Compliant' : '✗ Violations'}
     </span>
   );
+}
+
+function CompliancePanel(): React.JSX.Element {
+  const { data, error } = usePanelData<{ report: ComplianceReport; digest: string }>(
+    fetchCompliance,
+  );
   return (
-    <div>
-      <p>
-        Generated <time dateTime={report.generatedAt}>{report.generatedAt}</time> ·{' '}
-        {report.inventory.total} tenants · digest <code>{digest.slice(0, 12)}…</code>
-      </p>
+    <Panel id="compliance-h" title="Compliance" error={error} loading={data === null}>
+      {data !== null && (
+        <div>
+          <p>
+            {data.report.inventory.total} tenants · digest <code>{data.digest.slice(0, 12)}…</code>
+          </p>
+          <p>Isolation {statusText(data.report.isolation.compliant)}</p>
+          <p>Residency {statusText(data.report.residency.compliant)}</p>
+          {data.report.residency.violations.length > 0 && (
+            <table>
+              <caption>Residency violations</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Region</th>
+                  <th scope="col">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.report.residency.violations.map((v) => (
+                  <tr key={v.tenantId}>
+                    <td>{v.tenantId}</td>
+                    <td>{v.region}</td>
+                    <td>{v.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
 
-      <section aria-labelledby="iso-h">
-        <h3 id="iso-h">Isolation {status(report.isolation.compliant)}</h3>
-        <p>
-          Missing project: {report.isolation.missingProject.length}; shared projects:{' '}
-          {report.isolation.sharedProjects.length}
-        </p>
-      </section>
+function DriftPanel(): React.JSX.Element {
+  const { data, error } = usePanelData<DriftReport>(fetchDrift);
+  return (
+    <Panel id="drift-h" title="Fleet migration drift" error={error} loading={data === null}>
+      {data !== null && (
+        <table>
+          <caption>
+            Target version {data.latest ?? 'none'} ({data.totalVersions} known)
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Total</th>
+              <th scope="col">At latest</th>
+              <th scope="col">Drifted</th>
+              <th scope="col">With failures</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>{data.summary.total}</td>
+              <td>{data.summary.atLatest}</td>
+              <td>{data.summary.drifted}</td>
+              <td>{data.summary.withFailures}</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </Panel>
+  );
+}
 
-      <section aria-labelledby="res-h">
-        <h3 id="res-h">Residency {status(report.residency.compliant)}</h3>
-        {report.residency.violations.length === 0 ? (
-          <p>No residency violations.</p>
-        ) : (
+function CostPanel(): React.JSX.Element {
+  const { data, error } = usePanelData<CostReport>(fetchCost);
+  return (
+    <Panel id="cost-h" title="Cost & margin" error={error} loading={data === null}>
+      {data !== null && (
+        <div>
+          <p>
+            {data.totals.tenants} tenants · cost ${data.totals.costUsd} · price $
+            {data.totals.priceUsd} · margin ${data.totals.marginUsd} · {data.totals.unprofitable}{' '}
+            unprofitable · {data.totals.unpriced} unpriced
+          </p>
           <table>
-            <caption>Residency violations</caption>
+            <caption>Per-tenant cost vs. price (USD)</caption>
             <thead>
               <tr>
                 <th scope="col">Tenant</th>
-                <th scope="col">Region</th>
-                <th scope="col">Reason</th>
+                <th scope="col">Cost</th>
+                <th scope="col">Price</th>
+                <th scope="col">Margin</th>
               </tr>
             </thead>
             <tbody>
-              {report.residency.violations.map((v) => (
-                <tr key={v.tenantId}>
-                  <td>{v.tenantId}</td>
-                  <td>{v.region}</td>
-                  <td>{v.reason}</td>
+              {data.rows.map((r) => (
+                <tr key={r.tenantId} className={r.unprofitable ? 'status-bad' : undefined}>
+                  <th scope="row">{r.tenantId}</th>
+                  <td>${r.costUsd}</td>
+                  <td>{r.priceUsd === null ? '—' : `$${r.priceUsd}`}</td>
+                  <td>{r.marginUsd === null ? '—' : `$${r.marginUsd}`}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-        )}
-      </section>
-
-      <section aria-labelledby="inv-h">
-        <h3 id="inv-h">Inventory</h3>
-        <table>
-          <caption>Tenants by status</caption>
-          <thead>
-            <tr>
-              <th scope="col">Status</th>
-              <th scope="col">Count</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(report.inventory.byStatus).map(([s, n]) => (
-              <tr key={s}>
-                <th scope="row">{s}</th>
-                <td>{n}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-    </div>
+        </div>
+      )}
+    </Panel>
   );
 }

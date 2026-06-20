@@ -8,6 +8,19 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Per-tenant cost / margin report + dashboard panels (cost, drift)** — the second Neon-extension
+  direction (`docs/research/pivot-directions.md` #3) plus dashboard backfill. The pure
+  `buildCostReport` (core, 100%) estimates each tenant's Neon cost from configured unit rates
+  (`TENANTFORGE_COST_RATES` JSON) vs. the operator's price (tenant `metadata.priceUsd`), flagging
+  **unprofitable** and **unpriced** tenants with fleet totals — a read-only **cost-attribution**
+  estimate (which tenants cost more than they pay), explicitly **not** an invoice (Neon meters; OSS
+  billing engines invoice). New `CostEngine` + facade `costReport(period)`, CLI `cost-report
+[--json]`, HTTP `GET /v1/cost/report` (`tenant:read`), and a **dashboard cost panel**. Failure-
+  isolated: unmetered tenants are listed, not silently dropped. Also **backfilled dashboard panels**
+  for **compliance**, **fleet drift** (`fleetStatus`), and cost (per the per-feature-dashboard rule)
+  via `/dashboard/api/{compliance,drift,cost}`. Core + engine unit-tested; HTTP + dashboard routes +
+  SPA panels (jsdom/axe) covered.
+
 - **Web dashboard (React/Vite SPA + cookie-session backend)** — the per-feature browser dashboard
   (new project rule). **Backend** (`src/app/dashboard.ts`, mounted at `/dashboard` when
   `TENANTFORGE_DASHBOARD_SECRET` is set): a **signed, HttpOnly, `SameSite=Strict` session cookie**

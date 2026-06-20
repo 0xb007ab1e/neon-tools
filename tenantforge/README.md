@@ -167,6 +167,8 @@ from Neon's consumption API via the `UsageProvider` port (no usage data stored i
 SHA-256 integrity digest — flags shared/missing tenant projects and out-of-allow-list regions; CLI
 exits non-zero on a violation (cron/CI gate). Evidence, not legal certification.
 
+**Cost / margin:** `tf.costReport(period)` (CLI `cost-report`, HTTP `GET /v1/cost/report`, dashboard panel) estimates each tenant's Neon cost (from `TENANTFORGE_COST_RATES`) vs. its price (`metadata.priceUsd`) and flags unprofitable/unpriced tenants — a read-only **cost-attribution estimate**, not an invoice.
+
 **Web dashboard:** a React/Vite SPA (`dashboard/`) gives operators a browser view of the control
 plane — v1 panel is the compliance report. It logs in with an operator token exchanged for an
 **HttpOnly session cookie** by the `/dashboard` backend (mounted when `TENANTFORGE_DASHBOARD_SECRET`
