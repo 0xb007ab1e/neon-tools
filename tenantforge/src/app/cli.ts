@@ -488,6 +488,37 @@ const checkQuotas = defineCommand({
   },
 });
 
+const complianceReport = defineCommand({
+  meta: {
+    name: 'compliance-report',
+    description: 'Fleet compliance attestation (isolation + residency) with an integrity digest',
+  },
+  args: { json: { type: 'boolean', description: 'Emit the full report as JSON', default: false } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const { report, digest } = await tf.complianceReport();
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify({ report, digest }, null, 2)}\n`);
+      } else {
+        const iso = report.isolation;
+        const res = report.residency;
+        process.stdout.write(
+          `compliance report (${report.inventory.total} tenants) digest=${digest.slice(0, 12)}…\n` +
+            `  isolation: ${iso.compliant ? 'OK' : 'VIOLATION'} ` +
+            `(missing-project=${iso.missingProject.length}, shared-project=${iso.sharedProjects.length})\n` +
+            `  residency: ${res.compliant ? 'OK' : 'VIOLATION'} ` +
+            `(${res.violations.length} violation(s); allow-list=${res.allowedRegions.length || 'unrestricted'})\n`,
+        );
+        for (const v of res.violations) {
+          process.stdout.write(`    ${v.tenantId} region=${v.region}: ${v.reason}\n`);
+        }
+      }
+      // Non-zero exit on any violation so CI / cron can gate on it.
+      if (!report.isolation.compliant || !report.residency.compliant) process.exitCode = 1;
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -513,6 +544,7 @@ const main = defineCommand({
     archive,
     'archive-fleet': archiveFleet,
     'check-quotas': checkQuotas,
+    'compliance-report': complianceReport,
   },
 });
 

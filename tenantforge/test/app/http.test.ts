@@ -203,6 +203,16 @@ describe('HTTP control-plane', () => {
     expect(bad.status).toBe(400);
   });
 
+  it('serves the compliance report (tenant:read)', async () => {
+    const result = { report: { inventory: { total: 0 } }, digest: 'abc123' };
+    const res = await app({ complianceReport: async () => result as never }).request(
+      '/v1/compliance/report',
+      { headers: { authorization: `Bearer ${TOKEN}` } },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(result);
+  });
+
   it('emits a keyset nextCursor on a full page and forwards it to the next request', async () => {
     const calls: Array<{ limit?: number; cursor?: { createdAt: Date; id: string } }> = [];
     const server = createHttpServer(
