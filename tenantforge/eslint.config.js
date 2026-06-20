@@ -4,7 +4,9 @@ import jsdoc from 'eslint-plugin-jsdoc';
 import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'coverage/**', 'docs/api/**', 'eslint.config.js'] },
+  // The dashboard SPA is a separate Vite/React build: its own strict tsconfig + prettier + vitest
+  // (jsdom/axe) cover it; React-specific eslint is a follow-on.
+  { ignores: ['dist/**', 'coverage/**', 'docs/api/**', 'dashboard/**', 'eslint.config.js'] },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {

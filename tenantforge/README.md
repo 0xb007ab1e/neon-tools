@@ -167,6 +167,13 @@ from Neon's consumption API via the `UsageProvider` port (no usage data stored i
 SHA-256 integrity digest — flags shared/missing tenant projects and out-of-allow-list regions; CLI
 exits non-zero on a violation (cron/CI gate). Evidence, not legal certification.
 
+**Web dashboard:** a React/Vite SPA (`dashboard/`) gives operators a browser view of the control
+plane — v1 panel is the compliance report. It logs in with an operator token exchanged for an
+**HttpOnly session cookie** by the `/dashboard` backend (mounted when `TENANTFORGE_DASHBOARD_SECRET`
+is set), then reads `/dashboard/api/*`. WCAG 2.2 AA semantic HTML. Dev: `pnpm dashboard:dev`
+(tailnet-only — loopback by default, `DASHBOARD_HOST` for a Tailscale IP; never public). The
+CLI/HTTP/MCP surfaces remain the automation path; the dashboard is the human window onto each feature.
+
 **Per-tenant quotas:** `tf.checkQuota(id, period, quota)` / `checkQuotas(...)` (CLI `check-quotas
 --max-storage-gb / --max-compute-seconds`) meter consumption and evaluate it against per-tenant
 limits with the pure `evaluateQuota`, emitting `tenant.quota_exceeded` on a breach. **Enforcement is
