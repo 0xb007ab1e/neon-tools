@@ -8,6 +8,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Reconcile history (audit-backed)** — surfaces the persisted `fleet.reconcile` events as a
+  queryable run log: who reconciled the fleet, when, to which target, and with what outcome.
+  `TenantForge.reconcileHistory(limit?)` reads them from the audit trail (HTTP `GET
+/v1/fleet/reconcile/history`, dashboard reconcile panel "recent runs" table). Degrades gracefully —
+  returns `[]` when no audit store is wired (`TENANTFORGE_AUDIT_LOG=pg` persists the trail). Covered
+  by facade (records a run → reads it back; `[]` without a store), HTTP, and dashboard (axe) tests.
+
 - **Fleet drift reconciliation** (`docs/research/pivot-directions.md` #2) — the actuator that turns
   the read-only drift report into action: bring every behind/failed active tenant up to a target
   catalog version. The pure `planFleetReconcile` (core, 100%) computes each tenant's **ordered

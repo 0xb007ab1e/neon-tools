@@ -4,6 +4,7 @@ import {
   fetchCost,
   fetchDrift,
   fetchReconcilePlan,
+  fetchReconcileHistory,
   fetchSession,
   login,
   logout,
@@ -11,6 +12,7 @@ import {
   type CostReport,
   type DriftReport,
   type ReconcilePlan,
+  type ReconcileHistoryEntry,
   type Session,
 } from './api';
 
@@ -265,6 +267,7 @@ function DriftPanel(): React.JSX.Element {
 
 function ReconcilePanel(): React.JSX.Element {
   const { data, error } = usePanelData<ReconcilePlan>(fetchReconcilePlan);
+  const history = usePanelData<ReconcileHistoryEntry[]>(fetchReconcileHistory);
   return (
     <Panel id="reconcile-h" title="Fleet reconcile (plan)" error={error} loading={data === null}>
       {data !== null && (
@@ -275,6 +278,31 @@ function ReconcilePanel(): React.JSX.Element {
             · {data.upToDate.length} up to date
           </p>
           <p>Preview only — run `reconcile-fleet` (CLI) to apply.</p>
+          {history.data !== null && history.data.length > 0 && (
+            <table>
+              <caption>Recent reconcile runs (audit trail)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Target</th>
+                  <th scope="col">Reconciled</th>
+                  <th scope="col">Failures</th>
+                  <th scope="col">Outcome</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.data.map((h) => (
+                  <tr key={`${h.at}-${h.actor?.id ?? ''}`}>
+                    <td>{h.at}</td>
+                    <td>{h.context?.target ?? '—'}</td>
+                    <td>{h.context?.reconciled ?? 0}</td>
+                    <td>{h.context?.partial ?? 0}</td>
+                    <td>{h.outcome}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
           {data.perTenant.length > 0 && (
             <table>
               <caption>Versions each behind tenant would receive</caption>

@@ -171,6 +171,14 @@ export function createDashboard(options: DashboardOptions): Hono {
     return c.json(await options.tf.reconcilePlan());
   });
 
+  // Recent reconcile history from the persisted audit trail ([] without an audit store).
+  app.get('/api/reconcile-history', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'tenant:read')) return c.json({ error: 'forbidden' }, 403);
+    return c.json({ history: await options.tf.reconcileHistory() });
+  });
+
   // Serve the built SPA (registered AFTER the /api routes so it never shadows them). serveStatic
   // calls next() on a miss, so the `*` fallback returns index.html for client-side routes.
   if (options.staticRoot !== undefined) {
