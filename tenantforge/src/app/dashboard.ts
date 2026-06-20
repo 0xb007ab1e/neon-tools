@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { z } from 'zod';
 import { can } from '../core/index.js';
@@ -24,6 +25,13 @@ export interface DashboardOptions {
   ttlMs?: number;
   /** Injectable clock (ms). Defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * Filesystem path to the built SPA (`dashboard/dist`). When set, the dashboard also **serves the
+   * static front-end** (index + hashed assets) so a production deploy needs no separate web server;
+   * unknown sub-paths fall back to `index.html` (client-side routing). Unset = JSON API only (the
+   * SPA is served by Vite in dev).
+   */
+  staticRoot?: string;
 }
 
 const LoginSchema = z.object({ token: z.string().min(1) });
@@ -154,6 +162,19 @@ export function createDashboard(options: DashboardOptions): Hono {
     const from = new Date(to.getFullYear(), to.getMonth(), 1);
     return c.json(await options.tf.costReport({ from, to }));
   });
+
+  // Serve the built SPA (registered AFTER the /api routes so it never shadows them). serveStatic
+  // calls next() on a miss, so the `*` fallback returns index.html for client-side routes.
+  if (options.staticRoot !== undefined) {
+    const root = options.staticRoot;
+    // This sub-app is mounted at /dashboard, but serveStatic resolves files from the *original*
+    // (un-stripped) request path — strip the mount prefix so `/dashboard/assets/x` → `root/assets/x`.
+    const rewriteRequestPath = (p: string): string => p.replace(/^\/dashboard/, '') || '/';
+    // Canonical Hono SPA recipe: serve a real file when it exists (serveStatic calls next() on a
+    // miss), otherwise fall back to index.html for client-side routes.
+    app.get('/*', serveStatic({ root, rewriteRequestPath }));
+    app.get('/*', serveStatic({ path: 'index.html', root }));
+  }
 
   return app;
 }

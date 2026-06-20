@@ -8,6 +8,15 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Production SPA serving from the control-plane server** — the dashboard backend can now also serve
+  the **built front-end** (`dashboard/dist`), so a production deploy needs no separate static web
+  server. Set `TENANTFORGE_DASHBOARD_DIST` (alongside `TENANTFORGE_DASHBOARD_SECRET`) and the server
+  serves `index.html` + hashed assets under `/dashboard`, with **SPA fallback** to `index.html` for
+  unknown sub-paths — registered **after** the `/api` routes so it never shadows them. The Vite
+  `base` is now `/dashboard/` (the app is served under that path in dev and prod alike); the built
+  SPA ships in the package `files`. Static serving is opt-in (unset = JSON API only, SPA served by
+  Vite in dev). Covered by tests (index, hashed asset, SPA fallback, API-not-shadowed, API-only mode).
+
 - **React/a11y lint coverage for the dashboard SPA** — `dashboard/` is no longer eslint-ignored; a
   dedicated flat-config block lints it with **eslint-plugin-react** + **react-hooks** (rules-of-hooks
   and exhaustive-deps as errors) + **eslint-plugin-jsx-a11y** (recommended) on top of the

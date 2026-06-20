@@ -170,11 +170,14 @@ exits non-zero on a violation (cron/CI gate). Evidence, not legal certification.
 **Cost / margin:** `tf.costReport(period)` (CLI `cost-report`, HTTP `GET /v1/cost/report`, dashboard panel) estimates each tenant's Neon cost (from `TENANTFORGE_COST_RATES`) vs. its price (`metadata.priceUsd`) and flags unprofitable/unpriced tenants — a read-only **cost-attribution estimate**, not an invoice.
 
 **Web dashboard:** a React/Vite SPA (`dashboard/`) gives operators a browser view of the control
-plane — v1 panel is the compliance report. It logs in with an operator token exchanged for an
-**HttpOnly session cookie** by the `/dashboard` backend (mounted when `TENANTFORGE_DASHBOARD_SECRET`
-is set), then reads `/dashboard/api/*`. WCAG 2.2 AA semantic HTML. Dev: `pnpm dashboard:dev`
-(tailnet-only — loopback by default, `DASHBOARD_HOST` for a Tailscale IP; never public). The
-CLI/HTTP/MCP surfaces remain the automation path; the dashboard is the human window onto each feature.
+plane — panels for compliance, fleet drift, and cost/margin. It logs in with an operator token
+exchanged for an **HttpOnly session cookie** by the `/dashboard` backend (mounted when
+`TENANTFORGE_DASHBOARD_SECRET` is set), then reads `/dashboard/api/*`. WCAG 2.2 AA semantic HTML
+(enforced by jsx-a11y lint + axe tests). Dev: `pnpm dashboard:dev` (tailnet-only — loopback by
+default, `DASHBOARD_HOST` for a Tailscale IP; never public). In **production**, set
+`TENANTFORGE_DASHBOARD_DIST=./dashboard/dist` (after `pnpm dashboard:build`) and the control-plane
+server serves the built SPA under `/dashboard` itself — no separate web server. The CLI/HTTP/MCP
+surfaces remain the automation path; the dashboard is the human window onto each feature.
 
 **Per-tenant quotas:** `tf.checkQuota(id, period, quota)` / `checkQuotas(...)` (CLI `check-quotas
 --max-storage-gb / --max-compute-seconds`) meter consumption and evaluate it against per-tenant

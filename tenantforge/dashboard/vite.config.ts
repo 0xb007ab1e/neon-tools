@@ -5,6 +5,9 @@ import { defineConfig } from 'vite';
 // (e.g. 100.x.y.z) to reach it from a tailnet device. NEVER bind 0.0.0.0 / use Funnel (public).
 export default defineConfig({
   root: import.meta.dirname,
+  // Served under /dashboard by the control-plane server, so assets are referenced absolutely from
+  // there (in dev too: Vite serves the app at http://<host>:5173/dashboard/).
+  base: '/dashboard/',
   plugins: [react()],
   server: {
     host: process.env.DASHBOARD_HOST ?? '127.0.0.1',

@@ -18,6 +18,7 @@
   },
   "files": [
     "dist",
+    "dashboard/dist",
     "migrations"
   ],
   "scripts": {
