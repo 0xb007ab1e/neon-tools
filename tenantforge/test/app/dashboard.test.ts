@@ -129,3 +129,73 @@ describe('dashboard backend', () => {
     expect((await server.request('/dashboard/api/session')).status).toBe(404);
   });
 });
+
+describe('dashboard reconcile execution (gated)', () => {
+  const catalog = [{ version: '0001', sql: '-- 1' }];
+  const report = { target: '0001', total: 1, alreadyAtLatest: 0, reconciled: ['t1'], partial: [] };
+  const reconcileTf = () => fakeTf({ reconcileFleet: async () => report });
+
+  /** Server with a reconcile catalog wired + the given operator credentials. */
+  const execServer = (role: 'admin' | 'operator' | 'readonly', token: string) =>
+    createHttpServer(reconcileTf(), {
+      credentials: [{ id: role, role, token }],
+      dashboardSecret: 'session-secret',
+      dashboardReconcileCatalog: catalog,
+    });
+
+  it('reports capabilities (executable + mayExecute) for an admin', async () => {
+    const server = execServer('admin', 'a');
+    const cookie = cookieOf(await login(server, 'a'));
+    const res = await server.request('/dashboard/api/reconcile/capabilities', {
+      headers: { cookie },
+    });
+    expect(await res.json()).toEqual({ executable: true, mayExecute: true });
+  });
+
+  it('executes a reconcile for a tenant:provision holder (admin) and returns the report', async () => {
+    const server = execServer('admin', 'a');
+    const cookie = cookieOf(await login(server, 'a'));
+    const res = await server.request('/dashboard/api/reconcile', {
+      method: 'POST',
+      headers: { cookie },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(report);
+  });
+
+  it('forbids execution for a readonly principal (403, deny by default)', async () => {
+    const server = execServer('readonly', 'r');
+    const cookie = cookieOf(await login(server, 'r'));
+    const caps = await server.request('/dashboard/api/reconcile/capabilities', {
+      headers: { cookie },
+    });
+    expect(await caps.json()).toEqual({ executable: true, mayExecute: false });
+    const res = await server.request('/dashboard/api/reconcile', {
+      method: 'POST',
+      headers: { cookie },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('requires a session for execution (401)', async () => {
+    const server = execServer('admin', 'a');
+    expect((await server.request('/dashboard/api/reconcile', { method: 'POST' })).status).toBe(401);
+  });
+
+  it('409s when no reconcile catalog is configured (execution disabled)', async () => {
+    const server = createHttpServer(reconcileTf(), {
+      token: 'a',
+      dashboardSecret: 'session-secret',
+    });
+    const cookie = cookieOf(await login(server, 'a'));
+    const caps = await server.request('/dashboard/api/reconcile/capabilities', {
+      headers: { cookie },
+    });
+    expect(await caps.json()).toEqual({ executable: false, mayExecute: true });
+    const res = await server.request('/dashboard/api/reconcile', {
+      method: 'POST',
+      headers: { cookie },
+    });
+    expect(res.status).toBe(409);
+  });
+});

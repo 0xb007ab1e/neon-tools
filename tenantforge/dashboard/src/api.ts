@@ -156,3 +156,31 @@ export async function fetchReconcileHistory(): Promise<ReconcileHistoryEntry[]> 
   if (!res.ok) throw new Error('Could not load reconcile history');
   return ((await res.json()) as { history: ReconcileHistoryEntry[] }).history;
 }
+
+/** Whether reconcile can be executed here (a SQL catalog is wired) and whether this user may. */
+export interface ReconcileCapabilities {
+  executable: boolean;
+  mayExecute: boolean;
+}
+
+/** Load reconcile execution capabilities. */
+export async function fetchReconcileCapabilities(): Promise<ReconcileCapabilities> {
+  const res = await fetch(`${BASE}/reconcile/capabilities`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load reconcile capabilities');
+  return (await res.json()) as ReconcileCapabilities;
+}
+
+/** Result summary of executing a reconcile (subset of the server's FleetReconcileReport). */
+export interface ReconcileResult {
+  target: string | null;
+  reconciled: string[];
+  partial: { tenantId: string }[];
+  canaryAborted?: boolean;
+}
+
+/** Execute a fleet reconcile (mutating; requires tenant:provision). Throws on a non-2xx response. */
+export async function runReconcile(): Promise<ReconcileResult> {
+  const res = await fetch(`${BASE}/reconcile`, { method: 'POST', credentials: 'include' });
+  if (!res.ok) throw new Error(res.status === 403 ? 'Not permitted' : 'Reconcile failed');
+  return (await res.json()) as ReconcileResult;
+}

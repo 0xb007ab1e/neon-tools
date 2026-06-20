@@ -65,8 +65,9 @@ painful to build correctly.
   its **missing versions in order, stopping at a tenant's first failure** (ordered-dependency-safe),
   failure-isolated and idempotent/resumable, with an optional **canary**. Preview first with
   `reconcilePlan()` / `reconcile-fleet --plan` / HTTP `GET /v1/fleet/reconcile` / the dashboard
-  reconcile panel (read-only — no SQL needed). Execution needs the SQL catalog, so it's a
-  library/CLI op.
+  reconcile panel (read-only — no SQL needed). Execution needs the SQL catalog: the library/CLI, or —
+  when the server is started with `TENANTFORGE_MIGRATIONS_DIR` — a **`tenant:provision`-gated**
+  "Run reconcile" button in the dashboard (`POST /dashboard/api/reconcile`, CSRF-defended, audited).
 - **Lifecycle** — suspend / resume / **offboard** (archive: retain the project scaled-to-zero,
   reversible) → **purge** (irreversible delete). `purge-expired` is the scheduled sweep that purges
   archived tenants past `TENANTFORGE_RETENTION_DAYS` (run by a cron / K8s CronJob).

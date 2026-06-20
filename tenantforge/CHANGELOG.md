@@ -27,6 +27,18 @@ All notable changes to TenantForge are documented here. The format follows
   engine (meter + plan fee, unknown/unprovisioned, failure-isolated fleet), facade, HTTP, and
   dashboard (axe) tests.
 
+- **Dashboard-initiated fleet reconcile (gated mutating action)** — execute a reconcile from the
+  browser, not just preview it. When the server is configured with a migration catalog
+  (`TENANTFORGE_MIGRATIONS_DIR`, loaded at startup), the dashboard exposes a **`tenant:provision`-
+  gated** `POST /dashboard/api/reconcile` (deny-by-default — readonly/unprivileged get 403; the
+  `SameSite=Strict` session cookie defends CSRF; the run is audited via `fleet.reconcile`) plus a
+  `GET …/reconcile/capabilities` so the SPA shows a **"Run reconcile"** button only when execution is
+  wired _and_ the operator may. Clicking confirms, then POSTs and surfaces the result. Execution is
+  off unless the catalog env is set (preview-only otherwise — the server has no SQL to apply).
+  Covered by dashboard backend tests (capabilities, execute-as-admin, **403 readonly**, 401 no
+  session, **409 no catalog**) and an SPA run-flow test (confirm → POST → result; button hidden when
+  not executable).
+
 - **Fleet drift reconciliation** (`docs/research/pivot-directions.md` #2) — the actuator that turns
   the read-only drift report into action: bring every behind/failed active tenant up to a target
   catalog version. The pure `planFleetReconcile` (core, 100%) computes each tenant's **ordered

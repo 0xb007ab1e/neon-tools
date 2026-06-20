@@ -47,6 +47,8 @@ export interface HttpServerOptions {
   dashboardSecret?: string;
   /** Path to the built SPA (`dashboard/dist`); when set, the dashboard also serves the front-end. */
   dashboardStaticRoot?: string;
+  /** Migration SQL catalog; when set, the dashboard can EXECUTE a reconcile (tenant:provision-gated). */
+  dashboardReconcileCatalog?: readonly import('../adapters/fleet-orchestrator.js').FleetMigrationSpec[];
   /** Injectable clock (ms) for rate limiting — defaults to `Date.now`. */
   now?: () => number;
   /**
@@ -178,6 +180,9 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
         now: () => now(),
         ...(options.dashboardStaticRoot !== undefined
           ? { staticRoot: options.dashboardStaticRoot }
+          : {}),
+        ...(options.dashboardReconcileCatalog !== undefined
+          ? { reconcileCatalog: options.dashboardReconcileCatalog }
           : {}),
       }),
     );
