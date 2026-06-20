@@ -15,6 +15,18 @@ All notable changes to TenantForge are documented here. The format follows
   returns `[]` when no audit store is wired (`TENANTFORGE_AUDIT_LOG=pg` persists the trail). Covered
   by facade (records a run → reads it back; `[]` without a store), HTTP, and dashboard (axe) tests.
 
+- **Invoice generation (usage-based billing documents)** — turn metered usage into per-tenant
+  **invoice documents**: the pure `buildInvoice` (core, 100%) bills each tenant's consumption at the
+  operator's **billing (sell) rates** (`TENANTFORGE_BILLING_RATES`, distinct from the wholesale
+  `TENANTFORGE_COST_RATES`) plus a flat plan fee (tenant `metadata.priceUsd`), producing line items +
+  total. New `InvoiceEngine` + facade `invoice(id, period)` / `invoiceFleet(period)` (failure-
+  isolated), CLI `invoice` / `invoice-fleet`, HTTP `GET /v1/tenants/:id/invoice` + `GET /v1/invoices`
+  (`tenant:read`), and a **dashboard invoices panel**. **Scope/honesty:** this produces billable
+  **artifacts** (amounts rounded to cents) — it does **not** charge a card; wiring the total into
+  Stripe/a PSP is a separate, credential-bearing integration left to the operator. Covered by core,
+  engine (meter + plan fee, unknown/unprovisioned, failure-isolated fleet), facade, HTTP, and
+  dashboard (axe) tests.
+
 - **Fleet drift reconciliation** (`docs/research/pivot-directions.md` #2) — the actuator that turns
   the read-only drift report into action: bring every behind/failed active tenant up to a target
   catalog version. The pure `planFleetReconcile` (core, 100%) computes each tenant's **ordered

@@ -1,10 +1,14 @@
 import { z } from 'zod';
 import { KNOWN_REGIONS } from '../core/regions.js';
 import { ROLES, isRole } from '../core/index.js';
-import type { CostRates } from '../core/index.js';
+import type { CostRates, BillingRates } from '../core/index.js';
 import type { HttpCredential } from './http-server.js';
 
-/** Unit cost rates (USD) for the cost/margin report; all optional non-negative numbers. */
+/**
+ * Per-unit rates (USD) — all optional non-negative numbers. Used for both the **cost** rates (Neon's
+ * wholesale cost) and the **billing** rates (the price charged to tenants); the two shapes are
+ * identical, only their meaning differs.
+ */
 const CostRatesSchema = z
   .object({
     computeSecondUsd: z.number().nonnegative().optional(),
@@ -148,6 +152,10 @@ const EnvSchema = z
     // Unit cost rates for the cost/margin report, as a JSON object of USD-per-unit numbers, e.g.
     // {"computeSecondUsd":0.00016,"storageByteUsd":1.5e-10}. Unset = zero cost (margin = price).
     TENANTFORGE_COST_RATES: z.string().optional(),
+    // Per-unit BILLING (sell) rates for invoice generation, same JSON shape as the cost rates — the
+    // prices charged to tenants (distinct from cost). Unset = usage not billed (invoice = plan fee
+    // from metadata.priceUsd only). Generates invoice documents; it does not charge a card.
+    TENANTFORGE_BILLING_RATES: z.string().optional(),
     // Outbound lifecycle webhook (optional): HMAC-signed POST of each event to an external endpoint.
     TENANTFORGE_WEBHOOK_URL: z.string().url().optional(),
     TENANTFORGE_WEBHOOK_SECRET: z.string().min(1).optional(),
@@ -311,6 +319,8 @@ export interface Config {
   dashboardDist?: string;
   /** Unit cost rates (USD) for the cost/margin report; absent ⇒ zero cost. */
   costRates?: CostRates;
+  /** Per-unit billing (sell) rates (USD) for invoice generation; absent ⇒ usage not billed. */
+  billingRates?: BillingRates;
   /** Outbound lifecycle webhook (set only when both URL + secret are configured). */
   webhook?: { url: string; secret: string; eventTypes?: string[] };
   /** Port for the HTTP entrypoint. */
@@ -362,6 +372,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       throw new Error('TENANTFORGE_COST_RATES must be valid JSON');
     }
     config.costRates = CostRatesSchema.parse(raw) as CostRates;
+  }
+  if (parsed.TENANTFORGE_BILLING_RATES !== undefined) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(parsed.TENANTFORGE_BILLING_RATES);
+    } catch {
+      throw new Error('TENANTFORGE_BILLING_RATES must be valid JSON');
+    }
+    config.billingRates = CostRatesSchema.parse(raw) as BillingRates;
   }
   if (parsed.TENANTFORGE_AUTH_MODE === 'oidc') {
     // superRefine guarantees issuer/audience/jwksUri are present for this mode.

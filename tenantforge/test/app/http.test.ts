@@ -232,6 +232,37 @@ describe('HTTP control-plane', () => {
     expect(bad.status).toBe(400);
   });
 
+  it('serves fleet + per-tenant invoices (tenant:read) and 400s a bad date', async () => {
+    const fleet = { generatedAt: 'x', invoices: [], unmetered: [] };
+    const inv = {
+      tenantId: 't1',
+      periodStart: 'a',
+      periodEnd: 'b',
+      currency: 'USD',
+      generatedAt: 'x',
+      lineItems: [],
+      totalUsd: 0,
+    };
+    const server = app({
+      invoiceFleet: async () => fleet,
+      invoice: async () => inv,
+    });
+    const f = await server.request('/v1/invoices', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(f.status).toBe(200);
+    expect(await f.json()).toEqual(fleet);
+    const one = await server.request('/v1/tenants/t1/invoice', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(one.status).toBe(200);
+    expect(await one.json()).toEqual(inv);
+    const bad = await server.request('/v1/invoices?to=nope', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it('serves the fleet reconcile plan (read-only, tenant:read), honoring ?target', async () => {
     const plan = {
       target: '0003',

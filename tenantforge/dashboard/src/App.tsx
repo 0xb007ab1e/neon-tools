@@ -3,6 +3,7 @@ import {
   fetchCompliance,
   fetchCost,
   fetchDrift,
+  fetchInvoices,
   fetchReconcilePlan,
   fetchReconcileHistory,
   fetchSession,
@@ -11,6 +12,7 @@ import {
   type ComplianceReport,
   type CostReport,
   type DriftReport,
+  type FleetInvoiceReport,
   type ReconcilePlan,
   type ReconcileHistoryEntry,
   type Session,
@@ -119,6 +121,7 @@ function DashboardView(props: {
         <DriftPanel />
         <ReconcilePanel />
         <CostPanel />
+        <InvoicesPanel />
       </main>
     </div>
   );
@@ -317,6 +320,44 @@ function ReconcilePanel(): React.JSX.Element {
                   <tr key={t.tenantId}>
                     <th scope="row">{t.tenantId}</th>
                     <td>{t.missing.join(', ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function InvoicesPanel(): React.JSX.Element {
+  const { data, error } = usePanelData<FleetInvoiceReport>(fetchInvoices);
+  return (
+    <Panel id="invoices-h" title="Invoices (this month)" error={error} loading={data === null}>
+      {data !== null && (
+        <div>
+          <p>
+            {data.invoices.length} invoice(s) generated
+            {data.unmetered.length > 0 ? ` · ${data.unmetered.length} unmetered` : ''} — documents,
+            not charges.
+          </p>
+          {data.invoices.length > 0 && (
+            <table>
+              <caption>Per-tenant invoice totals</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.invoices.map((inv) => (
+                  <tr key={inv.tenantId}>
+                    <th scope="row">{inv.tenantId}</th>
+                    <td>
+                      {inv.currency} {inv.totalUsd}
+                    </td>
                   </tr>
                 ))}
               </tbody>

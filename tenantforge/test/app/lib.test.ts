@@ -1007,6 +1007,48 @@ describe('createTenantForge.usage', () => {
   });
 });
 
+describe('createTenantForge.invoice', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  const provider = {
+    getProjectConsumption: () =>
+      Promise.resolve([
+        {
+          computeTimeSeconds: 100,
+          activeTimeSeconds: 0,
+          writtenDataBytes: 0,
+          syntheticStorageBytes: 0,
+        },
+      ]),
+  };
+
+  it('fails closed when no usage provider is configured', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    await expect(tf.invoice('t', period)).rejects.toThrow(/requires a configured usage provider/);
+    await expect(tf.invoiceFleet(period)).rejects.toThrow(/requires a configured usage provider/);
+  });
+
+  it('generates an invoice billing usage at the billing rates', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      billingRates: { computeSecondUsd: 0.02 },
+      defaultRegion: 'aws-us-east-1',
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    const inv = await tf.invoice(tenant.id, period);
+    expect(inv.totalUsd).toBe(2); // 100 * 0.02
+    const fleet = await tf.invoiceFleet(period);
+    expect(fleet.invoices).toHaveLength(1);
+  });
+});
+
 describe('createTenantForge.provision residency', () => {
   const make = (allowedRegions?: string[]) => {
     const provisioning = fakeProvisioning();

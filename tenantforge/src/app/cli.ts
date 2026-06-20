@@ -619,6 +619,71 @@ const costReport = defineCommand({
   },
 });
 
+/** Parse `--from`/`--to` into a period defaulting to the current calendar month. */
+function monthPeriod(from?: string, to?: string): { from: Date; to: Date } {
+  const end = to !== undefined ? new Date(to) : new Date();
+  const start =
+    from !== undefined ? new Date(from) : new Date(end.getFullYear(), end.getMonth(), 1);
+  return { from: start, to: end };
+}
+
+const invoice = defineCommand({
+  meta: {
+    name: 'invoice',
+    description: 'Generate an invoice document for a tenant (usage × billing rates + plan fee)',
+  },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    from: { type: 'string', description: 'Period start (ISO-8601); default month start' },
+    to: { type: 'string', description: 'Period end (ISO-8601); default now' },
+    json: { type: 'boolean', description: 'Emit the invoice as JSON', default: false },
+  },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const inv = await tf.invoice(args.id, monthPeriod(args.from, args.to));
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(inv, null, 2)}\n`);
+        return;
+      }
+      process.stdout.write(
+        `invoice ${inv.tenantId}  ${inv.periodStart}..${inv.periodEnd}  total ${inv.currency} ${inv.totalUsd}\n`,
+      );
+      for (const li of inv.lineItems) {
+        process.stdout.write(`  ${li.description}: ${li.quantity} ${li.unit} → $${li.amountUsd}\n`);
+      }
+    });
+  },
+});
+
+const invoiceFleet = defineCommand({
+  meta: {
+    name: 'invoice-fleet',
+    description: 'Generate invoices for every active tenant (failure-isolated)',
+  },
+  args: {
+    from: { type: 'string', description: 'Period start (ISO-8601); default month start' },
+    to: { type: 'string', description: 'Period end (ISO-8601); default now' },
+    json: { type: 'boolean', description: 'Emit the full report as JSON', default: false },
+  },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const report = await tf.invoiceFleet(monthPeriod(args.from, args.to));
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+        return;
+      }
+      process.stdout.write(
+        `invoices: ${report.invoices.length} generated` +
+          (report.unmetered.length > 0 ? ` · ${report.unmetered.length} unmetered` : '') +
+          '\n',
+      );
+      for (const inv of report.invoices) {
+        process.stdout.write(`  ${inv.tenantId}: ${inv.currency} ${inv.totalUsd}\n`);
+      }
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -647,6 +712,8 @@ const main = defineCommand({
     'check-quotas': checkQuotas,
     'compliance-report': complianceReport,
     'cost-report': costReport,
+    invoice,
+    'invoice-fleet': invoiceFleet,
   },
 });
 
