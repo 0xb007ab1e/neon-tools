@@ -684,6 +684,65 @@ describe('createTenantForge.migrateFleet', () => {
   });
 });
 
+describe('createTenantForge.reconcileFleet', () => {
+  const specs = [
+    { version: '0001', sql: '-- 1' },
+    { version: '0002', sql: '-- 2' },
+  ];
+
+  it('fails closed when no migration runner is configured', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    await expect(tf.reconcileFleet(specs)).rejects.toThrow(/no migration runner configured/);
+  });
+
+  it('reconciles the fleet to latest, applying each tenant its missing versions in order', async () => {
+    const applied: { uri: string; version: string }[] = [];
+    const migrationRunner: MigrationRunner = {
+      applyToTenant: (uri, m) => {
+        applied.push({ uri, version: m.version });
+        return Promise.resolve();
+      },
+    };
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      migrationRunner,
+      defaultRegion: 'aws-us-east-1',
+    });
+    await tf.provision({ slug: 'acme' });
+
+    const report = await tf.reconcileFleet(specs);
+    expect(report.target).toBe('0002');
+    expect(report.reconciled).toHaveLength(1);
+    expect(report.partial).toEqual([]);
+    expect(applied.map((a) => a.version)).toEqual(['0001', '0002']); // ordered
+
+    // Re-running is idempotent: the tenant is already at the target.
+    const second = await tf.reconcileFleet(specs);
+    expect(second.alreadyAtLatest).toBe(1);
+    expect(second.reconciled).toEqual([]);
+  });
+
+  it('reconcilePlan previews the work without a runner (read-only)', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    // No migrations registered yet → empty catalog → nothing pending.
+    const plan = await tf.reconcilePlan();
+    expect(plan.target).toBeNull();
+    expect(plan.pendingTenants).toEqual([]);
+  });
+});
+
 describe('createTenantForge.purgeExpired', () => {
   let registry: ReturnType<typeof fakeRegistry>;
   let provisioning: ReturnType<typeof fakeProvisioning>;

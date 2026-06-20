@@ -8,6 +8,19 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Fleet drift reconciliation** (`docs/research/pivot-directions.md` #2) — the actuator that turns
+  the read-only drift report into action: bring every behind/failed active tenant up to a target
+  catalog version. The pure `planFleetReconcile` (core, 100%) computes each tenant's **ordered
+  missing versions** up to the target; the orchestrator's `reconcileFleet` applies them **in order,
+  stopping at a tenant's first failure** (a later migration must never run before an earlier one
+  succeeds — unlike `migrateFleet`, which applies one version fleet-wide), failure-isolated,
+  idempotent/resumable, with an optional **canary** (abort the fleet if it fails). Surfaces:
+  `TenantForge.reconcileFleet(catalog, opts)` + CLI `reconcile-fleet <migrations-dir>` execute (need
+  the SQL catalog); `reconcilePlan()` / `reconcile-fleet --plan` / HTTP `GET /v1/fleet/reconcile`
+  (`tenant:read`) / a **dashboard reconcile panel** preview the plan read-only (no SQL needed).
+  Covered by core, orchestrator (ordered apply, stop-on-failure, isolation, canary-abort, idempotent
+  skip, checksum-drift), facade, HTTP, and dashboard (axe) tests.
+
 - **Production SPA serving from the control-plane server** — the dashboard backend can now also serve
   the **built front-end** (`dashboard/dist`), so a production deploy needs no separate static web
   server. Set `TENANTFORGE_DASHBOARD_DIST` (alongside `TENANTFORGE_DASHBOARD_SECRET`) and the server

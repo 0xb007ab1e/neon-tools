@@ -3,12 +3,14 @@ import {
   fetchCompliance,
   fetchCost,
   fetchDrift,
+  fetchReconcilePlan,
   fetchSession,
   login,
   logout,
   type ComplianceReport,
   type CostReport,
   type DriftReport,
+  type ReconcilePlan,
   type Session,
 } from './api';
 
@@ -113,6 +115,7 @@ function DashboardView(props: {
       <main>
         <CompliancePanel />
         <DriftPanel />
+        <ReconcilePanel />
         <CostPanel />
       </main>
     </div>
@@ -255,6 +258,43 @@ function DriftPanel(): React.JSX.Element {
             </tr>
           </tbody>
         </table>
+      )}
+    </Panel>
+  );
+}
+
+function ReconcilePanel(): React.JSX.Element {
+  const { data, error } = usePanelData<ReconcilePlan>(fetchReconcilePlan);
+  return (
+    <Panel id="reconcile-h" title="Fleet reconcile (plan)" error={error} loading={data === null}>
+      {data !== null && (
+        <div>
+          <p>
+            {data.pendingTenants.length} tenant(s) behind target{' '}
+            <strong>{data.target ?? 'none'}</strong> · {data.totalMissing} migration application(s)
+            · {data.upToDate.length} up to date
+          </p>
+          <p>Preview only — run `reconcile-fleet` (CLI) to apply.</p>
+          {data.perTenant.length > 0 && (
+            <table>
+              <caption>Versions each behind tenant would receive</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Missing versions (in order)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.perTenant.map((t) => (
+                  <tr key={t.tenantId}>
+                    <th scope="row">{t.tenantId}</th>
+                    <td>{t.missing.join(', ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
     </Panel>
   );

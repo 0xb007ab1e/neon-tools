@@ -42,6 +42,13 @@ const cost = {
   unmetered: [],
   totals: { tenants: 1, costUsd: 10, priceUsd: 5, marginUsd: -5, unprofitable: 1, unpriced: 0 },
 };
+const reconcile = {
+  target: '0003',
+  perTenant: [{ tenantId: 'tenant-behind', missing: ['0002', '0003'] }],
+  pendingTenants: ['tenant-behind'],
+  upToDate: [],
+  totalMissing: 2,
+};
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -64,6 +71,7 @@ beforeEach(() => {
       if (url.endsWith('/compliance'))
         return Promise.resolve(json({ report, digest: 'abc123def456' }));
       if (url.endsWith('/drift')) return Promise.resolve(json(drift));
+      if (url.endsWith('/reconcile')) return Promise.resolve(json(reconcile));
       if (url.endsWith('/cost')) return Promise.resolve(json(cost));
       return Promise.resolve(json({}, 404));
     }),
@@ -92,6 +100,11 @@ describe('dashboard App', () => {
     expect(
       await screen.findByRole('heading', { name: 'Fleet migration drift' }),
     ).toBeInTheDocument();
+    // Reconcile plan preview renders the behind tenant.
+    expect(
+      await screen.findByRole('heading', { name: 'Fleet reconcile (plan)' }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('tenant-behind')).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Cost & margin' })).toBeInTheDocument();
     // The unprofitable tenant row is rendered.
     expect(await screen.findByText('tenant-a')).toBeInTheDocument();

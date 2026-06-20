@@ -232,6 +232,30 @@ describe('HTTP control-plane', () => {
     expect(bad.status).toBe(400);
   });
 
+  it('serves the fleet reconcile plan (read-only, tenant:read), honoring ?target', async () => {
+    const plan = {
+      target: '0003',
+      perTenant: [{ tenantId: 't1', missing: ['0002', '0003'] }],
+      pendingTenants: ['t1'],
+      upToDate: [],
+      totalMissing: 2,
+      batches: [['t1']],
+    };
+    let seenTarget: string | undefined;
+    const server = app({
+      reconcilePlan: async (options) => {
+        seenTarget = options?.targetVersion;
+        return plan;
+      },
+    });
+    const res = await server.request('/v1/fleet/reconcile?target=0003', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(plan);
+    expect(seenTarget).toBe('0003');
+  });
+
   it('emits a keyset nextCursor on a full page and forwards it to the next request', async () => {
     const calls: Array<{ limit?: number; cursor?: { createdAt: Date; id: string } }> = [];
     const server = createHttpServer(

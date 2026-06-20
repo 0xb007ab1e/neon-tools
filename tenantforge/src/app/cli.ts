@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { defineCommand, runMain } from 'citty';
@@ -287,6 +288,74 @@ const migrateFleet = defineCommand({
   },
 });
 
+/** Read an ordered migration catalog from a directory of `*.sql` files (sorted by filename). */
+function readMigrationCatalog(dir: string): { version: string; sql: string }[] {
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.sql') && !f.endsWith('.down.sql'))
+    .sort()
+    .map((f) => ({ version: f.replace(/\.sql$/, ''), sql: readFileSync(join(dir, f), 'utf8') }));
+}
+
+const reconcileFleet = defineCommand({
+  meta: {
+    name: 'reconcile-fleet',
+    description:
+      'Bring behind/failed tenants up to the target version by applying their missing migrations',
+  },
+  args: {
+    dir: {
+      type: 'positional',
+      description: 'Directory of ordered migration .sql files (the catalog)',
+      required: true,
+    },
+    plan: { type: 'boolean', description: 'Preview only — show the plan, apply nothing' },
+    target: { type: 'string', description: 'Reconcile up to this version (default: latest)' },
+    canary: {
+      type: 'string',
+      description: 'Reconcile this tenant first; abort the fleet if it fails',
+    },
+    batch: {
+      type: 'string',
+      description: 'Max tenants reconciled concurrently per batch',
+      default: '10',
+    },
+  },
+  async run({ args }) {
+    const specs = readMigrationCatalog(args.dir);
+    const options = {
+      batchSize: Number(args.batch),
+      ...(args.target !== undefined ? { targetVersion: args.target } : {}),
+      ...(args.canary !== undefined ? { canaryTenantId: args.canary } : {}),
+    };
+    await withTenantForge(async (tf) => {
+      await tf.migrate();
+      if (args.plan) {
+        const plan = await tf.reconcilePlan(options);
+        process.stdout.write(
+          `reconcile plan → target ${plan.target ?? 'none'}: ${plan.pendingTenants.length} tenant(s) ` +
+            `behind (${plan.totalMissing} migration application(s)), ${plan.upToDate.length} up to date\n`,
+        );
+        for (const t of plan.perTenant) {
+          process.stdout.write(`  ${t.tenantId}: ${t.missing.join(', ')}\n`);
+        }
+        return;
+      }
+      const report = await tf.reconcileFleet(specs, options);
+      process.stdout.write(
+        `fleet reconcile → target ${report.target ?? 'none'}: ${report.reconciled.length} reconciled, ` +
+          `${report.partial.length} with failures, ${report.alreadyAtLatest} already at target ` +
+          `(${report.total} behind)${report.canaryAborted === true ? ' — CANARY ABORTED' : ''}\n`,
+      );
+      for (const p of report.partial) {
+        process.stdout.write(
+          `  FAILED ${p.tenantId} at ${p.failed?.version}: ${p.failed?.error}\n`,
+        );
+      }
+      if (report.partial.length > 0 || report.canaryAborted === true) process.exitCode = 1;
+    });
+  },
+});
+
 const enqueue = defineCommand({
   meta: {
     name: 'enqueue',
@@ -568,6 +637,7 @@ const main = defineCommand({
     purge,
     'purge-expired': purgeExpired,
     'migrate-fleet': migrateFleet,
+    'reconcile-fleet': reconcileFleet,
     snapshot,
     'snapshot-fleet': snapshotFleet,
     'prune-snapshots': pruneSnapshots,

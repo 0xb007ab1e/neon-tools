@@ -78,3 +78,9 @@ export {
   type TenantDrift,
   type TenantMigrationProgress,
 } from './fleet-drift.js';
+export {
+  planFleetReconcile,
+  type FleetReconcileInput,
+  type FleetReconcilePlan,
+  type TenantReconcilePlan,
+} from './fleet-reconcile.js';

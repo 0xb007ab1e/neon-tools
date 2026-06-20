@@ -17,12 +17,21 @@ const cost = {
   unmetered: [],
   totals: { tenants: 0, costUsd: 0, priceUsd: 0, marginUsd: 0, unprofitable: 0, unpriced: 0 },
 };
+const reconcile = {
+  target: '0003',
+  perTenant: [],
+  pendingTenants: [],
+  upToDate: [],
+  totalMissing: 0,
+  batches: [],
+};
 const app = () =>
   createHttpServer(
     fakeTf({
       complianceReport: async () => report as never,
       fleetStatus: async () => drift,
       costReport: async () => cost,
+      reconcilePlan: async () => reconcile,
     }),
     { token: TOKEN, dashboardSecret: 'session-secret' },
   );
@@ -60,8 +69,12 @@ describe('dashboard backend', () => {
     const c = await server.request('/dashboard/api/cost', { headers: { cookie } });
     expect(c.status).toBe(200);
     expect(await c.json()).toEqual(cost);
-    // Both panels require a session.
+    const r = await server.request('/dashboard/api/reconcile', { headers: { cookie } });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual(reconcile);
+    // The panels require a session.
     expect((await server.request('/dashboard/api/cost')).status).toBe(401);
+    expect((await server.request('/dashboard/api/reconcile')).status).toBe(401);
   });
 
   it('rejects an invalid operator token (401) and sets no cookie', async () => {
