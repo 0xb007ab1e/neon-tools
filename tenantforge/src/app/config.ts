@@ -124,6 +124,9 @@ const EnvSchema = z
     TENANTFORGE_IDEMPOTENCY_STORE: z.enum(['memory', 'pg']).default('memory'),
     // Cache getConnection resolutions for this many ms (0 = disabled). Process-local + tenant-keyed.
     TENANTFORGE_CONNECTION_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(0),
+    // Web dashboard: when set, mount the cookie-session dashboard backend at /dashboard. The value
+    // is the HMAC key that signs session cookies (a secret). Unset = dashboard disabled.
+    TENANTFORGE_DASHBOARD_SECRET: z.string().min(1).optional(),
     // Outbound lifecycle webhook (optional): HMAC-signed POST of each event to an external endpoint.
     TENANTFORGE_WEBHOOK_URL: z.string().url().optional(),
     TENANTFORGE_WEBHOOK_SECRET: z.string().min(1).optional(),
@@ -279,6 +282,8 @@ export interface Config {
   idempotencyStore: 'memory' | 'pg';
   /** Cache `getConnection` resolutions for this many ms (0 = disabled). */
   connectionCacheTtlMs: number;
+  /** Dashboard session-cookie HMAC key; set ⇒ the /dashboard backend is mounted. */
+  dashboardSecret?: string;
   /** Outbound lifecycle webhook (set only when both URL + secret are configured). */
   webhook?: { url: string; secret: string; eventTypes?: string[] };
   /** Port for the HTTP entrypoint. */
@@ -313,6 +318,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     connectionCacheTtlMs: parsed.TENANTFORGE_CONNECTION_CACHE_TTL_MS,
     authMode: parsed.TENANTFORGE_AUTH_MODE,
     port: parsed.TENANTFORGE_PORT,
+    ...(parsed.TENANTFORGE_DASHBOARD_SECRET !== undefined
+      ? { dashboardSecret: parsed.TENANTFORGE_DASHBOARD_SECRET }
+      : {}),
   };
   if (parsed.TENANTFORGE_AUTH_MODE === 'oidc') {
     // superRefine guarantees issuer/audience/jwksUri are present for this mode.

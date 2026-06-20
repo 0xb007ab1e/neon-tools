@@ -1,0 +1,77 @@
+:root {
+  color-scheme: light dark;
+  --fg: #1a1a1a;
+  --bg: #ffffff;
+  --accent: #0b5; /* contrast-checked against bg/fg for text use below */
+  --bad: #b00020;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font:
+    16px/1.5 system-ui,
+    sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+.app {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+:focus-visible {
+  outline: 3px solid #0a64ff;
+  outline-offset: 2px;
+}
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid #8884;
+}
+.login {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 22rem;
+}
+input,
+button {
+  font: inherit;
+  padding: 0.5rem;
+}
+button {
+  cursor: pointer;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0 1.5rem;
+}
+th,
+td {
+  border: 1px solid #8886;
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+caption {
+  text-align: left;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.status {
+  font-weight: 600;
+}
+.status-ok {
+  color: #0a6b2f;
+}
+.status-bad {
+  color: var(--bad);
+}
+.error {
+  color: var(--bad);
+  font-weight: 600;
+}

@@ -8,6 +8,21 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Web dashboard (React/Vite SPA + cookie-session backend)** — the per-feature browser dashboard
+  (new project rule). **Backend** (`src/app/dashboard.ts`, mounted at `/dashboard` when
+  `TENANTFORGE_DASHBOARD_SECRET` is set): a **signed, HttpOnly, `SameSite=Strict` session cookie**
+  minted from an operator token (no token in browser storage; CSRF-defended; constant-time MAC,
+  fail-closed on missing/tampered/expired). `POST/GET/DELETE /dashboard/api/session` (login / whoami
+  / logout) reuse the API authenticator; `GET /dashboard/api/compliance` serves the report behind
+  `tenant:read`. **Frontend** (`dashboard/`, Vite + React 19 + TS): token login → **compliance
+  panel** (isolation / residency / inventory) as **WCAG 2.2 AA** semantic HTML (labelled form,
+  table captions + scope, status by text not color alone, focus-visible). Dev server is
+  **tailnet-only** (loopback by default; `DASHBOARD_HOST` for a Tailscale IP; never `0.0.0.0`/Funnel)
+  and proxies `/dashboard/api` to the control-plane server. Verified: strict `tsc` + `vite build` +
+  **jsdom/Testing-Library/axe** tests (login-gate + panel render, both axe-clean). _(Note: axe's
+  color-contrast rule can't run under jsdom — verified by design/manual.)_ The dashboard is
+  **additional** to the CLI/HTTP/MCP automation surfaces, which remain.
+
 - **Compliance report (fleet attestation)** — first build of the Neon-extension repositioning
   (`docs/research/pivot-directions.md` #1): `TenantForge.complianceReport()` (CLI `compliance-report
 [--json]`, HTTP `GET /v1/compliance/report`) emits a point-in-time, registry-derived attestation
