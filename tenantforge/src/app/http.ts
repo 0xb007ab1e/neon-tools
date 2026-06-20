@@ -74,6 +74,7 @@ function main(): void {
     rateLimit: config.rateLimit,
     ...(rateLimitStore !== undefined ? { rateLimitStore } : {}),
     ...(idempotencyStore !== undefined ? { idempotencyStore } : {}),
+    ...(config.dashboardSecret !== undefined ? { dashboardSecret: config.dashboardSecret } : {}),
     metrics: () => metrics.render(),
   });
 

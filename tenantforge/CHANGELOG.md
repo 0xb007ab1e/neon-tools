@@ -8,6 +8,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Web dashboard — backend slice (cookie-session API)** — first half of the per-feature web
+  dashboard (new project rule): a `/dashboard` backend (`src/app/dashboard.ts`) the SPA calls,
+  authenticated by a **signed, HttpOnly, `SameSite=Strict` session cookie** minted from an operator
+  token (no token in browser storage; CSRF-defended). `POST/GET/DELETE /dashboard/api/session`
+  (login / whoami / logout) reuse the API's authenticator; `GET /dashboard/api/compliance` serves the
+  compliance report behind `tenant:read`. Mounted only when `TENANTFORGE_DASHBOARD_SECRET` is set;
+  fail-closed on missing/tampered/expired cookies (constant-time MAC compare). The React/Vite SPA
+  view (the actual dashboard) follows. Backend unit-tested (login→cookie→panel, invalid token,
+  no/tampered session, logout, unmounted-without-secret).
+
 - **Compliance report (fleet attestation)** — first build of the Neon-extension repositioning
   (`docs/research/pivot-directions.md` #1): `TenantForge.complianceReport()` (CLI `compliance-report
 [--json]`, HTTP `GET /v1/compliance/report`) emits a point-in-time, registry-derived attestation

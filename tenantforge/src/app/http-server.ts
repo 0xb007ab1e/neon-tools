@@ -16,6 +16,7 @@ import type { Authenticator, HttpCredential, Principal } from '../ports/authenti
 import { createTokenAuthenticator } from '../adapters/auth/token-authenticator.js';
 import type { TenantForge } from './lib.js';
 import { runWithActor } from './actor-context.js';
+import { createDashboard } from './dashboard.js';
 
 // Re-export the auth types so existing importers (config) keep their import path.
 export type { HttpRole, HttpCredential, Principal, Authenticator } from '../ports/authenticator.js';
@@ -42,6 +43,8 @@ export interface HttpServerOptions {
   rateLimitStore?: RateLimitStore;
   /** Store for HTTP idempotency keys (replay POST retries). Defaults to in-memory (per-instance). */
   idempotencyStore?: IdempotencyStore;
+  /** When set, mount the cookie-session **dashboard** backend at `/dashboard` (HMAC session key). */
+  dashboardSecret?: string;
   /** Injectable clock (ms) for rate limiting — defaults to `Date.now`. */
   now?: () => number;
   /**
@@ -149,6 +152,19 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
   const idempotencyStore = options.idempotencyStore ?? createInMemoryIdempotencyStore();
 
   app.use('*', secureHeaders());
+
+  // Dashboard backend (cookie-session auth, its own routes) — mounted only when a session key is set.
+  if (options.dashboardSecret !== undefined) {
+    app.route(
+      '/dashboard',
+      createDashboard({
+        tf,
+        authenticator,
+        sessionSecret: options.dashboardSecret,
+        now: () => now(),
+      }),
+    );
+  }
 
   // Liveness: the process is up (static — no dependency checks).
   app.get('/health', (c) =>
