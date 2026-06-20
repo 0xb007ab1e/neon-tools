@@ -8,6 +8,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **React/a11y lint coverage for the dashboard SPA** — `dashboard/` is no longer eslint-ignored; a
+  dedicated flat-config block lints it with **eslint-plugin-react** + **react-hooks** (rules-of-hooks
+  and exhaustive-deps as errors) + **eslint-plugin-jsx-a11y** (recommended) on top of the
+  type-checked base. a11y is a non-negotiable mandate (master §1), so accessibility is now enforced
+  at lint time, not just hand-verified + axe-tested. `npm run lint` (CI `quality`) covers the
+  dashboard; no new findings (clean).
+
 - **Per-tenant cost / margin report + dashboard panels (cost, drift)** — the second Neon-extension
   direction (`docs/research/pivot-directions.md` #3) plus dashboard backfill. The pure
   `buildCostReport` (core, 100%) estimates each tenant's Neon cost from configured unit rates
