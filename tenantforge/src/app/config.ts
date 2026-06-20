@@ -138,6 +138,9 @@ const EnvSchema = z
     // Web dashboard: when set, mount the cookie-session dashboard backend at /dashboard. The value
     // is the HMAC key that signs session cookies (a secret). Unset = dashboard disabled.
     TENANTFORGE_DASHBOARD_SECRET: z.string().min(1).optional(),
+    // Path to the built SPA (`dashboard/dist`); when set, the dashboard also serves the front-end,
+    // so a production deploy needs no separate static web server. Unset = JSON API only.
+    TENANTFORGE_DASHBOARD_DIST: z.string().min(1).optional(),
     // Unit cost rates for the cost/margin report, as a JSON object of USD-per-unit numbers, e.g.
     // {"computeSecondUsd":0.00016,"storageByteUsd":1.5e-10}. Unset = zero cost (margin = price).
     TENANTFORGE_COST_RATES: z.string().optional(),
@@ -298,6 +301,8 @@ export interface Config {
   connectionCacheTtlMs: number;
   /** Dashboard session-cookie HMAC key; set ⇒ the /dashboard backend is mounted. */
   dashboardSecret?: string;
+  /** Path to the built SPA (`dashboard/dist`); set ⇒ the dashboard also serves the front-end. */
+  dashboardDist?: string;
   /** Unit cost rates (USD) for the cost/margin report; absent ⇒ zero cost. */
   costRates?: CostRates;
   /** Outbound lifecycle webhook (set only when both URL + secret are configured). */
@@ -336,6 +341,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: parsed.TENANTFORGE_PORT,
     ...(parsed.TENANTFORGE_DASHBOARD_SECRET !== undefined
       ? { dashboardSecret: parsed.TENANTFORGE_DASHBOARD_SECRET }
+      : {}),
+    ...(parsed.TENANTFORGE_DASHBOARD_DIST !== undefined
+      ? { dashboardDist: parsed.TENANTFORGE_DASHBOARD_DIST }
       : {}),
   };
 

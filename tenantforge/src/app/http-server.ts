@@ -45,6 +45,8 @@ export interface HttpServerOptions {
   idempotencyStore?: IdempotencyStore;
   /** When set, mount the cookie-session **dashboard** backend at `/dashboard` (HMAC session key). */
   dashboardSecret?: string;
+  /** Path to the built SPA (`dashboard/dist`); when set, the dashboard also serves the front-end. */
+  dashboardStaticRoot?: string;
   /** Injectable clock (ms) for rate limiting — defaults to `Date.now`. */
   now?: () => number;
   /**
@@ -162,6 +164,9 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
         authenticator,
         sessionSecret: options.dashboardSecret,
         now: () => now(),
+        ...(options.dashboardStaticRoot !== undefined
+          ? { staticRoot: options.dashboardStaticRoot }
+          : {}),
       }),
     );
   }
