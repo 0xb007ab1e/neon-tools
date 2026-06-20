@@ -44,6 +44,13 @@ export {
   type TenantUsageRow,
 } from './cost.js';
 export {
+  buildInvoice,
+  type BillingRates,
+  type Invoice,
+  type InvoiceLineItem,
+  type InvoiceOptions,
+} from './invoice.js';
+export {
   can,
   permissionsFor,
   isRole,

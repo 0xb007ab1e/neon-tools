@@ -74,6 +74,18 @@ const PurgeSchema = z.object({
   confirm: z.literal(true),
 });
 
+/** Parse `?from`/`?to` into a period (default: current calendar month → now); null on a bad date. */
+function invoicePeriod(c: Context<Env>, now: () => number): { from: Date; to: Date } | null {
+  const t = new Date(now());
+  const fromParam = c.req.query('from');
+  const toParam = c.req.query('to');
+  const from =
+    fromParam !== undefined ? new Date(fromParam) : new Date(t.getFullYear(), t.getMonth(), 1);
+  const to = toParam !== undefined ? new Date(toParam) : t;
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+  return { from, to };
+}
+
 /** Return an RFC 9457 problem+json response. */
 function problem(c: Context<Env>, status: number, title: string, detail?: string) {
   return c.json(
@@ -367,6 +379,28 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
     try {
       return c.json(await tf.costReport({ from, to }));
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // Fleet invoices for a period (?from/?to ISO; default current month). Read-only document generation.
+  app.get('/v1/invoices', requirePermission('tenant:read'), async (c) => {
+    const period = invoicePeriod(c, now);
+    if (period === null) return problem(c, 400, 'Bad Request', 'from/to must be ISO-8601 dates');
+    try {
+      return c.json(await tf.invoiceFleet(period));
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // A single tenant's invoice for a period.
+  app.get('/v1/tenants/:id/invoice', requirePermission('tenant:read'), async (c) => {
+    const period = invoicePeriod(c, now);
+    if (period === null) return problem(c, 400, 'Bad Request', 'from/to must be ISO-8601 dates');
+    try {
+      return c.json(await tf.invoice(c.req.param('id'), period));
     } catch (error) {
       return handleError(c, error);
     }

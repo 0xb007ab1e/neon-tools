@@ -112,6 +112,20 @@ export async function fetchCost(): Promise<CostReport> {
   return (await res.json()) as CostReport;
 }
 
+/** A fleet invoice run (mirrors the server's FleetInvoiceReport). */
+export interface FleetInvoiceReport {
+  generatedAt: string;
+  invoices: { tenantId: string; currency: string; totalUsd: number }[];
+  unmetered: string[];
+}
+
+/** Load the fleet invoices panel data (current month). */
+export async function fetchInvoices(): Promise<FleetInvoiceReport> {
+  const res = await fetch(`${BASE}/invoices`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load invoices');
+  return (await res.json()) as FleetInvoiceReport;
+}
+
 /** A fleet reconcile plan (mirrors core FleetReconcilePlan; read-only preview). */
 export interface ReconcilePlan {
   target: string | null;

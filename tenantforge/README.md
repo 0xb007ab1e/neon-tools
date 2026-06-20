@@ -179,6 +179,8 @@ excerpt** — the durable, queryable record behind the ephemeral stdout event st
 
 **Cost / margin:** `tf.costReport(period)` (CLI `cost-report`, HTTP `GET /v1/cost/report`, dashboard panel) estimates each tenant's Neon cost (from `TENANTFORGE_COST_RATES`) vs. its price (`metadata.priceUsd`) and flags unprofitable/unpriced tenants — a read-only **cost-attribution estimate**, not an invoice.
 
+**Invoices:** `tf.invoice(id, period)` / `invoiceFleet(period)` (CLI `invoice` / `invoice-fleet`, HTTP `GET /v1/tenants/:id/invoice` + `GET /v1/invoices`, dashboard panel) generate per-tenant **invoice documents** — usage billed at your **billing (sell) rates** (`TENANTFORGE_BILLING_RATES`) plus the flat plan fee (`metadata.priceUsd`), as line items + total. These are billable **artifacts**; charging them (Stripe/a PSP) is a separate integration left to the operator.
+
 **Web dashboard:** a React/Vite SPA (`dashboard/`) gives operators a browser view of the control
 plane — panels for compliance, fleet drift, and cost/margin. It logs in with an operator token
 exchanged for an **HttpOnly session cookie** by the `/dashboard` backend (mounted when

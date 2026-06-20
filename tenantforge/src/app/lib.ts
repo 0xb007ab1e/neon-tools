@@ -62,13 +62,21 @@ import {
   type ArchiveResult,
 } from '../adapters/backup-engine.js';
 import type { SnapshotProvider } from '../ports/snapshot-provider.js';
-import type { RetentionPolicy, Quota, CostRates, CostReport } from '../core/index.js';
+import type {
+  RetentionPolicy,
+  Quota,
+  CostRates,
+  CostReport,
+  BillingRates,
+  Invoice,
+} from '../core/index.js';
 import {
   createQuotaEngine,
   type QuotaCheckResult,
   type QuotaSweepReport,
 } from '../adapters/quota-engine.js';
 import { createCostEngine } from '../adapters/cost-engine.js';
+import { createInvoiceEngine, type FleetInvoiceReport } from '../adapters/invoice-engine.js';
 import {
   createFleetOrchestrator,
   type FleetMigrationReport,
@@ -176,6 +184,8 @@ export interface TenantForgeDeps {
   archiveExporter?: TenantExporter;
   /** Unit cost rates (USD) for {@link TenantForge.costReport}; defaults to empty (zero cost). */
   costRates?: CostRates;
+  /** Per-unit billing (sell) rates for {@link TenantForge.invoice}; defaults to empty (usage not billed). */
+  billingRates?: BillingRates;
   /**
    * Persisted audit trail. When provided, {@link TenantForge.complianceReport} includes erasure
    * history + a recent audit excerpt; absent = the report omits the `audit` section. (Wire the
@@ -496,6 +506,26 @@ export interface TenantForge {
   costReport(period: BillingPeriod): Promise<CostReport>;
 
   /**
+   * Generate an **invoice document** for one tenant over `period`: its usage billed at the
+   * configured billing (sell) rates plus its flat plan fee (`metadata.priceUsd`). An artifact (line
+   * items + total) — it does **not** charge a card. Requires a usage provider.
+   *
+   * @param id - The tenant id.
+   * @param period - The billing period.
+   * @returns The invoice.
+   */
+  invoice(id: string, period: BillingPeriod): Promise<Invoice>;
+
+  /**
+   * Generate invoices for every active tenant over `period` (failure-isolated — unmeterable tenants
+   * are listed, not failed). Requires a usage provider.
+   *
+   * @param period - The billing period.
+   * @returns The fleet invoice report.
+   */
+  invoiceFleet(period: BillingPeriod): Promise<FleetInvoiceReport>;
+
+  /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
    * tenant is active, provisioned, and has a stored connection secret. The id must be derived
    * server-side from the authenticated principal, never client-supplied (BOLA).
@@ -639,6 +669,18 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       registry,
       usageProvider: deps.usageProvider,
       rates: deps.costRates ?? {},
+    });
+  };
+
+  /** Build the invoice engine, failing closed when no usage provider is wired. */
+  const invoiceEngine = (): ReturnType<typeof createInvoiceEngine> => {
+    if (deps.usageProvider === undefined) {
+      throw new Error('invoicing requires a configured usage provider');
+    }
+    return createInvoiceEngine({
+      registry,
+      usageProvider: deps.usageProvider,
+      rates: deps.billingRates ?? {},
     });
   };
 
@@ -1133,6 +1175,16 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return costEngine().report(period);
     },
 
+    async invoice(id: string, period: BillingPeriod): Promise<Invoice> {
+      assertPeriod(period);
+      return invoiceEngine().invoice(id, period);
+    },
+
+    async invoiceFleet(period: BillingPeriod): Promise<FleetInvoiceReport> {
+      assertPeriod(period);
+      return invoiceEngine().invoiceFleet(period);
+    },
+
     async close(): Promise<void> {
       // Release the audit store's own pool (the pg adapter owns one) before the registry.
       await (auditLog as { close?: () => Promise<void> } | undefined)?.close?.();
@@ -1224,6 +1276,7 @@ export function tenantForgeFromConfig(
     }),
     // Unit cost rates for the per-tenant cost/margin report (empty = zero cost).
     ...(config.costRates !== undefined ? { costRates: config.costRates } : {}),
+    ...(config.billingRates !== undefined ? { billingRates: config.billingRates } : {}),
     // Off-Neon archive tier (pg_dump → object store) — enabled when an export object store is
     // configured (TENANTFORGE_EXPORT_DIR); archives use the `archives/` key prefix. Retention is the
     // object store's lifecycle policy. Without it, archive() fails closed.

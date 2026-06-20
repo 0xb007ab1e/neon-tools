@@ -57,6 +57,11 @@ const reconcileHistory = [
     context: { target: '0003', reconciled: 4, partial: 0 },
   },
 ];
+const invoices = {
+  generatedAt: '2026-06-20T00:00:00.000Z',
+  invoices: [{ tenantId: 'tenant-billed', currency: 'USD', totalUsd: 12 }],
+  unmetered: [],
+};
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -82,6 +87,7 @@ beforeEach(() => {
       if (url.endsWith('/reconcile-history'))
         return Promise.resolve(json({ history: reconcileHistory }));
       if (url.endsWith('/reconcile')) return Promise.resolve(json(reconcile));
+      if (url.endsWith('/invoices')) return Promise.resolve(json(invoices));
       if (url.endsWith('/cost')) return Promise.resolve(json(cost));
       return Promise.resolve(json({}, 404));
     }),
@@ -123,6 +129,11 @@ describe('dashboard App', () => {
     // Erasure history (from the persisted audit trail) is shown.
     expect(await screen.findByText('Erasures recorded: 1')).toBeInTheDocument();
     expect(await screen.findByText('tenant-gone')).toBeInTheDocument();
+    // Invoices panel renders.
+    expect(
+      await screen.findByRole('heading', { name: 'Invoices (this month)' }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('tenant-billed')).toBeInTheDocument();
     expect((await axe(container)).violations).toEqual([]);
   });
 });
