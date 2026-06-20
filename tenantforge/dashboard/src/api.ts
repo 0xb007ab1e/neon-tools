@@ -127,3 +127,18 @@ export async function fetchReconcilePlan(): Promise<ReconcilePlan> {
   if (!res.ok) throw new Error('Could not load the reconcile plan');
   return (await res.json()) as ReconcilePlan;
 }
+
+/** One reconcile-history entry (a persisted `fleet.reconcile` audit event). */
+export interface ReconcileHistoryEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  actor?: { id: string; role: string };
+  context?: { target?: string | null; reconciled?: number; partial?: number };
+}
+
+/** Load recent reconcile history from the persisted audit trail (empty without an audit store). */
+export async function fetchReconcileHistory(): Promise<ReconcileHistoryEntry[]> {
+  const res = await fetch(`${BASE}/reconcile-history`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load reconcile history');
+  return ((await res.json()) as { history: ReconcileHistoryEntry[] }).history;
+}

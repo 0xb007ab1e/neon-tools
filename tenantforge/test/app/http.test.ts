@@ -256,6 +256,20 @@ describe('HTTP control-plane', () => {
     expect(seenTarget).toBe('0003');
   });
 
+  it('serves reconcile history (tenant:read), 400 on a bad limit', async () => {
+    const history = [{ event: 'fleet.reconcile', at: 'x', outcome: 'ok' }];
+    const server = app({ reconcileHistory: async () => history as never });
+    const ok = await server.request('/v1/fleet/reconcile/history', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ history });
+    const bad = await server.request('/v1/fleet/reconcile/history?limit=0', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it('emits a keyset nextCursor on a full page and forwards it to the next request', async () => {
     const calls: Array<{ limit?: number; cursor?: { createdAt: Date; id: string } }> = [];
     const server = createHttpServer(

@@ -8,6 +8,7 @@ import {
   assertTransition,
   isPurgeable,
   redactSecrets,
+  type TenantEvent,
   retentionCutoff,
   selectRegion,
   buildComplianceReport,
@@ -552,6 +553,16 @@ export interface TenantForge {
   ): Promise<FleetReconcileReport>;
 
   /**
+   * Recent fleet **reconcile/migration history** from the persisted audit trail (who reconciled
+   * what, when, and the outcome) — the durable record behind the reconcile plan. Returns `[]` when no
+   * audit store is wired (the trail is only persisted with `TENANTFORGE_AUDIT_LOG=pg`).
+   *
+   * @param limit - Max entries to return (newest-first). Defaults to 20.
+   * @returns Recent `fleet.reconcile` audit events.
+   */
+  reconcileHistory(limit?: number): Promise<TenantEvent[]>;
+
+  /**
    * Meter a tenant's resource consumption over a period (for billing) — resolves the tenant's Neon
    * project and aggregates its consumption. Requires a usage provider in the deps.
    *
@@ -1018,6 +1029,12 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         },
       });
       return report;
+    },
+
+    reconcileHistory(limit = 20): Promise<TenantEvent[]> {
+      // Degrades gracefully: no persisted audit trail ⇒ no history (not an error).
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['fleet.reconcile'], limit });
     },
 
     async usage(id: string, period: BillingPeriod): Promise<TenantUsage> {

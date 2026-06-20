@@ -741,6 +741,37 @@ describe('createTenantForge.reconcileFleet', () => {
     expect(plan.target).toBeNull();
     expect(plan.pendingTenants).toEqual([]);
   });
+
+  it('reconcileHistory returns [] without an audit store', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      migrationRunner: { applyToTenant: () => Promise.resolve() },
+      defaultRegion: 'aws-us-east-1',
+    });
+    expect(await tf.reconcileHistory()).toEqual([]);
+  });
+
+  it('records reconcile runs in the audit trail and reconcileHistory reads them back', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      migrationRunner: { applyToTenant: () => Promise.resolve() },
+      defaultRegion: 'aws-us-east-1',
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    await tf.provision({ slug: 'acme' });
+    await tf.reconcileFleet(specs);
+
+    const history = await tf.reconcileHistory();
+    expect(history).toHaveLength(1);
+    expect(history[0]?.event).toBe('fleet.reconcile');
+    expect(history[0]?.context?.target).toBe('0002');
+  });
 });
 
 describe('createTenantForge.purgeExpired', () => {

@@ -385,6 +385,20 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Recent fleet reconcile/migration history (from the persisted audit trail; [] without one).
+  app.get('/v1/fleet/reconcile/history', requirePermission('tenant:read'), async (c) => {
+    const limitParam = c.req.query('limit');
+    const limit = limitParam === undefined ? undefined : Number(limitParam);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      return problem(c, 400, 'Bad Request', 'limit must be a positive integer');
+    }
+    try {
+      return c.json({ history: await tf.reconcileHistory(limit) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.post('/v1/tenants/:id/suspend', requirePermission('tenant:suspend'), async (c) => {
     try {
       return c.json({ tenant: await tf.suspend(c.req.param('id')) });

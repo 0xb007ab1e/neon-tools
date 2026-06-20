@@ -32,6 +32,7 @@ const app = () =>
       fleetStatus: async () => drift,
       costReport: async () => cost,
       reconcilePlan: async () => reconcile,
+      reconcileHistory: async () => [{ event: 'fleet.reconcile', at: 'x', outcome: 'ok' }] as never,
     }),
     { token: TOKEN, dashboardSecret: 'session-secret' },
   );
@@ -72,9 +73,15 @@ describe('dashboard backend', () => {
     const r = await server.request('/dashboard/api/reconcile', { headers: { cookie } });
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual(reconcile);
+    const h = await server.request('/dashboard/api/reconcile-history', { headers: { cookie } });
+    expect(h.status).toBe(200);
+    expect(await h.json()).toEqual({
+      history: [{ event: 'fleet.reconcile', at: 'x', outcome: 'ok' }],
+    });
     // The panels require a session.
     expect((await server.request('/dashboard/api/cost')).status).toBe(401);
     expect((await server.request('/dashboard/api/reconcile')).status).toBe(401);
+    expect((await server.request('/dashboard/api/reconcile-history')).status).toBe(401);
   });
 
   it('rejects an invalid operator token (401) and sets no cookie', async () => {
