@@ -5,11 +5,27 @@ import type { TenantForge } from '../../src/app/lib.js';
 const TOKEN = 'op-token';
 const fakeTf = (o: Partial<TenantForge>): TenantForge => o as unknown as TenantForge;
 const report = { report: { inventory: { total: 3 } }, digest: 'd1' };
+const drift = {
+  latest: '0003',
+  totalVersions: 3,
+  tenants: [],
+  summary: { total: 0, atLatest: 0, drifted: 0, withFailures: 0 },
+};
+const cost = {
+  generatedAt: 'x',
+  rows: [],
+  unmetered: [],
+  totals: { tenants: 0, costUsd: 0, priceUsd: 0, marginUsd: 0, unprofitable: 0, unpriced: 0 },
+};
 const app = () =>
-  createHttpServer(fakeTf({ complianceReport: async () => report as never }), {
-    token: TOKEN,
-    dashboardSecret: 'session-secret',
-  });
+  createHttpServer(
+    fakeTf({
+      complianceReport: async () => report as never,
+      fleetStatus: async () => drift,
+      costReport: async () => cost,
+    }),
+    { token: TOKEN, dashboardSecret: 'session-secret' },
+  );
 
 /** Extract the `tf_dash=…` cookie pair from a Set-Cookie response. */
 const cookieOf = (res: Response): string => (res.headers.get('set-cookie') ?? '').split(';')[0]!;
@@ -33,6 +49,19 @@ describe('dashboard backend', () => {
     const data = await server.request('/dashboard/api/compliance', { headers: { cookie } });
     expect(data.status).toBe(200);
     expect(await data.json()).toEqual(report);
+  });
+
+  it('serves the drift and cost panels for a valid session', async () => {
+    const server = app();
+    const cookie = cookieOf(await login(server, TOKEN));
+    expect((await server.request('/dashboard/api/drift', { headers: { cookie } })).status).toBe(
+      200,
+    );
+    const c = await server.request('/dashboard/api/cost', { headers: { cookie } });
+    expect(c.status).toBe(200);
+    expect(await c.json()).toEqual(cost);
+    // Both panels require a session.
+    expect((await server.request('/dashboard/api/cost')).status).toBe(401);
   });
 
   it('rejects an invalid operator token (401) and sets no cookie', async () => {

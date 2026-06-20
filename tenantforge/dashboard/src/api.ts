@@ -55,3 +55,45 @@ export async function fetchCompliance(): Promise<{ report: ComplianceReport; dig
   if (!res.ok) throw new Error('Could not load the compliance report');
   return (await res.json()) as { report: ComplianceReport; digest: string };
 }
+
+/** Fleet schema-version drift summary (subset of the server's FleetDriftReport). */
+export interface DriftReport {
+  latest: string | null;
+  totalVersions: number;
+  summary: { total: number; atLatest: number; drifted: number; withFailures: number };
+}
+
+/** Per-tenant cost/margin report (mirrors core CostReport). */
+export interface CostReport {
+  generatedAt: string;
+  rows: {
+    tenantId: string;
+    costUsd: number;
+    priceUsd: number | null;
+    marginUsd: number | null;
+    unprofitable: boolean;
+  }[];
+  unmetered: string[];
+  totals: {
+    tenants: number;
+    costUsd: number;
+    priceUsd: number;
+    marginUsd: number;
+    unprofitable: number;
+    unpriced: number;
+  };
+}
+
+/** Load the fleet drift panel data. */
+export async function fetchDrift(): Promise<DriftReport> {
+  const res = await fetch(`${BASE}/drift`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load fleet drift');
+  return (await res.json()) as DriftReport;
+}
+
+/** Load the cost/margin panel data. */
+export async function fetchCost(): Promise<CostReport> {
+  const res = await fetch(`${BASE}/cost`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load the cost report');
+  return (await res.json()) as CostReport;
+}

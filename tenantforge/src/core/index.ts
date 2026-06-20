@@ -35,6 +35,14 @@ export {
   type ComplianceReportOptions,
 } from './compliance.js';
 export {
+  estimateCostUsd,
+  buildCostReport,
+  type CostRates,
+  type CostReport,
+  type TenantCost,
+  type TenantUsageRow,
+} from './cost.js';
+export {
   can,
   permissionsFor,
   isRole,

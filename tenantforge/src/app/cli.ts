@@ -519,6 +519,37 @@ const complianceReport = defineCommand({
   },
 });
 
+const costReport = defineCommand({
+  meta: {
+    name: 'cost-report',
+    description: 'Per-tenant cost vs. price (margin) for the current month — read-only estimate',
+  },
+  args: { json: { type: 'boolean', description: 'Emit the full report as JSON', default: false } },
+  async run({ args }) {
+    const to = new Date();
+    const from = new Date(to.getFullYear(), to.getMonth(), 1);
+    await withTenantForge(async (tf) => {
+      const r = await tf.costReport({ from, to });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+        return;
+      }
+      const t = r.totals;
+      process.stdout.write(
+        `cost report (${t.tenants} tenants): cost $${t.costUsd} · price $${t.priceUsd} · ` +
+          `margin $${t.marginUsd} · ${t.unprofitable} unprofitable · ${t.unpriced} unpriced` +
+          (r.unmetered.length > 0 ? ` · ${r.unmetered.length} unmetered` : '') +
+          '\n',
+      );
+      for (const row of r.rows) {
+        const margin = row.marginUsd === null ? 'n/a' : `$${row.marginUsd}`;
+        const flag = row.unprofitable ? ' (UNPROFITABLE)' : '';
+        process.stdout.write(`  ${row.tenantId}: cost $${row.costUsd} margin ${margin}${flag}\n`);
+      }
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -545,6 +576,7 @@ const main = defineCommand({
     'archive-fleet': archiveFleet,
     'check-quotas': checkQuotas,
     'compliance-report': complianceReport,
+    'cost-report': costReport,
   },
 });
 

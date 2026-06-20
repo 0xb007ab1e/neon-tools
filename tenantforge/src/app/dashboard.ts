@@ -137,5 +137,23 @@ export function createDashboard(options: DashboardOptions): Hono {
     return c.json({ report, digest });
   });
 
+  // Fleet schema-version drift panel data (read).
+  app.get('/api/drift', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'tenant:read')) return c.json({ error: 'forbidden' }, 403);
+    return c.json(await options.tf.fleetStatus());
+  });
+
+  // Cost/margin panel data (read) — current calendar month to now.
+  app.get('/api/cost', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'tenant:read')) return c.json({ error: 'forbidden' }, 403);
+    const to = new Date(now());
+    const from = new Date(to.getFullYear(), to.getMonth(), 1);
+    return c.json(await options.tf.costReport({ from, to }));
+  });
+
   return app;
 }

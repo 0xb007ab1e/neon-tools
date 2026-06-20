@@ -53,12 +53,13 @@ import {
   type ArchiveResult,
 } from '../adapters/backup-engine.js';
 import type { SnapshotProvider } from '../ports/snapshot-provider.js';
-import type { RetentionPolicy, Quota } from '../core/index.js';
+import type { RetentionPolicy, Quota, CostRates, CostReport } from '../core/index.js';
 import {
   createQuotaEngine,
   type QuotaCheckResult,
   type QuotaSweepReport,
 } from '../adapters/quota-engine.js';
+import { createCostEngine } from '../adapters/cost-engine.js';
 import {
   createFleetOrchestrator,
   type FleetMigrationReport,
@@ -159,6 +160,8 @@ export interface TenantForgeDeps {
    * those fail closed.
    */
   archiveExporter?: TenantExporter;
+  /** Unit cost rates (USD) for {@link TenantForge.costReport}; defaults to empty (zero cost). */
+  costRates?: CostRates;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -463,6 +466,16 @@ export interface TenantForge {
   complianceReport(): Promise<ComplianceReportResult>;
 
   /**
+   * Per-tenant **cost / margin** report over `period`: estimated Neon cost (from the configured
+   * rates) vs. the operator's price (tenant `metadata.priceUsd`), flagging unprofitable tenants.
+   * Read-only attribution — not an invoice. Requires a usage provider.
+   *
+   * @param period - The billing period to meter.
+   * @returns The cost report.
+   */
+  costReport(period: BillingPeriod): Promise<CostReport>;
+
+  /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
    * tenant is active, provisioned, and has a stored connection secret. The id must be derived
    * server-side from the authenticated principal, never client-supplied (BOLA).
@@ -559,6 +572,18 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       registry,
       usageProvider: deps.usageProvider,
       emit: (event) => eventSink.emit(event),
+    });
+  };
+
+  /** Build the cost engine on demand; fails closed if no usage provider was configured. */
+  const costEngine = (): ReturnType<typeof createCostEngine> => {
+    if (deps.usageProvider === undefined) {
+      throw new Error('cost reporting requires a configured usage provider');
+    }
+    return createCostEngine({
+      registry,
+      usageProvider: deps.usageProvider,
+      rates: deps.costRates ?? {},
     });
   };
 
@@ -989,6 +1014,11 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return { report, digest };
     },
 
+    costReport(period: BillingPeriod): Promise<CostReport> {
+      assertPeriod(period);
+      return costEngine().report(period);
+    },
+
     async close(): Promise<void> {
       await registry.close();
     },
@@ -1063,6 +1093,8 @@ export function tenantForgeFromConfig(
       apiKey: config.neonApiKey,
       ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
     }),
+    // Unit cost rates for the per-tenant cost/margin report (empty = zero cost).
+    ...(config.costRates !== undefined ? { costRates: config.costRates } : {}),
     // Off-Neon archive tier (pg_dump → object store) — enabled when an export object store is
     // configured (TENANTFORGE_EXPORT_DIR); archives use the `archives/` key prefix. Retention is the
     // object store's lifecycle policy. Without it, archive() fails closed.

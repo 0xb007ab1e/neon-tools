@@ -1,7 +1,18 @@
 import { z } from 'zod';
 import { KNOWN_REGIONS } from '../core/regions.js';
 import { ROLES, isRole } from '../core/index.js';
+import type { CostRates } from '../core/index.js';
 import type { HttpCredential } from './http-server.js';
+
+/** Unit cost rates (USD) for the cost/margin report; all optional non-negative numbers. */
+const CostRatesSchema = z
+  .object({
+    computeSecondUsd: z.number().nonnegative().optional(),
+    activeSecondUsd: z.number().nonnegative().optional(),
+    storageByteUsd: z.number().nonnegative().optional(),
+    writtenByteUsd: z.number().nonnegative().optional(),
+  })
+  .strict();
 
 /**
  * Parse the `TENANTFORGE_HTTP_CREDENTIALS` env (`id:role:token` entries, comma-separated). The token
@@ -127,6 +138,9 @@ const EnvSchema = z
     // Web dashboard: when set, mount the cookie-session dashboard backend at /dashboard. The value
     // is the HMAC key that signs session cookies (a secret). Unset = dashboard disabled.
     TENANTFORGE_DASHBOARD_SECRET: z.string().min(1).optional(),
+    // Unit cost rates for the cost/margin report, as a JSON object of USD-per-unit numbers, e.g.
+    // {"computeSecondUsd":0.00016,"storageByteUsd":1.5e-10}. Unset = zero cost (margin = price).
+    TENANTFORGE_COST_RATES: z.string().optional(),
     // Outbound lifecycle webhook (optional): HMAC-signed POST of each event to an external endpoint.
     TENANTFORGE_WEBHOOK_URL: z.string().url().optional(),
     TENANTFORGE_WEBHOOK_SECRET: z.string().min(1).optional(),
@@ -284,6 +298,8 @@ export interface Config {
   connectionCacheTtlMs: number;
   /** Dashboard session-cookie HMAC key; set ⇒ the /dashboard backend is mounted. */
   dashboardSecret?: string;
+  /** Unit cost rates (USD) for the cost/margin report; absent ⇒ zero cost. */
+  costRates?: CostRates;
   /** Outbound lifecycle webhook (set only when both URL + secret are configured). */
   webhook?: { url: string; secret: string; eventTypes?: string[] };
   /** Port for the HTTP entrypoint. */
@@ -322,6 +338,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       ? { dashboardSecret: parsed.TENANTFORGE_DASHBOARD_SECRET }
       : {}),
   };
+
+  if (parsed.TENANTFORGE_COST_RATES !== undefined) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(parsed.TENANTFORGE_COST_RATES);
+    } catch {
+      throw new Error('TENANTFORGE_COST_RATES must be valid JSON');
+    }
+    config.costRates = CostRatesSchema.parse(raw) as CostRates;
+  }
   if (parsed.TENANTFORGE_AUTH_MODE === 'oidc') {
     // superRefine guarantees issuer/audience/jwksUri are present for this mode.
     config.oidc = {
