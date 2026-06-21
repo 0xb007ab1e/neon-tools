@@ -6,6 +6,23 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Included allowances / overage billing** — set a tenant's per-period included usage
+  (`metadata.includedUsage`: compute-seconds, active-seconds, peak-storage bytes, written bytes) so
+  usage **within** the allowance is free and only the **overage** is billed (at the configured
+  billing rates), as a labelled line item (`Compute time (overage; N incl.)`). Pure core
+  `applyIncludedAllowance` (`max(0, used − allowance)` per dimension, 100%); `buildInvoice` gains an
+  optional `included` and emits overage-only lines (a dimension fully within its allowance produces
+  no line). The invoice engine reads `metadata.includedUsage` (defensively — malformed/negative
+  dimensions are ignored), so existing invoice/charge paths automatically bill only the excess. New
+  facade `setIncludedUsage(id, allowance)` (metadata merge; `{}` clears) and CLI `set-allowance`
+  (`--compute/--active/--storage/--written/--clear`); setting allowances is a billing-policy change
+  and is **CLI-only** (never HTTP/MCP). The resulting overage is visible read-only on
+  `GET /v1/tenants/:id/invoice`, `GET /v1/invoices`, and the dashboard invoices panel (new "Overage
+  lines" column). An allowance is a billing free-tier, distinct from a `Quota` (a hard enforcement
+  limit). Fully backward-compatible: with no `includedUsage`, billing is unchanged.
+
 ## [0.18.0] - 2026-06-21
 
 Adds an authoritative per-tenant credit ledger so a plan downgrade grants the full prorated credit

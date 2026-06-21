@@ -2,6 +2,7 @@ import {
   aggregateConsumption,
   buildInvoice,
   type BillingRates,
+  type IncludedUsage,
   type Invoice,
 } from '../core/index.js';
 import type { BillingPeriod } from '../core/index.js';
@@ -37,6 +38,32 @@ const MAX_SWEEP = 100_000;
 function baseFeeFromMetadata(metadata: Record<string, unknown>): number | undefined {
   const p = metadata.priceUsd;
   return typeof p === 'number' && Number.isFinite(p) ? p : undefined;
+}
+
+/** A finite, non-negative number, else undefined (defensive — metadata is operator-set, untyped). */
+function nonNegNumber(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
+}
+
+/**
+ * Read per-tenant included allowances from `metadata.includedUsage`, if present. Each dimension is
+ * accepted only when it is a finite, non-negative number; anything else is ignored (an absent or
+ * malformed allowance bills from the first unit). Returns `undefined` when no valid dimension is set.
+ */
+function includedFromMetadata(metadata: Record<string, unknown>): IncludedUsage | undefined {
+  const raw = metadata.includedUsage;
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const u = raw as Record<string, unknown>;
+  const included: IncludedUsage = {};
+  const compute = nonNegNumber(u.computeTimeSeconds);
+  const active = nonNegNumber(u.activeTimeSeconds);
+  const storage = nonNegNumber(u.syntheticStorageBytes);
+  const written = nonNegNumber(u.writtenDataBytes);
+  if (compute !== undefined) included.computeTimeSeconds = compute;
+  if (active !== undefined) included.activeTimeSeconds = active;
+  if (storage !== undefined) included.syntheticStorageBytes = storage;
+  if (written !== undefined) included.writtenDataBytes = written;
+  return Object.keys(included).length > 0 ? included : undefined;
 }
 
 /** Generates invoice **documents** from metered usage. Does not charge — see {@link buildInvoice}. */
@@ -83,12 +110,14 @@ export function createInvoiceEngine(deps: InvoiceEngineDeps): InvoiceEngine {
       await deps.usageProvider.getProjectConsumption(neonProjectId, period),
     );
     const baseFeeUsd = baseFeeFromMetadata(metadata);
+    const included = includedFromMetadata(metadata);
     return buildInvoice(consumption, {
       tenantId,
       period,
       billingRates: deps.rates,
       now: now(),
       ...(baseFeeUsd !== undefined ? { baseFeeUsd } : {}),
+      ...(included !== undefined ? { included } : {}),
     });
   };
 

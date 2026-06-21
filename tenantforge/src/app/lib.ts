@@ -80,6 +80,7 @@ import type {
   CostRates,
   CostReport,
   BillingRates,
+  IncludedUsage,
   Invoice,
 } from '../core/index.js';
 import {
@@ -980,6 +981,21 @@ export interface TenantForge {
    * @returns The change report (quote + settlement outcome).
    */
   changePlan(id: string, newPriceUsd: number, opts?: PlanChangeOptions): Promise<PlanChangeReport>;
+
+  /**
+   * **Set a tenant's included usage allowances** (`metadata.includedUsage`) — the per-period usage
+   * its plan covers before any **overage** is billed. Usage within an allowance is free; only the
+   * excess is billed (at the configured billing rates) on the tenant's next invoice/charge. This is
+   * a billing-policy change (a metadata merge — never touches tenant content), so the surface is
+   * CLI-only (never HTTP/MCP). Pass `{}` to clear all allowances (bill from the first unit).
+   * Each dimension must be a finite, non-negative number.
+   *
+   * @param id - The tenant id.
+   * @param allowance - The included allowances (any subset of metered dimensions).
+   * @returns The updated tenant record.
+   * @throws Error if the tenant is unknown or an allowance is negative/non-finite.
+   */
+  setIncludedUsage(id: string, allowance: IncludedUsage): Promise<TenantRecord>;
 
   /**
    * Recent **plan-change history** (`tenant.plan_changed` events) from the persisted audit trail.
@@ -2358,6 +2374,40 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     planChangeHistory(limit = 20): Promise<TenantEvent[]> {
       if (auditLog === undefined) return Promise.resolve([]);
       return auditLog.query({ events: ['tenant.plan_changed'], limit });
+    },
+
+    async setIncludedUsage(id: string, allowance: IncludedUsage): Promise<TenantRecord> {
+      const tenant = await registry.getById(id);
+      if (!tenant) throw new Error(`tenant ${id} not found`);
+      // Validate each provided dimension: finite and non-negative (allowances are never negative).
+      const dims = [
+        'computeTimeSeconds',
+        'activeTimeSeconds',
+        'syntheticStorageBytes',
+        'writtenDataBytes',
+      ] as const;
+      const included: IncludedUsage = {};
+      for (const dim of dims) {
+        const v = allowance[dim];
+        if (v === undefined) continue;
+        if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+          throw new Error(
+            `included ${dim} must be a finite, non-negative number, got ${String(v)}`,
+          );
+        }
+        included[dim] = v;
+      }
+      // Merge the allowances into metadata (never touches tenant content); {} clears them.
+      await registry.updateMetadata(id, { includedUsage: included as unknown as JsonObject });
+      invalidateConnection(id);
+      observe('tenant.allowance_set', {
+        tenantId: id,
+        outcome: 'ok',
+        context: { includedUsage: included as unknown as JsonObject },
+      });
+      const updated = await registry.getById(id);
+      if (!updated) throw new Error(`tenant ${id} not found`);
+      return updated;
     },
 
     async grantCredit(
