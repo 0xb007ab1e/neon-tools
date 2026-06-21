@@ -83,4 +83,66 @@ describe('createStripeGateway', () => {
     });
     await expect(gw.charge(req)).rejects.toThrow(/Your card was declined/);
   });
+
+  it('refunds a charge fully: posts the payment_intent + idempotency key, maps the refunded amount', async () => {
+    const { impl, calls } = fakeFetch(200, { id: 're_1', status: 'succeeded', amount: 1234 });
+    const gw = createStripeGateway({ secretKey: 'sk_test_x', fetchImpl: impl });
+    const result = await gw.refund({
+      chargeId: 'pi_1',
+      currency: 'usd',
+      idempotencyKey: 'refund-key-1',
+      reason: 'overcharge',
+      metadata: { tenant_id: 't1' },
+    });
+    expect(result).toEqual({
+      id: 're_1',
+      status: 'succeeded',
+      amountMinor: 1234, // resolved from Stripe's echoed amount (full refund)
+      currency: 'usd',
+      provider: 'stripe',
+    });
+    const call = calls[0]!;
+    expect(call.url).toBe('https://api.stripe.com/v1/refunds');
+    const headers = call.init.headers as Record<string, string>;
+    expect(headers['idempotency-key']).toBe('refund-key-1');
+    const body = (call.init.body as URLSearchParams).toString();
+    expect(body).toContain('payment_intent=pi_1');
+    expect(body).not.toContain('amount='); // full refund → no amount
+    expect(body).toContain('metadata%5Btenant_id%5D=t1');
+    expect(body).toContain('metadata%5Breason%5D=overcharge'); // free-text reason → metadata, not Stripe enum
+  });
+
+  it('refunds partially: includes the amount and maps pending', async () => {
+    const { impl, calls } = fakeFetch(200, { id: 're_2', status: 'pending', amount: 500 });
+    const gw = createStripeGateway({ secretKey: 'sk', fetchImpl: impl });
+    const result = await gw.refund({
+      chargeId: 'pi_2',
+      amountMinor: 500,
+      currency: 'usd',
+      idempotencyKey: 'refund-key-2',
+    });
+    expect(result.status).toBe('pending');
+    expect(result.amountMinor).toBe(500);
+    expect((calls[0]!.init.body as URLSearchParams).toString()).toContain('amount=500');
+  });
+
+  it('throws when the refund did not complete (e.g. failed)', async () => {
+    const gw = createStripeGateway({
+      secretKey: 'sk',
+      fetchImpl: fakeFetch(200, { id: 're_3', status: 'failed' }).impl,
+    });
+    await expect(
+      gw.refund({ chargeId: 'pi_3', currency: 'usd', idempotencyKey: 'k' }),
+    ).rejects.toThrow(/refund not completed/);
+  });
+
+  it("throws Stripe's message on a non-2xx refund (e.g. already refunded)", async () => {
+    const gw = createStripeGateway({
+      secretKey: 'sk',
+      fetchImpl: fakeFetch(400, { error: { message: 'Charge has already been refunded.' } }).impl,
+    });
+    await expect(
+      gw.refund({ chargeId: 'pi_4', currency: 'usd', idempotencyKey: 'k' }),
+    ).rejects.toThrow(/already been refunded/);
+  });
 });

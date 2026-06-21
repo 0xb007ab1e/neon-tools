@@ -892,6 +892,61 @@ const billingRun = defineCommand({
   },
 });
 
+const refund = defineCommand({
+  meta: {
+    name: 'refund',
+    description: 'Refund (credit) a prior charge, full or partial, via the PSP (--yes gated)',
+  },
+  args: {
+    chargeId: {
+      type: 'positional',
+      description: 'PSP charge id to refund (from charge history)',
+      required: true,
+    },
+    amount: {
+      type: 'string',
+      description: 'Partial refund amount in MINOR units (e.g. cents); omit for a full refund',
+    },
+    currency: {
+      type: 'string',
+      description:
+        'Currency (lowercase ISO 4217); required only if the charge predates the audit trail',
+    },
+    reason: {
+      type: 'string',
+      description: 'Human reason for the refund (recorded; no secrets/PII)',
+    },
+    'tenant-id': {
+      type: 'string',
+      description: 'Tenant id for attribution (else derived from the charge)',
+    },
+    yes: {
+      type: 'boolean',
+      description: 'Confirm — this returns real money to the customer. Required.',
+      default: false,
+    },
+  },
+  async run({ args }) {
+    if (!args.yes) {
+      process.stderr.write('refusing to refund without --yes (this returns real money)\n');
+      process.exitCode = 1;
+      return;
+    }
+    await withTenantForge(async (tf) => {
+      const result = await tf.refundCharge(args.chargeId, {
+        ...(args.amount !== undefined ? { amountMinor: Number(args.amount) } : {}),
+        ...(args.currency !== undefined ? { currency: args.currency } : {}),
+        ...(args.reason !== undefined ? { reason: args.reason } : {}),
+        ...(args['tenant-id'] !== undefined ? { tenantId: args['tenant-id'] } : {}),
+      });
+      process.stdout.write(
+        `refunded ${args.chargeId}: ${result.provider} ${result.id} ${result.status} ` +
+          `${result.amountMinor} ${result.currency}\n`,
+      );
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -926,6 +981,7 @@ const main = defineCommand({
     'charge-fleet': chargeFleet,
     dunning,
     'billing-run': billingRun,
+    refund,
   },
 });
 

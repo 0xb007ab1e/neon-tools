@@ -12,6 +12,7 @@ import {
   fetchPaymentEvents,
   fetchDunning,
   fetchBillingRuns,
+  fetchRefunds,
   fetchSession,
   login,
   logout,
@@ -26,6 +27,7 @@ import {
   type PaymentEventEntry,
   type DunningHistoryEntry,
   type BillingRunEntry,
+  type RefundEntry,
   type Session,
 } from './api';
 
@@ -380,6 +382,7 @@ function BillingPanel(): React.JSX.Element {
   const events = usePanelData<PaymentEventEntry[]>(fetchPaymentEvents);
   const dunning = usePanelData<DunningHistoryEntry[]>(fetchDunning);
   const runs = usePanelData<BillingRunEntry[]>(fetchBillingRuns);
+  const refunds = usePanelData<RefundEntry[]>(fetchRefunds);
   return (
     <Panel id="billing-h" title="Billing (recent charges)" error={error} loading={data === null}>
       {data !== null && (
@@ -456,6 +459,33 @@ function BillingPanel(): React.JSX.Element {
                     <td>{r.context?.retried ?? '—'}</td>
                     <td>{r.context?.suspended ?? '—'}</td>
                     <td>{r.outcome}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {refunds.data !== null && refunds.data.length > 0 && (
+            <table>
+              <caption>Recent refunds</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Charge</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {refunds.data.map((r) => (
+                  <tr key={`${r.at}-${r.context?.refundId ?? ''}`}>
+                    <td>{r.at}</td>
+                    <td>{r.tenantId ?? '—'}</td>
+                    <td>{r.context?.chargeId ?? '—'}</td>
+                    <td>
+                      {r.context?.amountMinor ?? '—'} {r.context?.currency ?? ''}
+                    </td>
+                    <td>{r.context?.status ?? r.outcome}</td>
                   </tr>
                 ))}
               </tbody>

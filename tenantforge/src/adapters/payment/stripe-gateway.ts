@@ -1,11 +1,24 @@
 import { z } from 'zod';
-import type { ChargeRequest, ChargeResult, PaymentGateway } from '../../ports/payment-gateway.js';
+import type {
+  ChargeRequest,
+  ChargeResult,
+  PaymentGateway,
+  RefundRequest,
+  RefundResult,
+} from '../../ports/payment-gateway.js';
 import { assertHttpsUrl } from '../../core/transport-security.js';
 
 /** The PaymentIntent fields we depend on from Stripe's response. */
 const PaymentIntentSchema = z.object({
   id: z.string(),
   status: z.string(),
+});
+
+/** The Refund fields we depend on from Stripe's response. */
+const RefundSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  amount: z.number().int().nonnegative().optional(),
 });
 
 /** Stripe error envelope (`{ error: { message, code? } }`) for a non-2xx response. */
@@ -46,6 +59,19 @@ function normalizeStatus(status: string): ChargeResult['status'] {
   }
 }
 
+/** Map Stripe's Refund status to the port's normalized status; throw on a failed/canceled refund. */
+function normalizeRefundStatus(status: string): RefundResult['status'] {
+  switch (status) {
+    case 'succeeded':
+      return 'succeeded';
+    case 'pending':
+      return 'pending';
+    default:
+      // failed / canceled / requires_action / unknown ⇒ the refund did not go through.
+      throw new Error(`stripe refund not completed (status: ${status})`);
+  }
+}
+
 /**
  * Create a {@link PaymentGateway} backed by **Stripe**, over its REST API (no SDK dependency — the
  * REST shape of the Vault / Azure-Key-Vault adapters, with an injectable `fetch`). Charges create a
@@ -67,6 +93,43 @@ export function createStripeGateway(options: StripeGatewayOptions): PaymentGatew
   const timeoutMs = options.timeoutMs ?? 30_000;
   const doFetch = options.fetchImpl ?? globalThis.fetch;
 
+  /**
+   * POST a form-encoded body to a Stripe endpoint with the idempotency key + timeout, and return the
+   * parsed JSON. Throws `stripe {op} failed (status): message` on a non-2xx (the caller isolates it).
+   */
+  const post = async (
+    path: string,
+    body: URLSearchParams,
+    idempotencyKey: string,
+    op: string,
+  ): Promise<unknown> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let res: Response;
+    try {
+      res = await doFetch(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${options.secretKey}`,
+          'content-type': 'application/x-www-form-urlencoded',
+          // Stripe de-duplicates retried POSTs sharing this key — the no-double-charge/refund guarantee.
+          'idempotency-key': idempotencyKey,
+        },
+        body,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const payload: unknown = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const parsed = StripeErrorSchema.safeParse(payload);
+      const msg = parsed.success ? parsed.data.error?.message : undefined;
+      throw new Error(`stripe ${op} failed (${res.status}): ${msg ?? 'unknown error'}`);
+    }
+    return payload;
+  };
+
   return {
     provider: 'stripe',
     async charge(request: ChargeRequest): Promise<ChargeResult> {
@@ -83,37 +146,36 @@ export function createStripeGateway(options: StripeGatewayOptions): PaymentGatew
       for (const [k, v] of Object.entries(request.metadata ?? {})) {
         body.set(`metadata[${k}]`, v);
       }
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      let res: Response;
-      try {
-        res = await doFetch(`${baseUrl}/v1/payment_intents`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${options.secretKey}`,
-            'content-type': 'application/x-www-form-urlencoded',
-            // Stripe de-duplicates retried POSTs sharing this key — the no-double-charge guarantee.
-            'idempotency-key': request.idempotencyKey,
-          },
-          body,
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timer);
-      }
-
-      const payload: unknown = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const parsed = StripeErrorSchema.safeParse(payload);
-        const msg = parsed.success ? parsed.data.error?.message : undefined;
-        throw new Error(`stripe charge failed (${res.status}): ${msg ?? 'unknown error'}`);
-      }
-      const intent = PaymentIntentSchema.parse(payload);
+      const intent = PaymentIntentSchema.parse(
+        await post('/v1/payment_intents', body, request.idempotencyKey, 'charge'),
+      );
       return {
         id: intent.id,
         status: normalizeStatus(intent.status),
         amountMinor: request.amountMinor,
+        currency: request.currency,
+        provider: 'stripe',
+      };
+    },
+    async refund(request: RefundRequest): Promise<RefundResult> {
+      // Refund a PaymentIntent (our charge id is the intent id). Omit `amount` for a full refund.
+      const body = new URLSearchParams({ payment_intent: request.chargeId });
+      if (request.amountMinor !== undefined) body.set('amount', String(request.amountMinor));
+      // Stripe's `reason` is a fixed enum — keep the operator's free-text reason in metadata instead
+      // (an arbitrary value would 400). tenant_id etc. ride along the same way.
+      for (const [k, v] of Object.entries(request.metadata ?? {})) {
+        body.set(`metadata[${k}]`, v);
+      }
+      if (request.reason !== undefined) body.set('metadata[reason]', request.reason);
+      const refund = RefundSchema.parse(
+        await post('/v1/refunds', body, request.idempotencyKey, 'refund'),
+      );
+      return {
+        id: refund.id,
+        status: normalizeRefundStatus(refund.status),
+        // Prefer the amount Stripe actually refunded (it resolves a full refund to the real total);
+        // fall back to the requested amount, then 0 if neither is known.
+        amountMinor: refund.amount ?? request.amountMinor ?? 0,
         currency: request.currency,
         provider: 'stripe',
       };

@@ -51,7 +51,9 @@
 ## Rollback / abort
 
 - **A run cannot be "undone"** — successful charges are real. To reverse a wrongful charge, issue a
-  refund through the PSP (out of band; a TenantForge refund flow is not yet built) and record it.
+  refund with **`tenantforge cli refund <chargeId> --yes`** (full, or `--amount <minor>` for a
+  partial); it derives the currency/tenant from the charge's audit event and records a
+  `tenant.refunded` event. The chargeId is in `GET /v1/billing/charges` / the dashboard.
 - **Partial failures are isolated** — a decline/error on one tenant never blocks others; re-running
   is safe (idempotent) and only re-attempts the unfinished work. Investigate persistent
   `dunning.failed` tenants individually (`charge <id>` with the same period to see the live error).

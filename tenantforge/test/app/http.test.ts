@@ -331,6 +331,22 @@ describe('HTTP control-plane', () => {
     expect(await ok.json()).toEqual({ events });
   });
 
+  it('serves refund history (tenant:read); issuing a refund is not over HTTP', async () => {
+    const refunds = [{ event: 'tenant.refunded', at: 'x', outcome: 'ok' }];
+    const server = app({ refundHistory: async () => refunds as never });
+    const ok = await server.request('/v1/billing/refunds', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ refunds });
+    // No refund endpoint (it returns real money — CLI/gated only).
+    const post = await server.request('/v1/billing/refunds', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(post.status).toBe(404);
+  });
+
   it('serves billing-run history (tenant:read); the run itself is not over HTTP', async () => {
     const runs = [{ event: 'billing.run', at: 'x', outcome: 'ok' }];
     const server = app({ billingRunHistory: async () => runs as never });

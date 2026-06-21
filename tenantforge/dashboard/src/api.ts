@@ -266,3 +266,25 @@ export async function fetchBillingRuns(): Promise<BillingRunEntry[]> {
   if (!res.ok) throw new Error('Could not load billing runs');
   return ((await res.json()) as { runs: BillingRunEntry[] }).runs;
 }
+
+/** One refund entry (a persisted `tenant.refunded` audit event). */
+export interface RefundEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  tenantId?: string;
+  context?: {
+    refundId?: string;
+    chargeId?: string;
+    amountMinor?: number;
+    currency?: string;
+    status?: string;
+    reason?: string;
+  };
+}
+
+/** Load recent refund history (read-only; empty without an audit store). */
+export async function fetchRefunds(): Promise<RefundEntry[]> {
+  const res = await fetch(`${BASE}/refunds`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load refunds');
+  return ((await res.json()) as { refunds: RefundEntry[] }).refunds;
+}
