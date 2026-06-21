@@ -411,6 +411,74 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/tenants/{id}/plan/preview:
+    get:
+      tags: [tenants, billing]
+      summary: >
+        Preview a plan change (requires `tenant:read`): the prorated settlement (signed minor units)
+        for switching this tenant to `?price` USD for the remaining period. Read-only quote — no
+        mutation, no money. Applying a change (and settling) is a CLI / gated operation, not HTTP.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: price
+          in: query
+          required: true
+          description: The proposed flat plan price in USD (>= 0).
+          schema: { type: number, minimum: 0 }
+        - { name: from, in: query, required: false, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: The prorated plan-change quote.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenantId: { type: string }
+                  oldPriceUsd: { type: number }
+                  newPriceUsd: { type: number }
+                  period:
+                    type: object
+                    properties: { from: { type: string }, to: { type: string } }
+                  proratedDeltaMinor: { type: integer }
+                required: [tenantId, oldPriceUsd, newPriceUsd, period, proratedDeltaMinor]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/billing/plan-changes:
+    get:
+      tags: [billing]
+      summary: >
+        Recent plan-change history (requires `tenant:read`) from the persisted audit trail. Read-only
+        — applying a change is a CLI operation (a mutation + optional money settlement). Empty unless
+        an audit store is wired.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max entries, newest-first (default 20).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Recent plan-change events.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  planChanges:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
+                required: [planChanges]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/billing/notifications:
     get:
       tags: [billing]

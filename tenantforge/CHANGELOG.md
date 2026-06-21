@@ -8,6 +8,20 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Usage-based plan management (upgrade/downgrade with proration)** — `tf.changePlan(id,
+newPriceUsd, { period?, asOf?, settle? })` (CLI `plan-change`) updates a tenant's flat plan price
+  (`metadata.priceUsd` — via a new `TenantRegistry.updateMetadata` JSONB-merge) and, with `settle`,
+  settles the **prorated delta** for the remaining period. Pure core `proratePlanChangeMinor`
+  (100%) computes `round(f × (newPrice − oldPrice))`: **positive ⇒ charge** (upgrade), **negative ⇒
+  refund** (downgrade, against the tenant's latest charge, capped at it), zero ⇒ none. Settlement
+  reuses the gateway (one-off charge) / `refundCharge`; the price update always applies and emits a
+  `tenant.plan_changed` event. `previewPlanChange` gives a read-only quote (no mutation/money).
+  Surfaces: CLI `plan-change` (`--settle --yes` gated — money), read-only preview
+  (`GET /v1/tenants/:id/plan/preview?price=`) + history (`GET /v1/billing/plan-changes`) + the
+  dashboard billing panel + OpenAPI. **Settlement is CLI-only — never HTTP/MCP.** Covered by the pure
+  core (upgrade/downgrade/zero/full/invalid), facade (preview, upgrade-charges, downgrade-refunds-
+  capped, no-ref skip, price-only, history, negative-price reject), HTTP, dashboard, OpenAPI tests.
+
 - **Tenant-facing receipts in the portal** — the self-serve portal account page now shows the
   tenant's **own receipt history** (charge/refund confirmations), alongside usage / charges /
   refunds. New tenant-scoped facade read `tenantNotifications(tenantId, limit?)` (store-filtered by

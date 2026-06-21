@@ -121,6 +121,14 @@ const notifications = [
     context: { provider: 'log', kind: 'charge', reference: 'ch_1', status: 'queued' },
   },
 ];
+const planChanges = [
+  {
+    at: '2026-06-20T07:00:00.000Z',
+    outcome: 'ok',
+    tenantId: 'tenant-replanned',
+    context: { oldPriceUsd: 10, newPriceUsd: 20, proratedDeltaMinor: 500, settlement: 'charged' },
+  },
+];
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -156,6 +164,7 @@ beforeEach(() => {
       if (url.endsWith('/payment-events')) return Promise.resolve(json({ events: paymentEvents }));
       if (url.endsWith('/billing-runs')) return Promise.resolve(json({ runs: billingRuns }));
       if (url.endsWith('/notifications')) return Promise.resolve(json({ notifications }));
+      if (url.endsWith('/plan-changes')) return Promise.resolve(json({ planChanges }));
       if (url.endsWith('/refunds')) return Promise.resolve(json({ refunds }));
       if (url.endsWith('/dunning')) return Promise.resolve(json({ events: dunning }));
       if (url.endsWith('/charges')) return Promise.resolve(json({ charges }));
@@ -224,6 +233,9 @@ describe('dashboard App', () => {
     // Receipt notifications render in the billing panel.
     expect(await screen.findByText('Recent receipts (notifications)')).toBeInTheDocument();
     expect(await screen.findByText('tenant-notified')).toBeInTheDocument();
+    // Plan changes render in the billing panel.
+    expect(await screen.findByText('Recent plan changes')).toBeInTheDocument();
+    expect(await screen.findByText('tenant-replanned')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);

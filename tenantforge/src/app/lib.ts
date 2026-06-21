@@ -13,6 +13,7 @@ import {
   assertRefundAmount,
   refundIdempotencyKey,
   prorateRefundMinor,
+  proratePlanChangeMinor,
   renderReceipt,
   receiptIdempotencyKey,
   type ReceiptKind,
@@ -208,6 +209,42 @@ export interface TenantSummary {
   createdAt: string;
   /** The flat plan price in USD, if set on the tenant (`metadata.priceUsd`). */
   planPriceUsd?: number;
+}
+
+/** Options for a plan change / preview. */
+export interface PlanChangeOptions {
+  /** The period the change prorates within; defaults to the current month. */
+  period?: BillingPeriod;
+  /** The instant the change takes effect; defaults to now. */
+  asOf?: Date;
+  /** Settle the prorated delta now (charge an upgrade / refund a downgrade). Money movement — gated. */
+  settle?: boolean;
+}
+
+/** A prorated **quote** for switching a tenant to a new plan price (no mutation, no money). */
+export interface PlanChangePreview {
+  /** The tenant. */
+  tenantId: string;
+  /** The current plan price (USD). */
+  oldPriceUsd: number;
+  /** The proposed plan price (USD). */
+  newPriceUsd: number;
+  /** The period the proration is computed over. */
+  period: { from: string; to: string };
+  /** Signed prorated settlement (minor units): `>0` charge (upgrade), `<0` refund (downgrade), `0` none. */
+  proratedDeltaMinor: number;
+}
+
+/** The result of an applied plan change: the quote plus how the delta was settled. */
+export interface PlanChangeReport extends PlanChangePreview {
+  /**
+   * How the prorated delta was settled: `none` (zero delta or `settle` not requested), `charged`
+   * (upgrade), `refunded` (downgrade, against the latest charge), or `skipped` (settle requested but
+   * no billing customer ref / no prior charge to credit).
+   */
+  settlement: 'none' | 'charged' | 'refunded' | 'skipped';
+  /** The settlement charge/refund id, when one occurred. */
+  settlementId?: string;
 }
 
 export type {
@@ -905,6 +942,45 @@ export interface TenantForge {
   tenantNotifications(tenantId: string, limit?: number): Promise<TenantEvent[]>;
 
   /**
+   * **Preview** switching a tenant to `newPriceUsd`: the prorated settlement for the remaining period
+   * (signed minor units — see {@link import('../core/billing.js').proratePlanChangeMinor}). Pure
+   * quote — **no mutation, no money** — so it's safe to expose read-only.
+   *
+   * @param id - The tenant id.
+   * @param newPriceUsd - The proposed flat plan price (USD, ≥ 0).
+   * @param opts - Optional `period` / `asOf` (default current month / now).
+   * @returns The prorated quote.
+   */
+  previewPlanChange(
+    id: string,
+    newPriceUsd: number,
+    opts?: { period?: BillingPeriod; asOf?: Date },
+  ): Promise<PlanChangePreview>;
+
+  /**
+   * **Change a tenant's plan price** (`metadata.priceUsd`) and, when `settle` is set, settle the
+   * prorated delta for the remaining period — **charge** an upgrade or **refund** a downgrade (against
+   * the tenant's latest charge, capped at it). Emits a `tenant.plan_changed` event. Settling moves
+   * money, so the surface is CLI-only + `--yes` gated (never HTTP/MCP); requires a payment gateway
+   * when `settle` is set. The price update itself always applies.
+   *
+   * @param id - The tenant id.
+   * @param newPriceUsd - The new flat plan price (USD, ≥ 0).
+   * @param opts - `period` / `asOf` / `settle`.
+   * @returns The change report (quote + settlement outcome).
+   */
+  changePlan(id: string, newPriceUsd: number, opts?: PlanChangeOptions): Promise<PlanChangeReport>;
+
+  /**
+   * Recent **plan-change history** (`tenant.plan_changed` events) from the persisted audit trail.
+   * Returns `[]` when no audit store is wired.
+   *
+   * @param limit - Max entries, newest-first. Defaults to 20.
+   * @returns Recent plan-change audit events.
+   */
+  planChangeHistory(limit?: number): Promise<TenantEvent[]>;
+
+  /**
    * **Ingest an inbound PSP webhook** (e.g. Stripe): verify its signature over the raw body, parse +
    * normalize it, and emit a redacted `payment.webhook` audit event (attributed to the tenant when
    * the event carries one). Requires a configured webhook verifier; throws on a bad/stale signature
@@ -1121,6 +1197,56 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  };
+
+  /** Quote a plan change: load the tenant, read its current price, and prorate the delta. Pure-ish. */
+  const quotePlanChange = async (
+    id: string,
+    newPriceUsd: number,
+    opts?: { period?: BillingPeriod; asOf?: Date },
+  ): Promise<{
+    tenant: TenantRecord;
+    oldPriceUsd: number;
+    period: BillingPeriod;
+    proratedDeltaMinor: number;
+  }> => {
+    if (!Number.isFinite(newPriceUsd) || newPriceUsd < 0) {
+      throw new Error(`newPriceUsd must be a non-negative number, got ${newPriceUsd}`);
+    }
+    const tenant = await requireTenant(id);
+    const current = tenant.metadata['priceUsd'];
+    const oldPriceUsd = typeof current === 'number' ? current : 0;
+    const period = opts?.period ?? currentMonthPeriod();
+    assertPeriod(period);
+    const asOf = opts?.asOf ?? new Date();
+    const proratedDeltaMinor = proratePlanChangeMinor({
+      oldPriceMinor: Math.round(oldPriceUsd * 100),
+      newPriceMinor: Math.round(newPriceUsd * 100),
+      periodStart: period.from.toISOString(),
+      periodEnd: period.to.toISOString(),
+      asOf: asOf.toISOString(),
+    });
+    return { tenant, oldPriceUsd, period, proratedDeltaMinor };
+  };
+
+  /** The tenant's most recent successful charge (id / amount / currency), or undefined. */
+  const latestOkCharge = async (
+    tenantId: string,
+  ): Promise<{ chargeId: string; amountMinor: number; currency: string } | undefined> => {
+    if (auditLog === undefined) return undefined;
+    const charges = await auditLog.query({ events: ['tenant.charged'], tenantId, limit: 50 });
+    const latest = charges.find(
+      (e) => e.outcome === 'ok' && typeof e.context?.['chargeId'] === 'string',
+    );
+    if (latest === undefined) return undefined;
+    const ctx = latest.context ?? {};
+    const chargeId = ctx['chargeId'];
+    if (typeof chargeId !== 'string') return undefined;
+    return {
+      chargeId,
+      amountMinor: typeof ctx['amountMinor'] === 'number' ? ctx['amountMinor'] : 0,
+      currency: typeof ctx['currency'] === 'string' ? ctx['currency'] : 'usd',
+    };
   };
 
   /**
@@ -2032,6 +2158,98 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     tenantNotifications(tenantId: string, limit = 20): Promise<TenantEvent[]> {
       if (auditLog === undefined) return Promise.resolve([]);
       return auditLog.query({ events: ['tenant.notified'], tenantId, limit });
+    },
+
+    async previewPlanChange(
+      id: string,
+      newPriceUsd: number,
+      opts?: { period?: BillingPeriod; asOf?: Date },
+    ): Promise<PlanChangePreview> {
+      const q = await quotePlanChange(id, newPriceUsd, opts);
+      return {
+        tenantId: id,
+        oldPriceUsd: q.oldPriceUsd,
+        newPriceUsd,
+        period: { from: q.period.from.toISOString(), to: q.period.to.toISOString() },
+        proratedDeltaMinor: q.proratedDeltaMinor,
+      };
+    },
+
+    async changePlan(
+      id: string,
+      newPriceUsd: number,
+      opts: PlanChangeOptions = {},
+    ): Promise<PlanChangeReport> {
+      const q = await quotePlanChange(id, newPriceUsd, opts);
+      // Apply the plan-price change (a metadata merge — never touches tenant content).
+      await registry.updateMetadata(id, { priceUsd: newPriceUsd });
+      invalidateConnection(id); // a metadata change drops any cached resolution for this tenant
+
+      let settlement: PlanChangeReport['settlement'] = 'none';
+      let settlementId: string | undefined;
+      const delta = q.proratedDeltaMinor;
+      if (opts.settle === true && delta !== 0) {
+        if (paymentGateway === undefined) {
+          throw new Error('plan-change settlement requires a payment gateway');
+        }
+        const customerRef = billingCustomerRef(q.tenant.metadata);
+        if (customerRef === undefined) {
+          settlement = 'skipped';
+        } else if (delta > 0) {
+          // Upgrade → charge the prorated delta as a one-off (recorded under tenant.plan_changed).
+          const result = await paymentGateway.charge({
+            amountMinor: delta,
+            currency: 'usd',
+            customerRef,
+            idempotencyKey: `tenantforge:plan-change:${id}:${q.period.from.toISOString()}..${q.period.to.toISOString()}:${Math.round(newPriceUsd * 100)}`,
+            description: `TenantForge plan change ${id}`,
+            metadata: { tenant_id: id },
+          });
+          settlement = 'charged';
+          settlementId = result.id;
+        } else {
+          // Downgrade → refund the credit against the tenant's latest charge, capped at that charge.
+          const latest = await latestOkCharge(id);
+          if (latest === undefined) {
+            settlement = 'skipped';
+          } else {
+            const credit = Math.min(-delta, latest.amountMinor);
+            const result = await refundChargeImpl(latest.chargeId, {
+              amountMinor: credit,
+              currency: latest.currency,
+              tenantId: id,
+              reason: 'plan downgrade proration',
+            });
+            settlement = 'refunded';
+            settlementId = result.id;
+          }
+        }
+      }
+      observe('tenant.plan_changed', {
+        tenantId: id,
+        outcome: 'ok',
+        context: {
+          oldPriceUsd: q.oldPriceUsd,
+          newPriceUsd,
+          proratedDeltaMinor: delta,
+          settlement,
+          ...(settlementId !== undefined ? { settlementId } : {}),
+        },
+      });
+      return {
+        tenantId: id,
+        oldPriceUsd: q.oldPriceUsd,
+        newPriceUsd,
+        period: { from: q.period.from.toISOString(), to: q.period.to.toISOString() },
+        proratedDeltaMinor: delta,
+        settlement,
+        ...(settlementId !== undefined ? { settlementId } : {}),
+      };
+    },
+
+    planChangeHistory(limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.plan_changed'], limit });
     },
 
     async ingestPaymentWebhook(rawBody: string, signature: string): Promise<PaymentEvent> {

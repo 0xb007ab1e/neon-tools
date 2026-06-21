@@ -44,6 +44,15 @@ const permissiveTf = (): TenantForge =>
     billingRunHistory: () => Promise.resolve([]),
     refundHistory: () => Promise.resolve([]),
     notificationHistory: () => Promise.resolve([]),
+    planChangeHistory: () => Promise.resolve([]),
+    previewPlanChange: (id: string, newPriceUsd: number) =>
+      Promise.resolve({
+        tenantId: id,
+        oldPriceUsd: 0,
+        newPriceUsd,
+        period: { from: 'x', to: 'y' },
+        proratedDeltaMinor: 0,
+      }),
   }) as unknown as TenantForge;
 
 interface OpenApiDoc {

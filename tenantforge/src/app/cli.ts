@@ -977,6 +977,51 @@ const refund = defineCommand({
   },
 });
 
+const planChange = defineCommand({
+  meta: {
+    name: 'plan-change',
+    description:
+      "Change a tenant's plan price; --settle prorates the delta (charge/refund, --yes gated)",
+  },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    price: { type: 'string', description: 'New flat plan price in USD (>= 0)', required: true },
+    from: { type: 'string', description: 'Period start (ISO-8601); default month start' },
+    to: { type: 'string', description: 'Period end (ISO-8601); default now' },
+    settle: {
+      type: 'boolean',
+      description: 'Settle the prorated delta now (charge an upgrade / refund a downgrade)',
+      default: false,
+    },
+    yes: {
+      type: 'boolean',
+      description: 'Confirm settlement — required with --settle (it moves real money).',
+      default: false,
+    },
+  },
+  async run({ args }) {
+    if (args.settle && !args.yes) {
+      process.stderr.write('refusing to settle without --yes (this moves real money)\n');
+      process.exitCode = 1;
+      return;
+    }
+    const price = Number(args.price);
+    await withTenantForge(async (tf) => {
+      const report = await tf.changePlan(args.id, price, {
+        ...(args.from !== undefined || args.to !== undefined
+          ? { period: monthPeriod(args.from, args.to) }
+          : {}),
+        settle: args.settle,
+      });
+      process.stdout.write(
+        `plan changed ${args.id}: $${report.oldPriceUsd} → $${report.newPriceUsd} ` +
+          `(prorated delta ${report.proratedDeltaMinor} minor units, settlement: ${report.settlement}` +
+          `${report.settlementId !== undefined ? ` ${report.settlementId}` : ''})\n`,
+      );
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -1012,6 +1057,7 @@ const main = defineCommand({
     dunning,
     'billing-run': billingRun,
     refund,
+    'plan-change': planChange,
   },
 });
 

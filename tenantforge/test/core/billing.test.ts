@@ -5,6 +5,7 @@ import {
   assertRefundAmount,
   refundIdempotencyKey,
   prorateRefundMinor,
+  proratePlanChangeMinor,
 } from '../../src/core/billing.js';
 import type { Invoice } from '../../src/core/invoice.js';
 
@@ -162,5 +163,75 @@ describe('refundIdempotencyKey', () => {
     const partial = refundIdempotencyKey('ch_1', 500);
     expect(partial).toBe('tenantforge:refund:ch_1:500');
     expect(new Set([full, partial, refundIdempotencyKey('ch_1', 600)]).size).toBe(3);
+  });
+});
+
+describe('proratePlanChangeMinor', () => {
+  const period = { periodStart: '2026-06-01T00:00:00.000Z', periodEnd: '2026-07-01T00:00:00.000Z' };
+  const mid = '2026-06-16T00:00:00.000Z'; // half the 30-day period remains
+
+  it('charges the prorated upgrade delta (positive) for the remaining period', () => {
+    // half of (2000 - 1000) = +500
+    expect(
+      proratePlanChangeMinor({ oldPriceMinor: 1000, newPriceMinor: 2000, ...period, asOf: mid }),
+    ).toBe(500);
+  });
+
+  it('credits the prorated downgrade delta (negative)', () => {
+    expect(
+      proratePlanChangeMinor({ oldPriceMinor: 2000, newPriceMinor: 1000, ...period, asOf: mid }),
+    ).toBe(-500);
+  });
+
+  it('is zero for the same price, or a change at/after the period end', () => {
+    expect(
+      proratePlanChangeMinor({ oldPriceMinor: 1000, newPriceMinor: 1000, ...period, asOf: mid }),
+    ).toBe(0);
+    expect(
+      proratePlanChangeMinor({
+        oldPriceMinor: 1000,
+        newPriceMinor: 2000,
+        ...period,
+        asOf: '2026-07-01T00:00:00.000Z',
+      }),
+    ).toBe(0);
+  });
+
+  it('prorates the full difference when the change lands at/before the period start', () => {
+    expect(
+      proratePlanChangeMinor({
+        oldPriceMinor: 1000,
+        newPriceMinor: 2500,
+        ...period,
+        asOf: '2026-05-20T00:00:00.000Z',
+      }),
+    ).toBe(1500);
+  });
+
+  it('rejects a negative/non-integer price and an invalid period', () => {
+    expect(() =>
+      proratePlanChangeMinor({ oldPriceMinor: -1, newPriceMinor: 100, ...period, asOf: mid }),
+    ).toThrow(/non-negative integer/);
+    expect(() =>
+      proratePlanChangeMinor({ oldPriceMinor: 100, newPriceMinor: 1.5, ...period, asOf: mid }),
+    ).toThrow(/non-negative integer/);
+    expect(() =>
+      proratePlanChangeMinor({
+        oldPriceMinor: 100,
+        newPriceMinor: 200,
+        periodStart: '2026-07-01T00:00:00.000Z',
+        periodEnd: '2026-06-01T00:00:00.000Z',
+        asOf: mid,
+      }),
+    ).toThrow(/end must be after start/);
+    expect(() =>
+      proratePlanChangeMinor({
+        oldPriceMinor: 100,
+        newPriceMinor: 200,
+        periodStart: 'not-a-date',
+        periodEnd: period.periodEnd,
+        asOf: mid,
+      }),
+    ).toThrow(/valid ISO-8601 dates/);
   });
 });

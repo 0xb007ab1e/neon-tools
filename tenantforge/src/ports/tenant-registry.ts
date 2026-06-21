@@ -87,6 +87,16 @@ export interface TenantRegistry {
   setStatus(id: string, status: TenantStatus): Promise<void>;
 
   /**
+   * Shallow-**merge** a patch into a tenant's `metadata` (existing keys are overwritten, others kept).
+   * Used for operator-set fields like the plan price (`priceUsd`); never for tenant content. The
+   * patch must contain only non-sensitive values (master §5).
+   *
+   * @param id - The tenant id.
+   * @param patch - Metadata keys to set/overwrite.
+   */
+  updateMetadata(id: string, patch: JsonObject): Promise<void>;
+
+  /**
    * Atomically point a tenant at a new region + Neon project (re-homing — #5). The caller has already
    * provisioned the new project and copied the data; this switches the registry record over.
    *
