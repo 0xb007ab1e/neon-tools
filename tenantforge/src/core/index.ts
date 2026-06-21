@@ -69,6 +69,7 @@ export {
   type ReceiptData,
   type RenderedReceipt,
 } from './receipts.js';
+export { creditBalanceMinor, creditToApply, type CreditEntryAmount } from './credit.js';
 export {
   planDunning,
   dunningStateFromCharges,

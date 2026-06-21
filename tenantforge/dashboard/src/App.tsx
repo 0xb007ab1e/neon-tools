@@ -15,6 +15,7 @@ import {
   fetchRefunds,
   fetchNotifications,
   fetchPlanChanges,
+  fetchCreditGrants,
   fetchSession,
   login,
   logout,
@@ -32,6 +33,7 @@ import {
   type RefundEntry,
   type NotificationEntry,
   type PlanChangeEntry,
+  type CreditGrantEntry,
   type Session,
 } from './api';
 
@@ -389,6 +391,7 @@ function BillingPanel(): React.JSX.Element {
   const refunds = usePanelData<RefundEntry[]>(fetchRefunds);
   const notifications = usePanelData<NotificationEntry[]>(fetchNotifications);
   const planChanges = usePanelData<PlanChangeEntry[]>(fetchPlanChanges);
+  const creditGrants = usePanelData<CreditGrantEntry[]>(fetchCreditGrants);
   return (
     <Panel id="billing-h" title="Billing (recent charges)" error={error} loading={data === null}>
       {data !== null && (
@@ -465,6 +468,31 @@ function BillingPanel(): React.JSX.Element {
                     <td>{r.context?.retried ?? '—'}</td>
                     <td>{r.context?.suspended ?? '—'}</td>
                     <td>{r.outcome}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {creditGrants.data !== null && creditGrants.data.length > 0 && (
+            <table>
+              <caption>Recent credit grants</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {creditGrants.data.map((g) => (
+                  <tr key={`${g.at}-${g.tenantId ?? ''}`}>
+                    <td>{g.at}</td>
+                    <td>{g.tenantId ?? '—'}</td>
+                    <td>
+                      {g.context?.amountMinor ?? '—'} {g.context?.currency ?? ''}
+                    </td>
+                    <td>{g.context?.reason ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

@@ -357,6 +357,30 @@ describe('HTTP control-plane', () => {
     expect(post.status).toBe(404);
   });
 
+  it("serves a tenant's credit balance + ledger (tenant:read); granting is not over HTTP", async () => {
+    const entries = [{ tenantId: 't1', amountMinor: 1000, currency: 'usd', reason: 'x', at: 'y' }];
+    const server = app({
+      creditBalance: async () => 1000,
+      creditHistory: async () => entries,
+    });
+    const ok = await server.request('/v1/tenants/t1/credit', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({
+      tenantId: 't1',
+      currency: 'usd',
+      balanceMinor: 1000,
+      entries,
+    });
+    // No grant endpoint over HTTP (granting credit is a CLI/gated op).
+    const post = await server.request('/v1/tenants/t1/credit', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(post.status).toBe(404);
+  });
+
   it('serves plan-change history (tenant:read)', async () => {
     const planChanges = [{ event: 'tenant.plan_changed', at: 'x', outcome: 'ok' }];
     const server = app({ planChangeHistory: async () => planChanges as never });

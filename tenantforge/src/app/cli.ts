@@ -1022,6 +1022,65 @@ const planChange = defineCommand({
   },
 });
 
+const creditGrant = defineCommand({
+  meta: {
+    name: 'credit-grant',
+    description: "Grant credit to a tenant's balance (a financial liability; --yes gated)",
+  },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    amount: {
+      type: 'string',
+      description: 'Amount to grant in MINOR units (e.g. cents)',
+      required: true,
+    },
+    currency: { type: 'string', description: 'Currency (lowercase ISO 4217); default usd' },
+    reason: { type: 'string', description: 'Why the credit is granted (recorded)' },
+    yes: {
+      type: 'boolean',
+      description: 'Confirm — this adds a credit liability the tenant can spend. Required.',
+      default: false,
+    },
+  },
+  async run({ args }) {
+    if (!args.yes) {
+      process.stderr.write(
+        'refusing to grant credit without --yes (it adds a spendable balance)\n',
+      );
+      process.exitCode = 1;
+      return;
+    }
+    await withTenantForge(async (tf) => {
+      await tf.grantCredit(args.id, Number(args.amount), {
+        ...(args.currency !== undefined ? { currency: args.currency } : {}),
+        ...(args.reason !== undefined ? { reason: args.reason } : {}),
+      });
+      const balance = await tf.creditBalance(args.id, args.currency ?? 'usd');
+      process.stdout.write(
+        `granted ${args.amount} to ${args.id}; balance now ${balance} ${(args.currency ?? 'usd').toLowerCase()}\n`,
+      );
+    });
+  },
+});
+
+const creditBalance = defineCommand({
+  meta: { name: 'credit-balance', description: "Show a tenant's credit balance + recent ledger" },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    currency: { type: 'string', description: 'Currency (lowercase ISO 4217); default usd' },
+  },
+  async run({ args }) {
+    const currency = (args.currency ?? 'usd').toLowerCase();
+    await withTenantForge(async (tf) => {
+      const balance = await tf.creditBalance(args.id, currency);
+      process.stdout.write(`credit balance ${args.id}: ${balance} ${currency}\n`);
+      for (const e of await tf.creditHistory(args.id)) {
+        process.stdout.write(`  ${e.at}  ${e.amountMinor} ${e.currency}  ${e.reason}\n`);
+      }
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -1058,6 +1117,8 @@ const main = defineCommand({
     'billing-run': billingRun,
     refund,
     'plan-change': planChange,
+    'credit-grant': creditGrant,
+    'credit-balance': creditBalance,
   },
 });
 

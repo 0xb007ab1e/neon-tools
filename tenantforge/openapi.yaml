@@ -450,6 +450,42 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/tenants/{id}/credit:
+    get:
+      tags: [tenants, billing]
+      summary: >
+        A tenant's credit balance + recent ledger entries (requires `tenant:read`). Read-only —
+        granting credit is a CLI / gated operation. Balance is `0` and entries `[]` unless a credit
+        ledger is wired.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: currency
+          in: query
+          required: false
+          description: Lowercase ISO 4217 currency (default usd).
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          description: Max ledger entries, newest-first (default 20).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: The tenant's balance + ledger entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenantId: { type: string }
+                  currency: { type: string }
+                  balanceMinor: { type: integer }
+                  entries: { type: array, items: { type: object } }
+                required: [tenantId, currency, balanceMinor, entries]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/billing/plan-changes:
     get:
       tags: [billing]

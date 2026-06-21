@@ -6,6 +6,24 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Credit ledger** — an authoritative per-tenant credit balance, lifting the "downgrade credit
+  capped at the latest charge" limitation. New **`CreditLedger` port** with two adapters:
+  `createInMemoryCreditLedger` (default/tests) and `createPgCreditLedger` (durable, cross-instance —
+  `tf_credits`, **migration 0007**), selected by `TENANTFORGE_CREDIT_LEDGER=none|memory|pg`. Pure
+  core `creditBalanceMinor` / `creditToApply` (100%). Credits are **granted** (`grantCredit` / CLI
+  `credit-grant`, `--yes` gated — and a plan **downgrade now grants the full, uncapped credit** when
+  a ledger is wired, vs. the legacy capped refund) and **consumed automatically**: a charge draws
+  down the balance first and bills only the remainder (skipping the PSP entirely when credit covers
+  the whole invoice). Consumption is **idempotent per billing period** (a dunning retry never
+  double-spends) and atomic (a per-tenant advisory lock in the pg adapter; partial unique index for
+  idempotency). Surfaces: read-only balance + ledger at `GET /v1/tenants/:id/credit`, CLI
+  `credit-balance`, a fleet `creditGrantHistory` on the dashboard; granting/consuming is CLI/charge
+  only — **not on HTTP/MCP**. Covered by the pure core, the in-memory adapter (grant / idempotent
+  consume / clamp / history), facade (grant, partial draw-down, full coverage skips the card,
+  uncapped downgrade credit, no-ledger fallback), HTTP, dashboard, and OpenAPI tests.
+
 ## [0.17.0] - 2026-06-21
 
 Rounds out billing self-service: tenants see their own receipts in the portal, and operators can

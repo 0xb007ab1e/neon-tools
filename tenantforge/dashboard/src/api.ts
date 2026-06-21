@@ -328,3 +328,18 @@ export async function fetchPlanChanges(): Promise<PlanChangeEntry[]> {
   if (!res.ok) throw new Error('Could not load plan changes');
   return ((await res.json()) as { planChanges: PlanChangeEntry[] }).planChanges;
 }
+
+/** One credit-grant entry (a persisted `tenant.credit_granted` audit event). */
+export interface CreditGrantEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  tenantId?: string;
+  context?: { amountMinor?: number; currency?: string; reason?: string };
+}
+
+/** Load recent credit-grant history (read-only; empty without an audit store). */
+export async function fetchCreditGrants(): Promise<CreditGrantEntry[]> {
+  const res = await fetch(`${BASE}/credit-grants`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load credit grants');
+  return ((await res.json()) as { creditGrants: CreditGrantEntry[] }).creditGrants;
+}
