@@ -36,6 +36,7 @@ data). No tenant content is stored in the control plane.
 | B5  | Service → Neon API                                 | calls to an external upstream       |
 | B6  | Queue producer → lifecycle consumer                | untrusted command payloads          |
 | B7  | Service → SecretStore / registry / object store    | secret + metadata persistence       |
+| B8  | Tenant (customer) → self-serve portal              | a tenant reads its own account data |
 
 ## STRIDE per boundary → mitigation (and where it lives in code)
 
@@ -107,6 +108,20 @@ data). No tenant content is stored in the control plane.
   (`redactSecrets`). `delete` crypto-shreds on purge. The filesystem object store confines keys to
   its root (CWE-22). Per-tenant DB roles are least-privilege.
 
+### B8 — Tenant self-serve portal (customer-facing)
+
+- **S:** a tenant authenticates with a portal token (`TenantAuthenticator`, constant-time match);
+  the session is a signed, HttpOnly, `SameSite=Strict` cookie minted server-side.
+- **EoP / Information disclosure (the key threat — BOLA):** the portal derives the tenant id **only**
+  from the session, **never** from request input — no route accepts a `tenantId` param, so a tenant
+  cannot name another tenant (`src/app/portal.ts`). Reads go through tenant-scoped facade methods
+  (`tenantCharges`/`tenantRefunds` are store-filtered; `tenantSummary` returns a safe projection that
+  omits raw metadata / `billingCustomerRef` / infra ids). Pinned by a cross-tenant isolation test.
+- **T:** a tampered/expired session cookie fails closed (HMAC verify + `exp`).
+- **EoP (mutation):** the portal is **read-only** — no money movement or lifecycle actions; those
+  stay on the operator/CLI surfaces (gated). **D:** the portal inherits the API's edge controls (TLS
+  at the proxy, rate limiting); rendered output is HTML-escaped (XSS defence in depth).
+
 ## Residual risks (tracked)
 
 - **R1 — closed.** Per-operator credentials + RBAC are in-app (admin/readonly, constant-time compare),
@@ -137,18 +152,19 @@ the next review (not promotion blockers).
 
 Each boundary's key threat is pinned by a negative/abuse test (master §4, `@rules/topic-multi-tenancy.md`):
 
-| Threat                            | Test                                                                            |
-| --------------------------------- | ------------------------------------------------------------------------------- |
-| BOLA / cross-tenant bleed (B3/B4) | `getConnection(A)` returns A's project/URI, never B's (two tenants)             |
-| Fail-closed routing (B3)          | every non-`active` status is non-routable; active-but-no-secret fails closed    |
-| Illegal lifecycle transition (B3) | exhaustive transition matrix — every disallowed `(from,to)` rejected            |
-| Excessive agency (B2)             | the MCP tool set exposes **no** `purge`/`purge-expired`                         |
-| Spoofing (B1)                     | HTTP returns 401 on a missing/incorrect bearer token                            |
-| Broken function authZ (B1, API5)  | a `readonly` operator gets 403 on a mutating route; `admin` may mutate          |
-| DoS / rate limit (B1)             | over-limit requests get 429 + `Retry-After`; the window refills                 |
-| Untrusted payload (B6)            | invalid queue payload is dead-lettered, never handled                           |
-| Residency (B7)                    | provisioning fails closed outside the region allow-list / required jurisdiction |
-| Secret disclosure (B7)            | connection URI never appears in events/registry records                         |
+| Threat                            | Test                                                                                                                              |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| BOLA / cross-tenant bleed (B3/B4) | `getConnection(A)` returns A's project/URI, never B's (two tenants)                                                               |
+| Fail-closed routing (B3)          | every non-`active` status is non-routable; active-but-no-secret fails closed                                                      |
+| Illegal lifecycle transition (B3) | exhaustive transition matrix — every disallowed `(from,to)` rejected                                                              |
+| Excessive agency (B2)             | the MCP tool set exposes **no** `purge`/`purge-expired`                                                                           |
+| Spoofing (B1)                     | HTTP returns 401 on a missing/incorrect bearer token                                                                              |
+| Broken function authZ (B1, API5)  | a `readonly` operator gets 403 on a mutating route; `admin` may mutate                                                            |
+| DoS / rate limit (B1)             | over-limit requests get 429 + `Retry-After`; the window refills                                                                   |
+| Untrusted payload (B6)            | invalid queue payload is dead-lettered, never handled                                                                             |
+| Residency (B7)                    | provisioning fails closed outside the region allow-list / required jurisdiction                                                   |
+| Secret disclosure (B7)            | connection URI never appears in events/registry records                                                                           |
+| Cross-tenant portal read (B8)     | `tenant{Charges,Refunds}(A)` never return B's; portal reads no tenant id from the request; `tenantSummary` omits metadata/secrets |
 
 ---
 

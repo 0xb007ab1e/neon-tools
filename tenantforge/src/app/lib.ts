@@ -183,6 +183,27 @@ export interface RefundOptions {
   tenantId?: string;
 }
 
+/**
+ * A **safe, customer-facing projection** of a tenant for the self-serve portal — only fields a tenant
+ * may see about itself. Deliberately omits raw `metadata` (which can hold internal flags / the PSP
+ * `billingCustomerRef`) and `neonProjectId` (an internal infra id); the plan price is surfaced
+ * explicitly when present.
+ */
+export interface TenantSummary {
+  /** The tenant's id. */
+  id: string;
+  /** The tenant's slug. */
+  slug: string;
+  /** The region the tenant's data lives in (residency — a tenant may see its own). */
+  region: string;
+  /** Lifecycle status. */
+  status: TenantStatus;
+  /** When the tenant was created (ISO-8601 UTC). */
+  createdAt: string;
+  /** The flat plan price in USD, if set on the tenant (`metadata.priceUsd`). */
+  planPriceUsd?: number;
+}
+
 export type {
   ChargeRequest,
   ChargeResult,
@@ -815,6 +836,38 @@ export interface TenantForge {
     id: string,
     opts?: { asOf?: Date; reason?: string },
   ): Promise<RefundResult | null>;
+
+  /**
+   * A **safe, customer-facing summary** of one tenant (for the self-serve portal) — id / slug /
+   * region / status / plan price only; never raw metadata or internal infra ids. Returns `null` if
+   * the tenant doesn't exist. The caller must pass a **server-derived** tenant id (the portal session),
+   * never a client-supplied one (no cross-tenant access — `topic-multi-tenancy`).
+   *
+   * @param tenantId - The tenant's own id (from the authenticated portal session).
+   * @returns The safe summary, or `null`.
+   */
+  tenantSummary(tenantId: string): Promise<TenantSummary | null>;
+
+  /**
+   * A tenant's **own** charge history (`tenant.charged` events scoped to it) for the portal. Returns
+   * `[]` without an audit store. The query is tenant-filtered in the store, so it cannot return
+   * another tenant's events.
+   *
+   * @param tenantId - The tenant's own id (server-derived).
+   * @param limit - Max entries, newest-first. Defaults to 20.
+   * @returns The tenant's charge events.
+   */
+  tenantCharges(tenantId: string, limit?: number): Promise<TenantEvent[]>;
+
+  /**
+   * A tenant's **own** refund history (`tenant.refunded` events scoped to it) for the portal. Returns
+   * `[]` without an audit store. Tenant-filtered in the store.
+   *
+   * @param tenantId - The tenant's own id (server-derived).
+   * @param limit - Max entries, newest-first. Defaults to 20.
+   * @returns The tenant's refund events.
+   */
+  tenantRefunds(tenantId: string, limit?: number): Promise<TenantEvent[]>;
 
   /**
    * **Ingest an inbound PSP webhook** (e.g. Stripe): verify its signature over the raw body, parse +
@@ -1837,6 +1890,32 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         tenantId: id,
         reason: opts.reason ?? 'offboard proration (unused period)',
       });
+    },
+
+    async tenantSummary(tenantId: string): Promise<TenantSummary | null> {
+      const tenant = await registry.getById(tenantId);
+      if (tenant === null) return null;
+      // Curated projection — never leak raw metadata (internal flags / billingCustomerRef) or the
+      // Neon project id to the tenant. Only the flat plan price is surfaced when set.
+      const priceUsd = tenant.metadata['priceUsd'];
+      return {
+        id: tenant.id,
+        slug: tenant.slug,
+        region: tenant.region,
+        status: tenant.status,
+        createdAt: tenant.createdAt.toISOString(),
+        ...(typeof priceUsd === 'number' ? { planPriceUsd: priceUsd } : {}),
+      };
+    },
+
+    tenantCharges(tenantId: string, limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.charged'], tenantId, limit });
+    },
+
+    tenantRefunds(tenantId: string, limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.refunded'], tenantId, limit });
     },
 
     async ingestPaymentWebhook(rawBody: string, signature: string): Promise<PaymentEvent> {

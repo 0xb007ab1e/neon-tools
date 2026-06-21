@@ -6,6 +6,25 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Tenant self-serve portal** — a **customer-facing** web surface (`/portal`, distinct from the
+  operator dashboard) where a **tenant sees only its own** account, charges, and refunds. New
+  **`TenantAuthenticator` port** (+ a constant-time token adapter; OIDC can plug in) resolves a
+  portal token to a `TenantPrincipal { tenantId }`; the portal mints an **HttpOnly,
+  `SameSite=Strict` session cookie** and derives the tenant id **only** from that server-side
+  session — never from request input — so cross-tenant access (BOLA, `std-owasp-api` API1, the
+  project's #1 boundary) is structurally impossible. New tenant-scoped facade reads: `tenantSummary`
+  (a **safe projection** — id/slug/region/status/plan only, never raw metadata / `billingCustomerRef`
+  / infra ids), `tenantCharges`, `tenantRefunds` (store-filtered by tenant). The charge event now
+  also stamps its period (shared with proration). **Read-only** — no money movement or lifecycle
+  from the portal (operator/CLI only). Server-rendered semantic HTML (WCAG 2.2 AA, no external
+  resources) for the human view + JSON `/portal/api/*` for automation. Mounted when
+  `TENANTFORGE_PORTAL_SECRET` + `TENANTFORGE_PORTAL_CREDENTIALS` are set. Covered by the token
+  authenticator, facade (safe projection + a **cross-tenant isolation** test), and portal-server
+  (login / bad-token 401 / own-data render / tenant-scoped JSON / no-tenant-id-from-request /
+  tampered-cookie / logout) tests.
+
 ## [0.11.0] - 2026-06-21
 
 Adds the billing **policy** layer on top of the refund primitive: a tenant leaving mid-period is

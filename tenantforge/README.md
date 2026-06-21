@@ -262,6 +262,8 @@ default, `DASHBOARD_HOST` for a Tailscale IP; never public). In **production**, 
 server serves the built SPA under `/dashboard` itself — no separate web server. The CLI/HTTP/MCP
 surfaces remain the automation path; the dashboard is the human window onto each feature.
 
+**Tenant self-serve portal:** a **customer-facing** web view (`/portal`, distinct from the operator dashboard) where a **tenant sees only its own** account, charges, and refunds. A tenant signs in with a portal token (`TENANTFORGE_PORTAL_CREDENTIALS=tenantId:token,…`, behind the swappable `TenantAuthenticator` port — a production deploy can plug in OIDC) exchanged for an **HttpOnly, `SameSite=Strict` session cookie**; **the tenant id comes only from that server-side session and is never read from request input**, so a tenant can't reach another tenant's data (no BOLA — `std-owasp-api` API1, the project's #1 boundary). Reads go through tenant-scoped facade methods (`tenantSummary` returns a **safe projection** — no raw metadata / `billingCustomerRef` / infra ids; `tenantCharges`/`tenantRefunds` are store-filtered by tenant). **Read-only** — no money movement or lifecycle actions (those stay operator/CLI). Server-rendered semantic HTML (WCAG 2.2 AA) with no external resources, plus JSON `/portal/api/*` for automation. Mounted when `TENANTFORGE_PORTAL_SECRET` + `TENANTFORGE_PORTAL_CREDENTIALS` are set. A cross-tenant-isolation test is part of the suite.
+
 **Per-tenant quotas:** `tf.checkQuota(id, period, quota)` / `checkQuotas(...)` (CLI `check-quotas
 --max-storage-gb / --max-compute-seconds`) meter consumption and evaluate it against per-tenant
 limits with the pure `evaluateQuota`, emitting `tenant.quota_exceeded` on a breach. **Enforcement is
