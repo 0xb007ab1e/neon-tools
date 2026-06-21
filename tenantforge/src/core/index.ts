@@ -71,6 +71,12 @@ export {
   type ReceiptData,
   type RenderedReceipt,
 } from './receipts.js';
+export {
+  renderInvoiceEmail,
+  invoiceEmailIdempotencyKey,
+  type InvoiceEmailData,
+  type RenderedInvoiceEmail,
+} from './invoice-email.js';
 export { creditBalanceMinor, creditToApply, type CreditEntryAmount } from './credit.js';
 export { evaluateUsageAlerts, normalizeThresholds, type UsageAlert } from './usage-alert.js';
 export {

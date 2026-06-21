@@ -381,6 +381,16 @@ describe('HTTP control-plane', () => {
     expect(post.status).toBe(404);
   });
 
+  it('serves invoice-delivery history (tenant:read); sending is not over HTTP', async () => {
+    const invoicesSent = [{ event: 'tenant.invoiced', at: 'x', outcome: 'ok' }];
+    const server = app({ invoiceDeliveryHistory: async () => invoicesSent as never });
+    const ok = await server.request('/v1/billing/invoices-sent', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ invoicesSent });
+  });
+
   it('serves the plan catalog (tenant:read); assigning is not over HTTP', async () => {
     const catalog = [{ id: 'pro', name: 'Pro', priceUsd: 49 }];
     const server = app({ listPlans: () => catalog });

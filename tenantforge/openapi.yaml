@@ -556,6 +556,35 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/billing/invoices-sent:
+    get:
+      tags: [billing]
+      summary: >
+        Recent invoice-delivery history (requires `tenant:read`) from the persisted audit trail.
+        Read-only — sending an invoice email is a CLI operation; the recipient address is never
+        recorded (PII). Empty unless an audit store is wired.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max entries, newest-first (default 20).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Recent invoice-delivery events.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invoicesSent:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
+                required: [invoicesSent]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/billing/notifications:
     get:
       tags: [billing]
