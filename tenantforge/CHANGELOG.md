@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-06-21
+
+Adds an authoritative per-tenant credit ledger so a plan downgrade grants the full prorated credit
+(uncapped) and a charge draws down credit before billing. Additive/backward-compatible (MINOR) —
+the default (`TENANTFORGE_CREDIT_LEDGER=none`) preserves the legacy capped-refund behavior exactly.
+
 ### Added
 
 - **Credit ledger** — an authoritative per-tenant credit balance, lifting the "downgrade credit
