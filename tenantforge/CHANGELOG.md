@@ -6,6 +6,25 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-21
+
+Docs/tooling patch — no functional changes. Syncs the collection index and adds a guard so the
+version can't drift again.
+
+### Changed
+
+- **Synced the collection index (`../TOOLS.md`)** — TenantForge's status was stale at `alpha`; now
+  `stable`, with the summary + `Provides` refreshed to cover the 0.4.0 capabilities (drift
+  reconciliation, compliance, cost/margin, invoicing, web dashboard).
+
+### Added
+
+- **README shields version badge** under the title (linked to the release).
+- **Version-consistency CI gate** (`scripts/check-version.mjs`, run via `pnpm -r --if-present
+version:check` in the `quality` job) — asserts the version is identical across `package.json`
+  (source of truth), `neon-tool.json`, `src/meta.ts`, `openapi.yaml`, and the README Status line +
+  badge; CI fails on any drift.
+
 ## [0.4.0] - 2026-06-20
 
 The **Neon-extension** release. TenantForge repositions from re-implementing Neon primitives to
@@ -554,6 +573,7 @@ and real-world validation.
 - Alternate adapters — other message brokers (SQS/NATS/Pub-Sub), Vault/cloud secret stores, and
   `pg_dump`→object-store exporters — are deferred to their own branches behind the existing ports.
 
+[0.4.1]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.4.1
 [0.4.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.4.0
 [0.3.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.3.0
 [0.2.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.2.0

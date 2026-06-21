@@ -25,6 +25,6 @@ subdirectory** under the collection root and publishes a machine-readable
 | Tool | Dir | Status | Category | Summary | Provides |
 |---|---|---|---|---|---|
 | **VectorNest** | [`vectornest/`](./vectornest/) | beta | ai | Consolidate a separate vector DB into the Neon Postgres you already run — RAG ingest/query, three retrieval modes, and safe branch-rehearsed zero-downtime re-embedding. | `rag.ingest`, `rag.query`, `rag.reembed`, `rag.eval` |
-| **TenantForge** | [`tenantforge/`](./tenantforge/) | alpha | infra | Control plane for database-per-tenant SaaS on Neon — provision an isolated project per customer, route connections, orchestrate fleet migrations, and manage tenant lifecycle. | `tenant.provision`, `tenant.route`, `tenant.lifecycle`, `tenant.migrate` |
+| **TenantForge** | [`tenantforge/`](./tenantforge/) | stable | infra | Control plane for database-per-tenant SaaS on Neon — provision an isolated project per customer, route connections, orchestrate fleet migrations + drift reconciliation, manage tenant lifecycle, and extend Neon with compliance attestation, cost/margin, and invoice generation (web dashboard + CLI/HTTP/MCP). | `tenant.provision`, `tenant.route`, `tenant.lifecycle`, `tenant.migrate`, `tenant.reconcile`, `tenant.compliance`, `tenant.cost` |
 
 _(Add a row per new tool. Ideas not yet built live in [`research/product-concepts.md`](./research/product-concepts.md).)_
