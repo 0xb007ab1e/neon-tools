@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-06-21
+
+Adds an operator plan catalog: define product tiers once and assign one to a tenant in a single
+step. Additive/backward-compatible (MINOR) — off until `TENANTFORGE_PLANS` is configured. Builder
+product policy layered on Neon's per-project provisioning (not a Neon feature).
+
 ### Added
 
 - **Plan catalog (named tiers)** — define product plans once in `TENANTFORGE_PLANS` (JSON array of
