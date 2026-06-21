@@ -331,6 +331,16 @@ describe('HTTP control-plane', () => {
     expect(await ok.json()).toEqual({ events });
   });
 
+  it('serves billing-receipt notification history (tenant:read)', async () => {
+    const notifications = [{ event: 'tenant.notified', at: 'x', outcome: 'ok' }];
+    const server = app({ notificationHistory: async () => notifications as never });
+    const ok = await server.request('/v1/billing/notifications', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ notifications });
+  });
+
   it('serves refund history (tenant:read); issuing a refund is not over HTTP', async () => {
     const refunds = [{ event: 'tenant.refunded', at: 'x', outcome: 'ok' }];
     const server = app({ refundHistory: async () => refunds as never });

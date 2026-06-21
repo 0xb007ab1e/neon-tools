@@ -13,6 +13,9 @@ import {
   assertRefundAmount,
   refundIdempotencyKey,
   prorateRefundMinor,
+  renderReceipt,
+  receiptIdempotencyKey,
+  type ReceiptKind,
   planDunning,
   dunningStateFromCharges,
   type DunningSchedule,
@@ -106,7 +109,10 @@ import type { AuditLogStore } from '../ports/audit-log-store.js';
 import type { ChargeResult, PaymentGateway, RefundResult } from '../ports/payment-gateway.js';
 import { createStripeGateway } from '../adapters/payment/stripe-gateway.js';
 import type { PaymentEvent, PaymentWebhookVerifier } from '../ports/payment-webhook.js';
+import type { Notifier } from '../ports/notifier.js';
 import { createStripeWebhookVerifier } from '../adapters/payment/stripe-webhook.js';
+import { createLogNotifier } from '../adapters/notify/log-notifier.js';
+import { createHttpNotifier } from '../adapters/notify/http-notifier.js';
 import type { UsageProvider } from '../ports/usage-provider.js';
 import type { MigrationRunner } from '../ports/migration-runner.js';
 import type { TenantConnection } from '../ports/connection-router.js';
@@ -307,6 +313,13 @@ export interface TenantForgeDeps {
    * matching {@link createAuditLogEventSink} into the event sink so the trail is populated.)
    */
   auditLog?: AuditLogStore;
+  /**
+   * Notifier for **billing receipts** (charge/refund confirmations). When provided, a successful
+   * charge/refund best-effort sends a receipt to the tenant's `metadata.billingEmail` (if set) and
+   * records a redacted `tenant.notified` event. Absent = no receipts. A send failure never breaks
+   * the billing operation it confirms.
+   */
+  notifier?: Notifier;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -821,6 +834,16 @@ export interface TenantForge {
   refundHistory(limit?: number): Promise<TenantEvent[]>;
 
   /**
+   * Recent **notification history** (`tenant.notified` events — billing receipts) from the persisted
+   * audit trail. Returns `[]` when no audit store is wired. The recipient address is never recorded
+   * (PII); each entry carries the kind / reference / provider / status only.
+   *
+   * @param limit - Max entries, newest-first. Defaults to 20.
+   * @returns Recent notification audit events.
+   */
+  notificationHistory(limit?: number): Promise<TenantEvent[]>;
+
+  /**
    * **Refund the unused portion of a tenant's latest charge**, prorated to `asOf` (the offboard
    * instant) — the money to return when a tenant leaves mid-period. Derives the charge id / amount /
    * currency / period from the most recent successful `tenant.charged` audit event and refunds
@@ -934,6 +957,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const eventSink = deps.eventSink ?? createNoopEventSink();
   const auditLog = deps.auditLog;
   const paymentGateway = deps.paymentGateway;
+  const notifier = deps.notifier;
   const paymentWebhookVerifier = deps.paymentWebhookVerifier;
 
   /** Build the backup engine on demand; fails closed if no snapshot provider was configured. */
@@ -1028,6 +1052,65 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     return typeof v === 'string' && v.length > 0 ? v : undefined;
   };
 
+  /** Read a tenant's billing receipt recipient from metadata, if present + non-empty. */
+  const billingEmail = (metadata: JsonObject): string | undefined => {
+    const v = metadata['billingEmail'];
+    return typeof v === 'string' && v.length > 0 ? v : undefined;
+  };
+
+  /**
+   * Best-effort send a billing **receipt** (charge/refund confirmation) to the tenant's
+   * `metadata.billingEmail`, recording a redacted `tenant.notified` event. Fully swallows its own
+   * errors — a notifier/registry failure must never break the billing operation it confirms
+   * (`topic-notifications`). No-op when no notifier is wired or the tenant has no billing email. The
+   * recipient address is **not** put in the audit context (PII — master §5).
+   */
+  const sendReceipt = async (
+    kind: ReceiptKind,
+    args: { tenantId: string; amountMinor: number; currency: string; reference: string },
+  ): Promise<void> => {
+    if (notifier === undefined) return;
+    try {
+      const tenant = await registry.getById(args.tenantId);
+      if (tenant === null) return;
+      const to = billingEmail(tenant.metadata);
+      if (to === undefined) return; // no recipient on file → nothing to send
+      const { subject, body } = renderReceipt({
+        kind,
+        tenantSlug: tenant.slug,
+        amountMinor: args.amountMinor,
+        currency: args.currency,
+        reference: args.reference,
+        at: new Date().toISOString(),
+      });
+      const result = await notifier.notify({
+        to,
+        subject,
+        body,
+        idempotencyKey: receiptIdempotencyKey(kind, args.reference),
+        metadata: { tenant_id: args.tenantId },
+      });
+      observe('tenant.notified', {
+        tenantId: args.tenantId,
+        outcome: 'ok',
+        context: {
+          provider: result.provider,
+          notificationId: result.id,
+          kind,
+          reference: args.reference,
+          status: result.status,
+        },
+      });
+    } catch (error) {
+      observe('tenant.notified', {
+        tenantId: args.tenantId,
+        outcome: 'error',
+        context: { kind, reference: args.reference },
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
   /**
    * Look up a prior charge in the persisted audit trail by its PSP charge id, to recover the
    * tenant / currency / original amount for a refund. Returns `undefined` when no audit store is
@@ -1093,6 +1176,15 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
           ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
         },
       });
+      // Best-effort refund receipt (only when we know which tenant — never blocks/breaks the refund).
+      if (tenantId !== undefined) {
+        await sendReceipt('refund', {
+          tenantId,
+          amountMinor: result.amountMinor,
+          currency: result.currency,
+          reference: result.id,
+        });
+      }
       return result;
     } catch (error) {
       observe('tenant.refunded', {
@@ -1147,6 +1239,8 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
           periodEnd: invoice.periodEnd,
         },
       });
+      // Best-effort receipt (never blocks/breaks the charge — sendReceipt swallows its own errors).
+      await sendReceipt('charge', { tenantId: id, amountMinor, currency, reference: result.id });
       return result;
     } catch (error) {
       observe('tenant.charged', {
@@ -1840,6 +1934,11 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return auditLog.query({ events: ['tenant.refunded'], limit });
     },
 
+    notificationHistory(limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.notified'], limit });
+    },
+
     async refundUnusedPeriod(
       id: string,
       opts: { asOf?: Date; reason?: string } = {},
@@ -2074,6 +2173,21 @@ export function tenantForgeFromConfig(
           }),
         }
       : {}),
+    // Billing-receipt notifier: `log` records an auditable receipt trail; `http` POSTs each receipt
+    // to a relay (https). A successful charge/refund best-effort notifies metadata.billingEmail.
+    ...(config.notifier === 'log'
+      ? { notifier: createLogNotifier() }
+      : config.notifier === 'http' && config.notifierHttp !== undefined
+        ? {
+            notifier: createHttpNotifier({
+              url: config.notifierHttp.url,
+              allowInsecure: allowInsecureUrls,
+              ...(config.notifierHttp.secret !== undefined
+                ? { secret: config.notifierHttp.secret }
+                : {}),
+            }),
+          }
+        : {}),
     // Off-Neon archive tier (pg_dump → object store) — enabled when an export object store is
     // configured (TENANTFORGE_EXPORT_DIR); archives use the `archives/` key prefix. Retention is the
     // object store's lifecycle policy. Without it, archive() fails closed.

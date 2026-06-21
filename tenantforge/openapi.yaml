@@ -411,6 +411,35 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/billing/notifications:
+    get:
+      tags: [billing]
+      summary: >
+        Recent billing-receipt notifications (requires `tenant:read`) from the persisted audit trail.
+        Receipts are an automatic best-effort side-effect of charge/refund; the recipient address is
+        never recorded. Read-only. Empty unless an audit store is wired.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max entries, newest-first (default 20).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Recent notification events (no recipient address).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
+                required: [notifications]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/billing/refunds:
     get:
       tags: [billing]

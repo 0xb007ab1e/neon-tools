@@ -60,6 +60,14 @@ export {
   type ProrationInput,
 } from './billing.js';
 export {
+  renderReceipt,
+  receiptIdempotencyKey,
+  formatMoney,
+  type ReceiptKind,
+  type ReceiptData,
+  type RenderedReceipt,
+} from './receipts.js';
+export {
   planDunning,
   dunningStateFromCharges,
   type DunningSchedule,

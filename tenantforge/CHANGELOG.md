@@ -6,6 +6,24 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Receipts / notifications** — a successful charge or refund now **best-effort** sends a receipt to
+  the tenant's `metadata.billingEmail`, behind a new swappable **`Notifier` port**. Two adapters
+  ship: **`log`** (default — records an auditable receipt trail, no external send) and **`http`**
+  (POST each receipt to a relay over https, optionally HMAC-signed, zero-dependency via injectable
+  `fetch` — SMTP/SES/SendGrid plug in the same way). The receipt body is rendered in the **pure
+  core** (`renderReceipt` + `receiptIdempotencyKey` + `formatMoney`, 100%) and carries only safe
+  fields (amount, currency, reference, date) — **no card data, and the recipient address is never
+  written to the audit trail** (PII, master §5). Idempotent on `tenantforge:receipt:{kind}:{ref}` so
+  a retry never double-notifies; a send failure **never breaks** the charge/refund it confirms
+  (errors swallowed + recorded). Emits a redacted `tenant.notified` event; `notificationHistory()`
+  reads it. Enable with `TENANTFORGE_NOTIFIER=log|http` (+ `TENANTFORGE_NOTIFIER_URL`/`_SECRET` for
+  http). Read-only history at `GET /v1/billing/notifications` + the dashboard billing panel; **not on
+  MCP**. Covered by the pure core, both adapters (log queue; http POST / signature / non-2xx /
+  https-only), facade (receipt-on-charge, no-email skip, best-effort-on-failure, no-notifier),
+  HTTP, dashboard, and OpenAPI tests.
+
 ## [0.14.0] - 2026-06-21
 
 Completes the tenant portal's read surface — a tenant can now see its metered usage for the period,

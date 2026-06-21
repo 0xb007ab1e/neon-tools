@@ -288,3 +288,23 @@ export async function fetchRefunds(): Promise<RefundEntry[]> {
   if (!res.ok) throw new Error('Could not load refunds');
   return ((await res.json()) as { refunds: RefundEntry[] }).refunds;
 }
+
+/** One notification entry (a persisted `tenant.notified` billing-receipt audit event). */
+export interface NotificationEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  tenantId?: string;
+  context?: {
+    provider?: string;
+    kind?: string;
+    reference?: string;
+    status?: string;
+  };
+}
+
+/** Load recent billing-receipt notifications (read-only; empty without an audit store). */
+export async function fetchNotifications(): Promise<NotificationEntry[]> {
+  const res = await fetch(`${BASE}/notifications`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load notifications');
+  return ((await res.json()) as { notifications: NotificationEntry[] }).notifications;
+}
