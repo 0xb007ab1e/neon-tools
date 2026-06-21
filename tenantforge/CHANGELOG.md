@@ -6,6 +6,15 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-21
+
+Closes the billing lifecycle and hardens the wire. **Dunning** turns a one-off failed charge into a
+managed retry-then-escalate sweep (the missing half of charging), and a **project-wide TLS
+enforcement** pass makes every outbound connection fail closed on plaintext, with the whole network
+surface — including each intentionally-open endpoint — now documented. Additive/backward-compatible
+(MINOR); the TLS change is default-secure (a real Neon URL + the default https endpoints pass
+unchanged), erroring only on a previously-misconfigured plaintext target.
+
 ### Security
 
 - **Project-wide TLS/mTLS enforcement** — every outbound connection now fails closed at startup
