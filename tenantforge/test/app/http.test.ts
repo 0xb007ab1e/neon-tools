@@ -321,6 +321,56 @@ describe('HTTP control-plane', () => {
     expect(post.status).toBe(404);
   });
 
+  it('serves payment webhook-event history (tenant:read)', async () => {
+    const events = [{ event: 'payment.webhook', at: 'x', outcome: 'ok' }];
+    const server = app({ paymentWebhookHistory: async () => events as never });
+    const ok = await server.request('/v1/billing/webhook-events', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ events });
+  });
+
+  it('ingests a signature-verified PSP webhook (no bearer), 400 on a bad signature', async () => {
+    const seen: { raw: string; sig: string }[] = [];
+    const server = createHttpServer(
+      fakeTf({
+        ingestPaymentWebhook: async (raw: string, sig: string) => {
+          seen.push({ raw, sig });
+          if (sig === 'bad') throw new Error('signature mismatch');
+          return {
+            id: 'evt_1',
+            type: 'charge.succeeded',
+            provider: 'stripe',
+            rawType: 'x',
+            occurredAt: 'x',
+          } as never;
+        },
+      }),
+      { token: TOKEN, paymentWebhooks: true },
+    );
+    // No bearer token — the signature is the auth.
+    const ok = await server.request('/webhooks/payment', {
+      method: 'POST',
+      headers: { 'stripe-signature': 't=1,v1=abc', 'content-type': 'application/json' },
+      body: '{"id":"evt_1"}',
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ received: true, type: 'charge.succeeded' });
+    expect(seen[0]?.raw).toBe('{"id":"evt_1"}'); // the RAW body reached the verifier
+    const bad = await server.request('/webhooks/payment', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'bad' },
+      body: '{}',
+    });
+    expect(bad.status).toBe(400);
+  });
+
+  it('does not mount the webhook endpoint unless enabled (404)', async () => {
+    const res = await app().request('/webhooks/payment', { method: 'POST', body: '{}' });
+    expect(res.status).toBe(404);
+  });
+
   it('emits a keyset nextCursor on a full page and forwards it to the next request', async () => {
     const calls: Array<{ limit?: number; cursor?: { createdAt: Date; id: string } }> = [];
     const server = createHttpServer(

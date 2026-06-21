@@ -169,6 +169,10 @@ const EnvSchema = z
     STRIPE_SECRET_KEY: z.string().min(1).optional(),
     // Override the Stripe API base URL (optional; defaults to the public API — set for a mock/proxy).
     STRIPE_API_BASE_URL: z.string().url().optional(),
+    // Stripe **webhook signing secret** (whsec_…) — distinct from the API key. When set (with
+    // paymentGateway=stripe), the inbound webhook endpoint (POST /webhooks/payment) is mounted and
+    // verifies signatures with it. A secret; never committed/logged.
+    TENANTFORGE_PAYMENT_WEBHOOK_SECRET: z.string().min(1).optional(),
     // Outbound lifecycle webhook (optional): HMAC-signed POST of each event to an external endpoint.
     TENANTFORGE_WEBHOOK_URL: z.string().url().optional(),
     TENANTFORGE_WEBHOOK_SECRET: z.string().min(1).optional(),
@@ -342,6 +346,8 @@ export interface Config {
   stripeSecretKey?: string;
   /** Override the Stripe API base URL (optional). */
   stripeApiBaseUrl?: string;
+  /** Stripe webhook signing secret; set ⇒ the inbound webhook endpoint is mounted + verified. */
+  paymentWebhookSecret?: string;
   /** Outbound lifecycle webhook (set only when both URL + secret are configured). */
   webhook?: { url: string; secret: string; eventTypes?: string[] };
   /** Port for the HTTP entrypoint. */
@@ -380,6 +386,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       : {}),
     ...(parsed.STRIPE_API_BASE_URL !== undefined
       ? { stripeApiBaseUrl: parsed.STRIPE_API_BASE_URL }
+      : {}),
+    ...(parsed.TENANTFORGE_PAYMENT_WEBHOOK_SECRET !== undefined
+      ? { paymentWebhookSecret: parsed.TENANTFORGE_PAYMENT_WEBHOOK_SECRET }
       : {}),
     connectionCacheTtlMs: parsed.TENANTFORGE_CONNECTION_CACHE_TTL_MS,
     authMode: parsed.TENANTFORGE_AUTH_MODE,

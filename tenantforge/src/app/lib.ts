@@ -99,6 +99,8 @@ import type { EventSink } from '../ports/event-sink.js';
 import type { AuditLogStore } from '../ports/audit-log-store.js';
 import type { ChargeResult, PaymentGateway } from '../ports/payment-gateway.js';
 import { createStripeGateway } from '../adapters/payment/stripe-gateway.js';
+import type { PaymentEvent, PaymentWebhookVerifier } from '../ports/payment-webhook.js';
+import { createStripeWebhookVerifier } from '../adapters/payment/stripe-webhook.js';
 import type { UsageProvider } from '../ports/usage-provider.js';
 import type { MigrationRunner } from '../ports/migration-runner.js';
 import type { TenantConnection } from '../ports/connection-router.js';
@@ -128,6 +130,7 @@ export interface FleetChargeReport {
 }
 
 export type { ChargeRequest, ChargeResult, PaymentGateway } from '../ports/payment-gateway.js';
+export type { PaymentEvent, PaymentWebhookVerifier } from '../ports/payment-webhook.js';
 export type {
   FleetMigrationSpec,
   MigrateFleetOptions,
@@ -210,6 +213,12 @@ export interface TenantForgeDeps {
    * closed. Charging is a money-moving outward action — never auto-wired without explicit config.
    */
   paymentGateway?: PaymentGateway;
+  /**
+   * Verifier for **inbound PSP webhooks** (e.g. Stripe). Swappable behind the
+   * {@link PaymentWebhookVerifier} port. Required only for {@link TenantForge.ingestPaymentWebhook};
+   * absent ⇒ ingestion fails closed.
+   */
+  paymentWebhookVerifier?: PaymentWebhookVerifier;
   /**
    * Persisted audit trail. When provided, {@link TenantForge.complianceReport} includes erasure
    * history + a recent audit excerpt; absent = the report omits the `audit` section. (Wire the
@@ -649,6 +658,28 @@ export interface TenantForge {
   chargeHistory(limit?: number): Promise<TenantEvent[]>;
 
   /**
+   * **Ingest an inbound PSP webhook** (e.g. Stripe): verify its signature over the raw body, parse +
+   * normalize it, and emit a redacted `payment.webhook` audit event (attributed to the tenant when
+   * the event carries one). Requires a configured webhook verifier; throws on a bad/stale signature
+   * or malformed payload (the HTTP layer returns 4xx without leaking why). At-least-once delivery —
+   * the only effect is an append-only audit event, so a duplicate is benign.
+   *
+   * @param rawBody - The exact request bytes (never re-serialized — that breaks the HMAC).
+   * @param signature - The PSP signature header (e.g. Stripe's `Stripe-Signature`).
+   * @returns The normalized payment event.
+   */
+  ingestPaymentWebhook(rawBody: string, signature: string): Promise<PaymentEvent>;
+
+  /**
+   * Recent **inbound payment-webhook history** (`payment.webhook` events) from the persisted audit
+   * trail. Returns `[]` when no audit store is wired.
+   *
+   * @param limit - Max entries, newest-first. Defaults to 20.
+   * @returns Recent payment-webhook audit events.
+   */
+  paymentWebhookHistory(limit?: number): Promise<TenantEvent[]>;
+
+  /**
    * Meter a tenant's resource consumption over a period (for billing) — resolves the tenant's Neon
    * project and aggregates its consumption. Requires a usage provider in the deps.
    *
@@ -691,6 +722,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const eventSink = deps.eventSink ?? createNoopEventSink();
   const auditLog = deps.auditLog;
   const paymentGateway = deps.paymentGateway;
+  const paymentWebhookVerifier = deps.paymentWebhookVerifier;
 
   /** Build the backup engine on demand; fails closed if no snapshot provider was configured. */
   const backupEngine = (): ReturnType<typeof createBackupEngine> => {
@@ -797,6 +829,8 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         customerRef,
         idempotencyKey: chargeIdempotencyKey(invoice),
         description: `TenantForge ${id} ${invoice.periodStart}..${invoice.periodEnd}`,
+        // Stamp the tenant id so inbound PSP webhooks correlate back to this tenant.
+        metadata: { tenant_id: id },
       });
       observe('tenant.charged', {
         tenantId: id,
@@ -1342,6 +1376,34 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return auditLog.query({ events: ['tenant.charged'], limit });
     },
 
+    async ingestPaymentWebhook(rawBody: string, signature: string): Promise<PaymentEvent> {
+      if (paymentWebhookVerifier === undefined) {
+        throw new Error('payment webhook ingestion requires a configured verifier');
+      }
+      // Verify the signature over the RAW body + normalize (throws on bad/stale/malformed).
+      const event = paymentWebhookVerifier.verify(rawBody, signature);
+      observe('payment.webhook', {
+        outcome: event.type === 'charge.failed' ? 'error' : 'ok',
+        ...(event.tenantRef !== undefined ? { tenantId: event.tenantRef } : {}),
+        context: {
+          provider: event.provider,
+          eventId: event.id,
+          type: event.type,
+          rawType: event.rawType,
+          occurredAt: event.occurredAt,
+          ...(event.chargeId !== undefined ? { chargeId: event.chargeId } : {}),
+          ...(event.amountMinor !== undefined ? { amountMinor: event.amountMinor } : {}),
+          ...(event.currency !== undefined ? { currency: event.currency } : {}),
+        },
+      });
+      return Promise.resolve(event);
+    },
+
+    paymentWebhookHistory(limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['payment.webhook'], limit });
+    },
+
     async close(): Promise<void> {
       // Release the audit store's own pool (the pg adapter owns one) before the registry.
       await (auditLog as { close?: () => Promise<void> } | undefined)?.close?.();
@@ -1441,6 +1503,14 @@ export function tenantForgeFromConfig(
           paymentGateway: createStripeGateway({
             secretKey: config.stripeSecretKey!,
             ...(config.stripeApiBaseUrl !== undefined ? { baseUrl: config.stripeApiBaseUrl } : {}),
+          }),
+        }
+      : {}),
+    // Inbound PSP webhook verifier — wired when a webhook signing secret is configured.
+    ...(config.paymentGateway === 'stripe' && config.paymentWebhookSecret !== undefined
+      ? {
+          paymentWebhookVerifier: createStripeWebhookVerifier({
+            signingSecret: config.paymentWebhookSecret,
           }),
         }
       : {}),

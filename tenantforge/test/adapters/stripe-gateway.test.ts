@@ -8,6 +8,7 @@ const req: ChargeRequest = {
   customerRef: 'cus_123',
   idempotencyKey: 'idem-key-1',
   description: 'TenantForge t1',
+  metadata: { tenant_id: 't1' },
 };
 
 /** A fake fetch that records the request and returns a canned response. */
@@ -49,6 +50,7 @@ describe('createStripeGateway', () => {
     expect(body).toContain('customer=cus_123');
     expect(body).toContain('confirm=true');
     expect(body).toContain('off_session=true');
+    expect(body).toContain('metadata%5Btenant_id%5D=t1'); // metadata[tenant_id]=t1 (for webhook correlation)
   });
 
   it('maps processing and requires_action statuses', async () => {

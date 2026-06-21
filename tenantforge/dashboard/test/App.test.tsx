@@ -76,6 +76,14 @@ const charges = [
     },
   },
 ];
+const paymentEvents = [
+  {
+    at: '2026-06-20T01:00:00.000Z',
+    outcome: 'ok',
+    tenantId: 'tenant-hooked',
+    context: { type: 'charge.succeeded', rawType: 'payment_intent.succeeded', chargeId: 'pi_1' },
+  },
+];
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -108,6 +116,7 @@ beforeEach(() => {
         return Promise.resolve(json({ target: '0003', reconciled: ['t1', 't2'], partial: [] }));
       if (url.endsWith('/reconcile')) return Promise.resolve(json(reconcile));
       if (url.endsWith('/invoices')) return Promise.resolve(json(invoices));
+      if (url.endsWith('/payment-events')) return Promise.resolve(json({ events: paymentEvents }));
       if (url.endsWith('/charges')) return Promise.resolve(json({ charges }));
       if (url.endsWith('/cost')) return Promise.resolve(json(cost));
       return Promise.resolve(json({}, 404));
@@ -160,6 +169,9 @@ describe('dashboard App', () => {
       await screen.findByRole('heading', { name: 'Billing (recent charges)' }),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-charged')).toBeInTheDocument();
+    // Inbound PSP webhook events render in the billing panel.
+    expect(await screen.findByText('Recent inbound PSP webhook events')).toBeInTheDocument();
+    expect(await screen.findByText('tenant-hooked')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);

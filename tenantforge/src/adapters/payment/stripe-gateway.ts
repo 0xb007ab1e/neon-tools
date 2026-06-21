@@ -74,6 +74,10 @@ export function createStripeGateway(options: StripeGatewayOptions): PaymentGatew
         off_session: 'true',
         ...(request.description !== undefined ? { description: request.description } : {}),
       });
+      // Attach metadata as Stripe's `metadata[key]=value` form fields (e.g. tenant_id for webhooks).
+      for (const [k, v] of Object.entries(request.metadata ?? {})) {
+        body.set(`metadata[${k}]`, v);
+      }
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);

@@ -1118,6 +1118,7 @@ describe('createTenantForge.chargeInvoice', () => {
     expect(calls[0]?.currency).toBe('usd');
     expect(calls[0]?.customerRef).toBe('cus_1');
     expect(calls[0]?.idempotencyKey).toContain(`:${tenant.id}:`); // stable, tenant-scoped
+    expect(calls[0]?.metadata?.tenant_id).toBe(tenant.id); // so inbound webhooks correlate back
   });
 
   it('chargeInvoiceFleet skips no-ref + zero-invoice tenants and isolates a decline', async () => {
@@ -1192,6 +1193,85 @@ describe('createTenantForge.chargeInvoice', () => {
     expect(history).toHaveLength(1);
     expect(history[0]?.event).toBe('tenant.charged');
     expect(history[0]?.context?.status).toBe('succeeded');
+  });
+});
+
+describe('createTenantForge.ingestPaymentWebhook', () => {
+  type Verifier = import('../../src/ports/payment-webhook.js').PaymentWebhookVerifier;
+  type Event = import('../../src/ports/payment-webhook.js').PaymentEvent;
+  const sampleEvent: Event = {
+    id: 'evt_1',
+    type: 'charge.succeeded',
+    provider: 'stripe',
+    rawType: 'payment_intent.succeeded',
+    occurredAt: '2026-06-21T00:00:00.000Z',
+    tenantRef: 't-42',
+    chargeId: 'pi_1',
+    amountMinor: 1234,
+    currency: 'usd',
+  };
+  const verifier = (event: Event = sampleEvent, throws = false): Verifier => ({
+    provider: 'stripe',
+    verify: () => {
+      if (throws) throw new Error('signature mismatch');
+      return event;
+    },
+  });
+  const base = () => ({
+    registry: fakeRegistry(),
+    provisioning: fakeProvisioning(),
+    secretStore: createInMemorySecretStore(),
+    defaultRegion: 'aws-us-east-1' as const,
+  });
+
+  it('fails closed without a configured verifier', async () => {
+    const tf = createTenantForge(base());
+    await expect(tf.ingestPaymentWebhook('{}', 'sig')).rejects.toThrow(
+      /requires a configured verifier/,
+    );
+  });
+
+  it('rejects a bad signature (propagates the verifier error)', async () => {
+    const tf = createTenantForge({
+      ...base(),
+      paymentWebhookVerifier: verifier(sampleEvent, true),
+    });
+    await expect(tf.ingestPaymentWebhook('{}', 'bad')).rejects.toThrow(/signature mismatch/);
+  });
+
+  it('verifies + records a payment.webhook audit event (attributed to the tenant) and returns it', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const tf = createTenantForge({
+      ...base(),
+      paymentWebhookVerifier: verifier(),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const event = await tf.ingestPaymentWebhook('{raw}', 'sig');
+    expect(event.id).toBe('evt_1');
+
+    const history = await tf.paymentWebhookHistory();
+    expect(history).toHaveLength(1);
+    expect(history[0]?.event).toBe('payment.webhook');
+    expect(history[0]?.tenantId).toBe('t-42'); // from the event's tenantRef
+    expect(history[0]?.context?.type).toBe('charge.succeeded');
+  });
+
+  it('records a failed-charge webhook with outcome error', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const tf = createTenantForge({
+      ...base(),
+      paymentWebhookVerifier: verifier({ ...sampleEvent, type: 'charge.failed' }),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    await tf.ingestPaymentWebhook('{raw}', 'sig');
+    expect((await tf.paymentWebhookHistory())[0]?.outcome).toBe('error');
+  });
+
+  it('paymentWebhookHistory returns [] without an audit store', async () => {
+    const tf = createTenantForge({ ...base(), paymentWebhookVerifier: verifier() });
+    expect(await tf.paymentWebhookHistory()).toEqual([]);
   });
 });
 

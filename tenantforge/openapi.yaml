@@ -383,6 +383,69 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/billing/webhook-events:
+    get:
+      tags: [billing]
+      summary: >
+        Recent inbound PSP webhook events (requires `tenant:read`) from the persisted audit trail.
+        Empty unless an audit store is wired.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max entries, newest-first (default 20).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Recent payment-webhook events.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
+                required: [events]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /webhooks/payment:
+    post:
+      tags: [billing]
+      summary: >
+        Inbound PSP webhook endpoint (e.g. Stripe). **Authenticated by the request signature, not the
+        bearer token** — so it sits outside `/v1`. The signature is verified against the raw body and
+        the timestamp is replay-checked; the (untrusted) payload is then parsed. Mounted only when a
+        webhook verifier is configured. Respond fast; failures return 400 without detail.
+      security: []
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          description: The PSP signature header (scheme `t=…,v1=…`).
+          schema: { type: string }
+      requestBody:
+        required: true
+        description: The raw PSP event payload (verified by signature over the exact bytes).
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Accepted (signature verified).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received: { type: boolean, const: true }
+                  type: { type: string }
+                required: [received, type]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '413':
+          description: Payload too large.
 components:
   securitySchemes:
     bearerAuth:

@@ -30,6 +30,14 @@ const permissiveTf = (): TenantForge =>
     resume: () => Promise.resolve(tenant),
     offboard: () => Promise.resolve({ tenant, archive: null }),
     purge: () => Promise.resolve(tenant),
+    ingestPaymentWebhook: () =>
+      Promise.resolve({
+        id: 'evt',
+        type: 'charge.succeeded',
+        provider: 'stripe',
+        rawType: 'x',
+        occurredAt: 'x',
+      }),
   }) as unknown as TenantForge;
 
 interface OpenApiDoc {
@@ -53,7 +61,10 @@ describe('OpenAPI contract ↔ HTTP app', () => {
 
   it.each(operations)('serves $method $path (documented → routed)', async ({ path, method }) => {
     const url = `http://local${path.replace('{id}', 't1')}`;
-    const res = await createHttpServer(permissiveTf(), { token: TOKEN }).request(url, {
+    const res = await createHttpServer(permissiveTf(), {
+      token: TOKEN,
+      paymentWebhooks: true,
+    }).request(url, {
       method: method.toUpperCase(),
       headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
       ...(method === 'post' ? { body: postBody } : {}),
