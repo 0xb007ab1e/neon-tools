@@ -6,6 +6,11 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-06-21
+
+Rounds out billing self-service: tenants see their own receipts in the portal, and operators can
+change a tenant's plan with fair mid-period proration. Additive/backward-compatible (MINOR).
+
 ### Added
 
 - **Usage-based plan management (upgrade/downgrade with proration)** — `tf.changePlan(id,
