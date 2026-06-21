@@ -17,6 +17,7 @@ import {
   fetchPlanChanges,
   fetchCreditGrants,
   fetchUsageAlerts,
+  fetchPlans,
   fetchSession,
   login,
   logout,
@@ -36,6 +37,7 @@ import {
   type PlanChangeEntry,
   type CreditGrantEntry,
   type UsageAlertEntry,
+  type PlanEntry,
   type Session,
 } from './api';
 
@@ -142,6 +144,7 @@ function DashboardView(props: {
         <DriftPanel />
         <ReconcilePanel />
         <CostPanel />
+        <PlansPanel />
         <InvoicesPanel />
         <BillingPanel />
       </main>
@@ -622,6 +625,49 @@ function BillingPanel(): React.JSX.Element {
                       {d.context?.attempt !== undefined ? ` #${d.context.attempt}` : ''}
                     </td>
                     <td>{d.outcome}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function PlansPanel(): React.JSX.Element {
+  const { data, error } = usePanelData<PlanEntry[]>(fetchPlans);
+  return (
+    <Panel id="plans-h" title="Plan catalog" error={error} loading={data === null}>
+      {data !== null && (
+        <div>
+          <p>
+            {data.length} plan(s). Assigning a plan to a tenant runs via the CLI (`assign-plan`),
+            not the dashboard.
+          </p>
+          {data.length > 0 && (
+            <table>
+              <caption>Operator plans (price + included allowances)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Plan</th>
+                  <th scope="col">Price (USD)</th>
+                  <th scope="col">Included</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((p) => (
+                  <tr key={p.id}>
+                    <th scope="row">{p.name ?? p.id}</th>
+                    <td>{p.priceUsd ?? 0}</td>
+                    <td>
+                      {p.includedUsage === undefined || Object.keys(p.includedUsage).length === 0
+                        ? '—'
+                        : Object.entries(p.includedUsage)
+                            .map(([k, v]) => `${k}=${v}`)
+                            .join(', ')}
+                    </td>
                   </tr>
                 ))}
               </tbody>

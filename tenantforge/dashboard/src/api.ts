@@ -373,3 +373,18 @@ export async function fetchUsageAlerts(): Promise<UsageAlertEntry[]> {
   if (!res.ok) throw new Error('Could not load usage alerts');
   return ((await res.json()) as { usageAlerts: UsageAlertEntry[] }).usageAlerts;
 }
+
+/** One plan in the operator catalog. */
+export interface PlanEntry {
+  id: string;
+  name?: string;
+  priceUsd?: number;
+  includedUsage?: Record<string, number>;
+}
+
+/** Load the operator plan catalog (read-only; empty when none configured). */
+export async function fetchPlans(): Promise<PlanEntry[]> {
+  const res = await fetch(`${BASE}/plans`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load plans');
+  return ((await res.json()) as { plans: PlanEntry[] }).plans;
+}

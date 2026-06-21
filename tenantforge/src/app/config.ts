@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { KNOWN_REGIONS } from '../core/regions.js';
-import { ROLES, isRole } from '../core/index.js';
-import type { CostRates, BillingRates } from '../core/index.js';
+import { ROLES, isRole, assertPlanCatalog } from '../core/index.js';
+import type { CostRates, BillingRates, PlanDefinition } from '../core/index.js';
 import type { HttpCredential } from './http-server.js';
 
 /**
@@ -226,6 +226,10 @@ const EnvSchema = z
     // prices charged to tenants (distinct from cost). Unset = usage not billed (invoice = plan fee
     // from metadata.priceUsd only). Generates invoice documents; it does not charge a card.
     TENANTFORGE_BILLING_RATES: z.string().optional(),
+    // The operator's plan catalog as a JSON array of plans: `[{ "id": "pro", "name": "Pro",
+    // "priceUsd": 49, "includedUsage": { "computeTimeSeconds": 10000 } }]`. Empty/unset = no catalog
+    // (assignPlan fails closed). YOUR product tiers — Neon has no concept of them; validated at load.
+    TENANTFORGE_PLANS: z.string().optional(),
     // Usage-alert thresholds as a comma-separated list of fractions of a tenant's included
     // allowance (e.g. `0.8,1.0` = warn at 80% and at 100%). Empty/unset = usage alerts off. Each
     // entry must be a positive number. Alerts apply the operator's plan-allowance policy on top of
@@ -479,6 +483,8 @@ export interface Config {
   billingRates?: BillingRates;
   /** Usage-alert thresholds (fractions of a tenant's included allowance); empty ⇒ alerts off. */
   usageAlertThresholds: number[];
+  /** The operator's plan catalog (named tiers); absent ⇒ no catalog (assignPlan fails closed). */
+  plans?: PlanDefinition[];
   /** Payment gateway for charging invoices: none (charging disabled) or stripe. */
   paymentGateway: 'none' | 'stripe';
   /** Stripe secret key; present ⇒ the Stripe gateway is wired (required when paymentGateway=stripe). */
@@ -573,6 +579,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       throw new Error('TENANTFORGE_BILLING_RATES must be valid JSON');
     }
     config.billingRates = CostRatesSchema.parse(raw) as BillingRates;
+  }
+  if (parsed.TENANTFORGE_PLANS !== undefined) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(parsed.TENANTFORGE_PLANS);
+    } catch {
+      throw new Error('TENANTFORGE_PLANS must be valid JSON');
+    }
+    if (!Array.isArray(raw)) throw new Error('TENANTFORGE_PLANS must be a JSON array of plans');
+    // Fail loud on a malformed catalog (authored config) — assertPlanCatalog validates ids + numbers.
+    config.plans = assertPlanCatalog(raw as PlanDefinition[]);
   }
   if (parsed.TENANTFORGE_PAYMENT_GATEWAY === 'stripe' && parsed.STRIPE_SECRET_KEY === undefined) {
     throw new Error('STRIPE_SECRET_KEY is required when TENANTFORGE_PAYMENT_GATEWAY=stripe');

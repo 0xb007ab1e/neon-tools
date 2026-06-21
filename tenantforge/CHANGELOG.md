@@ -6,6 +6,19 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Plan catalog (named tiers)** — define product plans once in `TENANTFORGE_PLANS` (JSON array of
+  `{ id, name?, priceUsd?, includedUsage? }`, validated at load by the pure `assertPlanCatalog` /
+  `findPlan` / `planAssignment`, 100%). `listPlans()` (CLI `plans`, HTTP `GET /v1/plans`, dashboard
+  "Plan catalog" panel) publishes the catalog read-only; `assignPlan(tenantId, planId)` (CLI
+  `assign-plan`) sets a tenant's price + included allowances + `metadata.planId` to exactly what the
+  plan defines in one step (the plan fully defines billing — a no-allowance plan clears prior
+  overrides). Assigning is billing policy → **CLI-only** (never HTTP/MCP) and does not settle
+  proration (use `changePlan` with `settle`). Builder-only product knowledge — Neon provisions per
+  project and has no concept of the operator's pricing tiers (not a Neon feature). Off until a
+  catalog is configured (assignPlan fails closed without one).
+
 ## [0.20.0] - 2026-06-21
 
 Adds proactive usage alerts: warn tenants approaching their plan's included allowance before

@@ -444,6 +444,11 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // The operator's plan catalog (read-only). Assigning a plan to a tenant is a billing-policy CLI op.
+  app.get('/v1/plans', requirePermission('tenant:read'), (c) => {
+    return c.json({ plans: tf.listPlans() });
+  });
+
   // Recent usage-alert history (read-only; persisted `tenant.usage_alert` events). The live sweep
   // (which emits events + optionally notifies tenants) is a library/CLI op, not a side-effecting GET.
   app.get('/v1/usage-alerts', requirePermission('tenant:read'), async (c) => {
