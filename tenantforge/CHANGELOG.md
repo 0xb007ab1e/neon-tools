@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-21
+
+Adds the billing **policy** layer on top of the refund primitive: a tenant leaving mid-period is
+refunded the unused portion automatically. Additive/backward-compatible (MINOR); `offboard` is
+unchanged on HTTP/MCP — the refund stays a separate, CLI-only, `--yes`-gated step.
+
 ### Added
 
 - **Refund on offboard (proration)** — `tf.refundUnusedPeriod(id, { asOf?, reason? })` refunds the
