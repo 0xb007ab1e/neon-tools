@@ -218,6 +218,7 @@ export type {
   RefundResult,
 } from '../ports/payment-gateway.js';
 export type { PaymentEvent, PaymentWebhookVerifier } from '../ports/payment-webhook.js';
+export type { Notifier, Notification, NotificationResult } from '../ports/notifier.js';
 export type { DunningSchedule, DunningDecision, DunningState } from '../core/dunning.js';
 export type {
   FleetMigrationSpec,

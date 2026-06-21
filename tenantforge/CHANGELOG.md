@@ -6,6 +6,18 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Real email notifiers (SES + SMTP)** — two production `Notifier` adapters complementing the
+  `log`/`http` ones: **`createSesNotifier`** (AWS SES) and **`createSmtpNotifier`** (any SMTP /
+  nodemailer). Each takes a **minimal injected client/transport** so neither the AWS SDK nor
+  nodemailer becomes a dependency of this package (the same zero-dep, hand-wired pattern as the AWS
+  Secrets Manager / S3 / SQS adapters) — wire via `createTenantForge({ notifier })` at the
+  composition root. Both implement the `Notifier` port (map the provider message id to the result,
+  propagate send errors for the caller's best-effort audit, keep the recipient out of the result).
+  Exported from the adapters barrel + the `Notifier` types re-exported from the package entry.
+  Covered by adapter tests (SES + SMTP: send maps the message id, fallback id, error propagation).
+
 ## [0.15.0] - 2026-06-21
 
 Closes the billing lifecycle end-to-end: tenants now receive a receipt for every charge and refund.

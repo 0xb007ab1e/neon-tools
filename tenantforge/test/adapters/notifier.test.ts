@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createLogNotifier } from '../../src/adapters/notify/log-notifier.js';
 import { createHttpNotifier } from '../../src/adapters/notify/http-notifier.js';
+import { createSesNotifier, type SesClientLike } from '../../src/adapters/notify/ses-notifier.js';
+import {
+  createSmtpNotifier,
+  type SmtpTransportLike,
+} from '../../src/adapters/notify/smtp-notifier.js';
 import type { Notification } from '../../src/ports/notifier.js';
 
 const note: Notification = {
@@ -79,5 +84,73 @@ describe('createHttpNotifier', () => {
     expect(() =>
       createHttpNotifier({ url: 'http://relay.local/send', allowInsecure: true }),
     ).not.toThrow();
+  });
+});
+
+describe('createSesNotifier', () => {
+  it('sends via the injected SES client and maps the MessageId', async () => {
+    const calls: unknown[] = [];
+    const client: SesClientLike = {
+      sendEmail: (i) => {
+        calls.push(i);
+        return Promise.resolve({ MessageId: 'ses-msg-1' });
+      },
+    };
+    const result = await createSesNotifier({ client, from: 'billing@you.example' }).notify(note);
+    expect(result).toEqual({ id: 'ses-msg-1', provider: 'ses', status: 'sent' });
+    expect(calls[0]).toEqual({
+      FromEmailAddress: 'billing@you.example',
+      Destination: { ToAddresses: ['billing@acme.example'] },
+      Content: {
+        Simple: {
+          Subject: { Data: note.subject },
+          Body: { Text: { Data: note.body } },
+        },
+      },
+    });
+  });
+
+  it('falls back to the idempotency key when SES returns no MessageId', async () => {
+    const client: SesClientLike = { sendEmail: () => Promise.resolve({}) };
+    const result = await createSesNotifier({ client, from: 'b@you.example' }).notify(note);
+    expect(result.id).toBe(note.idempotencyKey);
+  });
+
+  it('propagates a client error (the caller audits + isolates it)', async () => {
+    const client: SesClientLike = { sendEmail: () => Promise.reject(new Error('SES throttled')) };
+    await expect(createSesNotifier({ client, from: 'b@you.example' }).notify(note)).rejects.toThrow(
+      /SES throttled/,
+    );
+  });
+});
+
+describe('createSmtpNotifier', () => {
+  it('sends via the injected transport and maps the messageId', async () => {
+    const calls: unknown[] = [];
+    const transport: SmtpTransportLike = {
+      sendMail: (m) => {
+        calls.push(m);
+        return Promise.resolve({ messageId: 'smtp-1' });
+      },
+    };
+    const result = await createSmtpNotifier({ transport, from: 'billing@you.example' }).notify(
+      note,
+    );
+    expect(result).toEqual({ id: 'smtp-1', provider: 'smtp', status: 'sent' });
+    expect(calls[0]).toEqual({
+      from: 'billing@you.example',
+      to: 'billing@acme.example',
+      subject: note.subject,
+      text: note.body,
+    });
+  });
+
+  it('propagates a transport error', async () => {
+    const transport: SmtpTransportLike = {
+      sendMail: () => Promise.reject(new Error('smtp connect failed')),
+    };
+    await expect(
+      createSmtpNotifier({ transport, from: 'b@you.example' }).notify(note),
+    ).rejects.toThrow(/smtp connect failed/);
   });
 });

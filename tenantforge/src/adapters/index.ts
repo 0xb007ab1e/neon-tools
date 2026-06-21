@@ -38,6 +38,21 @@ export {
   type GcpSecretManagerStoreOptions,
   type GcpSecretManagerClientLike,
 } from './gcp-secret-manager/secret-store.js';
+// Notifiers (billing receipts) — `log`/`http` are env-selectable; SES/SMTP are hand-wired via
+// createTenantForge with an injected client/transport (zero-dep, like the cloud secret stores).
+export type { Notifier, Notification, NotificationResult } from '../ports/notifier.js';
+export { createLogNotifier } from './notify/log-notifier.js';
+export { createHttpNotifier, type HttpNotifierOptions } from './notify/http-notifier.js';
+export {
+  createSesNotifier,
+  type SesNotifierOptions,
+  type SesClientLike,
+} from './notify/ses-notifier.js';
+export {
+  createSmtpNotifier,
+  type SmtpNotifierOptions,
+  type SmtpTransportLike,
+} from './notify/smtp-notifier.js';
 export {
   createAzureKeyVaultStore,
   type AzureKeyVaultStoreOptions,
