@@ -1,6 +1,6 @@
 {
   "name": "@neon-tools/tenantforge",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "type": "module",
   "description": "Control plane for database-per-tenant SaaS on Neon: provision an isolated project per customer, route connections, orchestrate fleet migrations, and manage tenant lifecycle.",
   "license": "UNLICENSED",
