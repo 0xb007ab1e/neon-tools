@@ -6,6 +6,19 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-20
+
+The **Neon-extension** release. TenantForge repositions from re-implementing Neon primitives to
+**extending** them with the builder-only layer Neon leaves open: a **compliance report** (isolation +
+residency attestation, with an audit-backed erasure history once a persisted audit trail is wired), a
+**cost / margin** attribution report, and **fleet drift reconciliation** (bring behind/failed tenants
+to a target version, ordered + failure-isolated + idempotent, with history). It also ships a
+**web dashboard** (React/Vite SPA + cookie-session backend) surfacing every feature — including a
+`tenant:provision`-gated "Run reconcile" action — plus **invoice generation** (usage billed at sell
+rates → documents, not charges), a persisted **`AuditLogStore`**, production SPA serving, and React/
+a11y lint coverage. All changes are additive and backward-compatible (MINOR). Core stays 100%; the
+full suite (572 control-plane + 3 dashboard tests) is green.
+
 ### Added
 
 - **Reconcile history (audit-backed)** — surfaces the persisted `fleet.reconcile` events as a
@@ -541,6 +554,7 @@ and real-world validation.
 - Alternate adapters — other message brokers (SQS/NATS/Pub-Sub), Vault/cloud secret stores, and
   `pg_dump`→object-store exporters — are deferred to their own branches behind the existing ports.
 
+[0.4.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.4.0
 [0.3.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.3.0
 [0.2.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.2.0
 [0.1.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.1.0
