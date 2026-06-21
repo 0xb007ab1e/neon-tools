@@ -6,6 +6,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-06-21
+
+Adds a filterable audit explorer over the control-plane trail (compliance forensics). First
+non-billing feature of the arc. Additive/backward-compatible (MINOR) — read-only, returns empty
+without an audit store. Builder-side control-plane audit; Neon keeps no such record (not a Neon
+feature).
+
 ### Added
 
 - **Audit explorer** — `queryAudit({ events?, tenantId?, since?, limit? })` (CLI `audit`, HTTP
