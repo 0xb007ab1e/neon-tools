@@ -6,6 +6,14 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-21
+
+Closes the billing loop: invoice documents can now become **real charges** via a swappable
+`PaymentGateway` port (Stripe ships). This completes the extend-Neon arc end-to-end — provision →
+route → lifecycle → migrate/reconcile → compliance → cost → invoice → **charge** — each across
+library/CLI/HTTP/MCP + dashboard. Additive and backward-compatible (MINOR); charging is opt-in,
+CLI-only + gated, and disabled by default.
+
 ### Added
 
 - **Payment-gateway (PSP) charging** — turn invoice documents into real charges, behind a swappable
@@ -610,6 +618,7 @@ and real-world validation.
 - Alternate adapters — other message brokers (SQS/NATS/Pub-Sub), Vault/cloud secret stores, and
   `pg_dump`→object-store exporters — are deferred to their own branches behind the existing ports.
 
+[0.6.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.6.0
 [0.5.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.5.0
 [0.4.1]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.4.1
 [0.4.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.4.0
