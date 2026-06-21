@@ -1053,6 +1053,46 @@ describe('createTenantForge.invoice', () => {
     const fleet = await tf.invoiceFleet(period);
     expect(fleet.invoices).toHaveLength(1);
   });
+
+  it('setIncludedUsage applies an allowance so only the overage is billed; {} clears it', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      billingRates: { computeSecondUsd: 0.02 },
+      defaultRegion: 'aws-us-east-1',
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+
+    const updated = await tf.setIncludedUsage(tenant.id, { computeTimeSeconds: 60 });
+    expect(
+      (updated.metadata.includedUsage as { computeTimeSeconds: number }).computeTimeSeconds,
+    ).toBe(60);
+    // 100 used − 60 incl = 40 × 0.02 = 0.80
+    expect((await tf.invoice(tenant.id, period)).totalUsd).toBe(0.8);
+
+    // Clearing restores full billing: 100 × 0.02 = 2.
+    await tf.setIncludedUsage(tenant.id, {});
+    expect((await tf.invoice(tenant.id, period)).totalUsd).toBe(2);
+  });
+
+  it('setIncludedUsage rejects a negative allowance and an unknown tenant', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      defaultRegion: 'aws-us-east-1',
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await expect(tf.setIncludedUsage(tenant.id, { computeTimeSeconds: -1 })).rejects.toThrow(
+      /non-negative/,
+    );
+    await expect(tf.setIncludedUsage('ghost', { computeTimeSeconds: 1 })).rejects.toThrow(
+      /not found/,
+    );
+  });
 });
 
 describe('createTenantForge.chargeInvoice', () => {

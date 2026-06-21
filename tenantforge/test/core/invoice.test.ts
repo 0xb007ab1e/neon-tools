@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildInvoice } from '../../src/core/invoice.js';
+import { applyIncludedAllowance, buildInvoice } from '../../src/core/invoice.js';
 import type { Consumption } from '../../src/core/usage.js';
 
 const consumption: Consumption = {
@@ -64,5 +64,75 @@ describe('buildInvoice', () => {
     expect(inv.currency).toBe('usd-test');
     expect(inv.lineItems[0]?.amountUsd).toBe(1.23);
     expect(inv.totalUsd).toBe(1.23);
+  });
+
+  describe('included allowances (overage billing)', () => {
+    it('bills only the overage above each allowance and labels the line', () => {
+      const inv = buildInvoice(consumption, {
+        tenantId: 't5',
+        period,
+        now,
+        billingRates: { computeSecondUsd: 0.01, writtenByteUsd: 0.000001 },
+        // compute: 100 used − 60 incl = 40 overage → 0.40; written: 2_000_000 − 500_000 = 1_500_000 → 1.50
+        included: { computeTimeSeconds: 60, writtenDataBytes: 500_000 },
+      });
+      expect(inv.lineItems.map((li) => li.description)).toEqual([
+        'Compute time (overage; 60 compute-second incl.)',
+        'Data written (overage; 500000 byte incl.)',
+      ]);
+      expect(inv.lineItems.map((li) => li.quantity)).toEqual([40, 1_500_000]);
+      expect(inv.lineItems.map((li) => li.amountUsd)).toEqual([0.4, 1.5]);
+      expect(inv.totalUsd).toBe(1.9);
+    });
+
+    it('emits no line for a dimension fully within its allowance', () => {
+      const inv = buildInvoice(consumption, {
+        tenantId: 't6',
+        period,
+        now,
+        billingRates: { computeSecondUsd: 0.01 }, // 100 used ≤ 100 incl → no overage line
+        included: { computeTimeSeconds: 100 },
+      });
+      expect(inv.lineItems).toEqual([]);
+      expect(inv.totalUsd).toBe(0);
+    });
+
+    it('treats a zero or unset allowance as no allowance (pre-allowance behavior, line kept)', () => {
+      const inv = buildInvoice(consumption, {
+        tenantId: 't7',
+        period,
+        now,
+        billingRates: { computeSecondUsd: 0.01, activeSecondUsd: 0.02 },
+        // compute allowance 0 ⇒ bill all 100 (label unchanged); active unset ⇒ bill all 50.
+        included: { computeTimeSeconds: 0 },
+      });
+      expect(inv.lineItems.map((li) => li.description)).toEqual([
+        'Compute time',
+        'Active compute time',
+      ]);
+      expect(inv.lineItems.map((li) => li.quantity)).toEqual([100, 50]);
+    });
+  });
+});
+
+describe('applyIncludedAllowance', () => {
+  it('subtracts allowances per dimension, clamping at zero', () => {
+    expect(
+      applyIncludedAllowance(consumption, {
+        computeTimeSeconds: 60,
+        activeTimeSeconds: 50, // exactly used → 0
+        syntheticStorageBytes: 2_000_000, // more than used → clamps to 0
+        writtenDataBytes: 500_000,
+      }),
+    ).toEqual({
+      computeTimeSeconds: 40,
+      activeTimeSeconds: 0,
+      syntheticStorageBytes: 0,
+      writtenDataBytes: 1_500_000,
+    });
+  });
+
+  it('subtracts nothing for an empty allowance', () => {
+    expect(applyIncludedAllowance(consumption, {})).toEqual(consumption);
   });
 });

@@ -45,7 +45,9 @@ export {
 } from './cost.js';
 export {
   buildInvoice,
+  applyIncludedAllowance,
   type BillingRates,
+  type IncludedUsage,
   type Invoice,
   type InvoiceLineItem,
   type InvoiceOptions,

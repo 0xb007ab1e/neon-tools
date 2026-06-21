@@ -62,6 +62,39 @@ describe('createInvoiceEngine.invoice', () => {
     expect(inv.lineItems[0]?.description).toBe('Base plan fee');
   });
 
+  it('bills only the overage above metadata.includedUsage allowances', async () => {
+    const engine = createInvoiceEngine({
+      registry: fakeRegistry([
+        tenant({ id: 't1', metadata: { includedUsage: { computeTimeSeconds: 60 } } }),
+      ]),
+      usageProvider: fakeUsage(), // compute 100
+      rates, // 0.01 / compute-second
+      now,
+    });
+    const inv = await engine.invoice('t1', period);
+    // 100 used − 60 incl = 40 overage × 0.01 = 0.40
+    expect(inv.totalUsd).toBe(0.4);
+    expect(inv.lineItems[0]?.description).toBe('Compute time (overage; 60 compute-second incl.)');
+  });
+
+  it('ignores a malformed/negative includedUsage (bills from the first unit)', async () => {
+    const engine = createInvoiceEngine({
+      registry: fakeRegistry([
+        tenant({
+          id: 't1',
+          metadata: { includedUsage: { computeTimeSeconds: -5, activeTimeSeconds: 'lots' } },
+        }),
+      ]),
+      usageProvider: fakeUsage(),
+      rates,
+      now,
+    });
+    const inv = await engine.invoice('t1', period);
+    // No valid allowance → full 100 × 0.01 = 1, label unchanged.
+    expect(inv.totalUsd).toBe(1);
+    expect(inv.lineItems[0]?.description).toBe('Compute time');
+  });
+
   it('throws for an unknown tenant and for one without a provisioned project', async () => {
     const engine = createInvoiceEngine({
       registry: fakeRegistry([tenant({ id: 't1', neonProjectId: null })]),

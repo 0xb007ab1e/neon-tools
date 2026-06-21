@@ -59,7 +59,22 @@ const reconcileHistory = [
 ];
 const invoices = {
   generatedAt: '2026-06-20T00:00:00.000Z',
-  invoices: [{ tenantId: 'tenant-billed', currency: 'USD', totalUsd: 12 }],
+  invoices: [
+    {
+      tenantId: 'tenant-billed',
+      currency: 'USD',
+      totalUsd: 12,
+      lineItems: [
+        { description: 'Base plan fee', quantity: 1, unit: 'period', amountUsd: 10 },
+        {
+          description: 'Compute time (overage; 60 compute-second incl.)',
+          quantity: 40,
+          unit: 'compute-second',
+          amountUsd: 2,
+        },
+      ],
+    },
+  ],
   unmetered: [],
 };
 const charges = [
@@ -223,6 +238,10 @@ describe('dashboard App', () => {
       await screen.findByRole('heading', { name: 'Invoices (this month)' }),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-billed')).toBeInTheDocument();
+    // The overage line item (from an included allowance) is surfaced in the invoices panel.
+    expect(
+      await screen.findByText(/Compute time \(overage; 60 compute-second incl\.\): 40/),
+    ).toBeInTheDocument();
     // Billing (recent charges) panel renders.
     expect(
       await screen.findByRole('heading', { name: 'Billing (recent charges)' }),

@@ -618,22 +618,35 @@ function InvoicesPanel(): React.JSX.Element {
           </p>
           {data.invoices.length > 0 && (
             <table>
-              <caption>Per-tenant invoice totals</caption>
+              <caption>
+                Per-tenant invoice totals (with any included-allowance overage lines)
+              </caption>
               <thead>
                 <tr>
                   <th scope="col">Tenant</th>
                   <th scope="col">Total</th>
+                  <th scope="col">Overage lines</th>
                 </tr>
               </thead>
               <tbody>
-                {data.invoices.map((inv) => (
-                  <tr key={inv.tenantId}>
-                    <th scope="row">{inv.tenantId}</th>
-                    <td>
-                      {inv.currency} {inv.totalUsd}
-                    </td>
-                  </tr>
-                ))}
+                {data.invoices.map((inv) => {
+                  const overage = inv.lineItems.filter((li) => li.description.includes('(overage'));
+                  return (
+                    <tr key={inv.tenantId}>
+                      <th scope="row">{inv.tenantId}</th>
+                      <td>
+                        {inv.currency} {inv.totalUsd}
+                      </td>
+                      <td>
+                        {overage.length === 0
+                          ? '—'
+                          : overage
+                              .map((li) => `${li.description}: ${li.quantity} × → $${li.amountUsd}`)
+                              .join('; ')}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

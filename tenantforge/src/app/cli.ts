@@ -718,6 +718,41 @@ const invoiceFleet = defineCommand({
   },
 });
 
+const setAllowance = defineCommand({
+  meta: {
+    name: 'set-allowance',
+    description:
+      "Set a tenant's included usage allowances (overage billing); usage within them is free",
+  },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    compute: { type: 'string', description: 'Included compute-seconds' },
+    active: { type: 'string', description: 'Included active-compute seconds' },
+    storage: { type: 'string', description: 'Included peak-storage bytes' },
+    written: { type: 'string', description: 'Included written bytes' },
+    clear: { type: 'boolean', description: 'Clear all allowances (bill from the first unit)' },
+  },
+  async run({ args }) {
+    // Parse each provided dimension to a number; the facade validates non-negative/finite.
+    const allowance = args.clear
+      ? {}
+      : {
+          ...(args.compute !== undefined ? { computeTimeSeconds: Number(args.compute) } : {}),
+          ...(args.active !== undefined ? { activeTimeSeconds: Number(args.active) } : {}),
+          ...(args.storage !== undefined ? { syntheticStorageBytes: Number(args.storage) } : {}),
+          ...(args.written !== undefined ? { writtenDataBytes: Number(args.written) } : {}),
+        };
+    await withTenantForge(async (tf) => {
+      const tenant = await tf.setIncludedUsage(args.id, allowance);
+      const inc = (tenant.metadata.includedUsage ?? {}) as Record<string, number>;
+      const parts = Object.entries(inc).map(([k, v]) => `${k}=${v}`);
+      process.stdout.write(
+        `${formatTenant(tenant)}  included: ${parts.length > 0 ? parts.join(' ') : '(none)'}\n`,
+      );
+    });
+  },
+});
+
 const charge = defineCommand({
   meta: {
     name: 'charge',
@@ -1117,6 +1152,7 @@ const main = defineCommand({
     'billing-run': billingRun,
     refund,
     'plan-change': planChange,
+    'set-allowance': setAllowance,
     'credit-grant': creditGrant,
     'credit-balance': creditBalance,
   },

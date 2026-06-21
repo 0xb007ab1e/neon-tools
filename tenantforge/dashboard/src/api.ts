@@ -112,10 +112,23 @@ export async function fetchCost(): Promise<CostReport> {
   return (await res.json()) as CostReport;
 }
 
+/** One billed line on an invoice. */
+export interface InvoiceLineItem {
+  description: string;
+  quantity: number;
+  unit: string;
+  amountUsd: number;
+}
+
 /** A fleet invoice run (mirrors the server's FleetInvoiceReport). */
 export interface FleetInvoiceReport {
   generatedAt: string;
-  invoices: { tenantId: string; currency: string; totalUsd: number }[];
+  invoices: {
+    tenantId: string;
+    currency: string;
+    totalUsd: number;
+    lineItems: InvoiceLineItem[];
+  }[];
   unmetered: string[];
 }
 
