@@ -49,8 +49,9 @@ function nonNegNumber(v: unknown): number | undefined {
  * Read per-tenant included allowances from `metadata.includedUsage`, if present. Each dimension is
  * accepted only when it is a finite, non-negative number; anything else is ignored (an absent or
  * malformed allowance bills from the first unit). Returns `undefined` when no valid dimension is set.
+ * Exported so the usage-alert engine reads allowances the exact same way (no parsing drift).
  */
-function includedFromMetadata(metadata: Record<string, unknown>): IncludedUsage | undefined {
+export function includedFromMetadata(metadata: Record<string, unknown>): IncludedUsage | undefined {
   const raw = metadata.includedUsage;
   if (typeof raw !== 'object' || raw === null) return undefined;
   const u = raw as Record<string, unknown>;

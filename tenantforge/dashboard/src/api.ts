@@ -356,3 +356,20 @@ export async function fetchCreditGrants(): Promise<CreditGrantEntry[]> {
   if (!res.ok) throw new Error('Could not load credit grants');
   return ((await res.json()) as { creditGrants: CreditGrantEntry[] }).creditGrants;
 }
+
+/** One usage-alert entry (a persisted `tenant.usage_alert` audit event). */
+export interface UsageAlertEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  tenantId?: string;
+  context?: {
+    alerts?: { metric: string; usedFraction: number; thresholdCrossed: number }[];
+  };
+}
+
+/** Load recent usage-alert history (read-only; empty without an audit store). */
+export async function fetchUsageAlerts(): Promise<UsageAlertEntry[]> {
+  const res = await fetch(`${BASE}/usage-alerts`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load usage alerts');
+  return ((await res.json()) as { usageAlerts: UsageAlertEntry[] }).usageAlerts;
+}

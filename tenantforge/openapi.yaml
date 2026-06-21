@@ -285,6 +285,27 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/usage-alerts:
+    get:
+      tags: [reports]
+      summary: >
+        Recent usage-alert history (requires `tenant:read`) — tenants that crossed a configured
+        fraction of their plan's included allowance. Read-only; the live sweep that emits alerts
+        and notifies tenants is a library/CLI op (not a side-effecting GET).
+      responses:
+        '200':
+          description: Recent `tenant.usage_alert` events (empty without an audit store).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  alerts:
+                    type: array
+                    items: { type: object }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/tenants/{id}/invoice:
     get:
       tags: [reports]

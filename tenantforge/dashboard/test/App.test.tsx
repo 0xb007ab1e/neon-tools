@@ -153,6 +153,17 @@ const creditGrants = [
   },
 ];
 
+const usageAlerts = [
+  {
+    at: '2026-06-20T09:00:00.000Z',
+    outcome: 'ok',
+    tenantId: 'tenant-near-limit',
+    context: {
+      alerts: [{ metric: 'computeTimeSeconds', usedFraction: 0.9, thresholdCrossed: 0.8 }],
+    },
+  },
+];
+
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -189,6 +200,7 @@ beforeEach(() => {
       if (url.endsWith('/notifications')) return Promise.resolve(json({ notifications }));
       if (url.endsWith('/plan-changes')) return Promise.resolve(json({ planChanges }));
       if (url.endsWith('/credit-grants')) return Promise.resolve(json({ creditGrants }));
+      if (url.endsWith('/usage-alerts')) return Promise.resolve(json({ usageAlerts }));
       if (url.endsWith('/refunds')) return Promise.resolve(json({ refunds }));
       if (url.endsWith('/dunning')) return Promise.resolve(json({ events: dunning }));
       if (url.endsWith('/charges')) return Promise.resolve(json({ charges }));
@@ -267,6 +279,11 @@ describe('dashboard App', () => {
     // Credit grants render in the billing panel.
     expect(await screen.findByText('Recent credit grants')).toBeInTheDocument();
     expect(await screen.findByText('tenant-credited')).toBeInTheDocument();
+    // Usage alerts render in the billing panel.
+    expect(
+      await screen.findByText('Recent usage alerts (approaching/over plan allowance)'),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('tenant-near-limit')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);

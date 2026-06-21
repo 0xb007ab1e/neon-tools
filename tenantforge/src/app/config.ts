@@ -226,6 +226,23 @@ const EnvSchema = z
     // prices charged to tenants (distinct from cost). Unset = usage not billed (invoice = plan fee
     // from metadata.priceUsd only). Generates invoice documents; it does not charge a card.
     TENANTFORGE_BILLING_RATES: z.string().optional(),
+    // Usage-alert thresholds as a comma-separated list of fractions of a tenant's included
+    // allowance (e.g. `0.8,1.0` = warn at 80% and at 100%). Empty/unset = usage alerts off. Each
+    // entry must be a positive number. Alerts apply the operator's plan-allowance policy on top of
+    // Neon's metering (Neon doesn't know per-tenant plan allowances) — not a Neon feature.
+    TENANTFORGE_USAGE_ALERT_THRESHOLDS: z
+      .string()
+      .optional()
+      .transform((s) =>
+        (s ?? '')
+          .split(',')
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0)
+          .map((t) => Number(t)),
+      )
+      .refine((ts) => ts.every((t) => Number.isFinite(t) && t > 0), {
+        message: 'TENANTFORGE_USAGE_ALERT_THRESHOLDS must be positive numbers (e.g. 0.8,1.0)',
+      }),
     // Payment gateway (PSP) for charging invoices: `none` (default — charging fails closed) or
     // `stripe`. `stripe` requires STRIPE_SECRET_KEY (enforced below). Charging is a money-moving
     // outward action — opt-in only, never auto-enabled.
@@ -460,6 +477,8 @@ export interface Config {
   costRates?: CostRates;
   /** Per-unit billing (sell) rates (USD) for invoice generation; absent ⇒ usage not billed. */
   billingRates?: BillingRates;
+  /** Usage-alert thresholds (fractions of a tenant's included allowance); empty ⇒ alerts off. */
+  usageAlertThresholds: number[];
   /** Payment gateway for charging invoices: none (charging disabled) or stripe. */
   paymentGateway: 'none' | 'stripe';
   /** Stripe secret key; present ⇒ the Stripe gateway is wired (required when paymentGateway=stripe). */
@@ -507,6 +526,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     idempotencyStore: parsed.TENANTFORGE_IDEMPOTENCY_STORE,
     auditLog: parsed.TENANTFORGE_AUDIT_LOG,
     creditLedger: parsed.TENANTFORGE_CREDIT_LEDGER,
+    usageAlertThresholds: parsed.TENANTFORGE_USAGE_ALERT_THRESHOLDS,
     paymentGateway: parsed.TENANTFORGE_PAYMENT_GATEWAY,
     notifier: parsed.TENANTFORGE_NOTIFIER,
     ...(parsed.STRIPE_SECRET_KEY !== undefined

@@ -444,6 +444,16 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Recent usage-alert history (read-only; persisted `tenant.usage_alert` events). The live sweep
+  // (which emits events + optionally notifies tenants) is a library/CLI op, not a side-effecting GET.
+  app.get('/v1/usage-alerts', requirePermission('tenant:read'), async (c) => {
+    try {
+      return c.json({ alerts: await tf.usageAlertHistory() });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // A single tenant's invoice for a period.
   app.get('/v1/tenants/:id/invoice', requirePermission('tenant:read'), async (c) => {
     const period = invoicePeriod(c, now);

@@ -91,6 +91,10 @@ import {
 import { createCostEngine } from '../adapters/cost-engine.js';
 import { createInvoiceEngine, type FleetInvoiceReport } from '../adapters/invoice-engine.js';
 import {
+  createUsageAlertEngine,
+  type UsageAlertSweepReport,
+} from '../adapters/usage-alert-engine.js';
+import {
   createFleetOrchestrator,
   type FleetMigrationReport,
   type FleetMigrationSpec,
@@ -338,6 +342,11 @@ export interface TenantForgeDeps {
   costRates?: CostRates;
   /** Per-unit billing (sell) rates for {@link TenantForge.invoice}; defaults to empty (usage not billed). */
   billingRates?: BillingRates;
+  /**
+   * Usage-alert thresholds for {@link TenantForge.checkUsageAlerts} — fractions of a tenant's
+   * included allowance to alert at (e.g. `[0.8, 1.0]`). Empty/absent ⇒ usage alerts are off.
+   */
+  usageAlertThresholds?: number[];
   /**
    * Payment gateway (PSP) for {@link TenantForge.chargeInvoice}. Optional and swappable behind the
    * {@link PaymentGateway} port (Stripe ships; others plug in the same way). Absent ⇒ charging fails
@@ -672,6 +681,33 @@ export interface TenantForge {
     quota: Quota,
     options?: { limit?: number; enforce?: boolean },
   ): Promise<QuotaSweepReport>;
+
+  /**
+   * **Check the fleet for usage alerts** over `period` — tenants approaching/exceeding the included
+   * allowances their plan defines (`metadata.includedUsage`), at the configured thresholds
+   * (`usageAlertThresholds`, e.g. 80% / 100%). Failure-isolated. Emits a `tenant.usage_alert` event
+   * per alerted tenant (fanned to any outbound webhook). When `notify` is set and a notifier is
+   * wired, also emails each alerted tenant's `metadata.billingEmail` (best-effort). This applies the
+   * operator's plan-allowance policy on top of Neon's metering — Neon has no notion of per-tenant
+   * plan allowances, so this is not a Neon feature. Requires a usage provider + configured thresholds.
+   *
+   * @param period - The billing period to meter.
+   * @param options - Optional scan cap and `notify` (email alerted tenants).
+   * @returns The sweep report (only tenants with alerts are listed).
+   */
+  checkUsageAlerts(
+    period: BillingPeriod,
+    options?: { limit?: number; notify?: boolean },
+  ): Promise<UsageAlertSweepReport>;
+
+  /**
+   * Recent **usage-alert history** (`tenant.usage_alert` events) from the persisted audit trail.
+   * Returns `[]` when no audit store is wired.
+   *
+   * @param limit - Max events to return (default 20).
+   * @returns The matching events, newest first.
+   */
+  usageAlertHistory(limit?: number): Promise<TenantEvent[]>;
 
   /**
    * Generate a point-in-time **compliance report** over the fleet — physical-isolation and
@@ -1172,6 +1208,26 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     });
   };
 
+  /**
+   * Build the usage-alert engine, failing closed when no usage provider is wired or no thresholds
+   * are configured (no thresholds ⇒ the feature is off, so there is nothing to evaluate).
+   */
+  const usageAlertEngine = (): ReturnType<typeof createUsageAlertEngine> => {
+    if (deps.usageProvider === undefined) {
+      throw new Error('usage alerts require a configured usage provider');
+    }
+    const thresholds = deps.usageAlertThresholds ?? [];
+    if (thresholds.length === 0) {
+      throw new Error('usage alerts require TENANTFORGE_USAGE_ALERT_THRESHOLDS to be set');
+    }
+    return createUsageAlertEngine({
+      registry,
+      usageProvider: deps.usageProvider,
+      thresholds,
+      emit: (event) => eventSink.emit(event),
+    });
+  };
+
   /** Emit a tenant-scoped event (best-effort, redacted; never throws / breaks the operation). */
   const observe = (
     event: string,
@@ -1269,6 +1325,64 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         tenantId: args.tenantId,
         outcome: 'error',
         context: { kind, reference: args.reference },
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  /**
+   * Best-effort **email a usage alert** to the tenant's `metadata.billingEmail` (approaching/over
+   * its plan allowance). Swallows its own errors — alerting must never break the sweep
+   * (`topic-notifications`). No-op when no notifier is wired or no billing email is on file. The
+   * recipient address is **not** put in the audit context (PII — master §5).
+   *
+   * @param alert - The tenant's alerts + the period they were evaluated over.
+   * @returns Nothing; records a redacted `tenant.notified` event.
+   */
+  const notifyUsageAlert = async (alert: {
+    tenantId: string;
+    alerts: { metric: string; usedFraction: number; thresholdCrossed: number }[];
+    periodStart: string;
+    periodEnd: string;
+  }): Promise<void> => {
+    if (notifier === undefined) return;
+    try {
+      const tenant = await registry.getById(alert.tenantId);
+      if (tenant === null) return;
+      const to = billingEmail(tenant.metadata);
+      if (to === undefined) return; // no recipient on file → nothing to send
+      const peak = Math.max(...alert.alerts.map((a) => a.thresholdCrossed));
+      const lines = alert.alerts
+        .map(
+          (a) => `  • ${a.metric}: ${Math.round(a.usedFraction * 100)}% of your included allowance`,
+        )
+        .join('\n');
+      const result = await notifier.notify({
+        to,
+        subject: `Usage alert for ${tenant.slug}: approaching your plan allowance`,
+        body:
+          `Your project ${tenant.slug} has reached the following share of its included usage ` +
+          `allowance for ${alert.periodStart}..${alert.periodEnd}:\n\n${lines}\n\n` +
+          `Usage beyond your allowance is billed as overage. Consider upgrading your plan.`,
+        // Dedupe per tenant + period + peak threshold so a re-run never double-notifies.
+        idempotencyKey: `usage-alert:${alert.tenantId}:${alert.periodStart}..${alert.periodEnd}:${peak}`,
+        metadata: { tenant_id: alert.tenantId },
+      });
+      observe('tenant.notified', {
+        tenantId: alert.tenantId,
+        outcome: 'ok',
+        context: {
+          provider: result.provider,
+          notificationId: result.id,
+          kind: 'usage-alert',
+          status: result.status,
+        },
+      });
+    } catch (error) {
+      observe('tenant.notified', {
+        tenantId: alert.tenantId,
+        outcome: 'error',
+        context: { kind: 'usage-alert' },
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -2036,6 +2150,37 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       });
     },
 
+    async checkUsageAlerts(
+      period: BillingPeriod,
+      options?: { limit?: number; notify?: boolean },
+    ): Promise<UsageAlertSweepReport> {
+      assertPeriod(period);
+      const report = await usageAlertEngine().checkAll(period, {
+        ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+      });
+      // Optional best-effort email to each alerted tenant (audit/webhook already fired in the engine).
+      if (options?.notify === true) {
+        for (const a of report.alerted) {
+          await notifyUsageAlert({
+            tenantId: a.tenantId,
+            alerts: a.alerts.map((x) => ({
+              metric: x.metric,
+              usedFraction: x.usedFraction,
+              thresholdCrossed: x.thresholdCrossed,
+            })),
+            periodStart: period.from.toISOString(),
+            periodEnd: period.to.toISOString(),
+          });
+        }
+      }
+      return report;
+    },
+
+    usageAlertHistory(limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.usage_alert'], limit });
+    },
+
     async listTenants(options?: {
       status?: TenantStatus;
       limit?: number;
@@ -2598,6 +2743,7 @@ export function tenantForgeFromConfig(
     // Unit cost rates for the per-tenant cost/margin report (empty = zero cost).
     ...(config.costRates !== undefined ? { costRates: config.costRates } : {}),
     ...(config.billingRates !== undefined ? { billingRates: config.billingRates } : {}),
+    usageAlertThresholds: config.usageAlertThresholds,
     // Payment gateway (PSP): wired only when explicitly configured (charging is money movement).
     // Stripe ships; swap in any other provider behind the PaymentGateway port at this seam.
     ...(config.paymentGateway === 'stripe'

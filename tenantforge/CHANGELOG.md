@@ -6,6 +6,22 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Usage alerts (approaching plan allowance)** — `checkUsageAlerts(period, { notify? })` (CLI
+  `usage-alerts [--notify]`) sweeps active tenants and flags those that have crossed a configured
+  fraction of their plan's included allowance (`TENANTFORGE_USAGE_ALERT_THRESHOLDS`, e.g. `0.8,1.0`
+  = 80% / 100%). Pure core `evaluateUsageAlerts` / `normalizeThresholds` (highest crossed threshold
+  per metered dimension, 100%); a new `UsageAlertEngine` adapter meters via the existing
+  `UsageProvider` and reuses the invoice engine's `metadata.includedUsage` parsing (no drift). Each
+  alerted tenant emits a `tenant.usage_alert` event (fanned to any outbound webhook); with
+  `--notify` + a notifier wired, it also emails `metadata.billingEmail` (best-effort; recipient
+  never recorded — PII). HTTP `GET /v1/usage-alerts` and the dashboard show alert **history**
+  read-only (the side-effecting sweep is library/CLI only). This is **not a Neon feature**: it
+  consumes Neon's consumption metering and layers the operator's per-tenant plan-allowance +
+  threshold policy on top — concepts Neon has no knowledge of. Off by default (no thresholds ⇒ no
+  alerts).
+
 ## [0.19.0] - 2026-06-21
 
 Adds per-tenant included usage allowances so usage within a plan's free tier is free and only the
