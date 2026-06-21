@@ -9,6 +9,7 @@ import {
   fetchReconcileCapabilities,
   runReconcile,
   fetchCharges,
+  fetchPaymentEvents,
   fetchSession,
   login,
   logout,
@@ -20,6 +21,7 @@ import {
   type ReconcilePlan,
   type ReconcileHistoryEntry,
   type ChargeHistoryEntry,
+  type PaymentEventEntry,
   type Session,
 } from './api';
 
@@ -371,6 +373,7 @@ function ReconcilePanel(): React.JSX.Element {
 
 function BillingPanel(): React.JSX.Element {
   const { data, error } = usePanelData<ChargeHistoryEntry[]>(fetchCharges);
+  const events = usePanelData<PaymentEventEntry[]>(fetchPaymentEvents);
   return (
     <Panel id="billing-h" title="Billing (recent charges)" error={error} loading={data === null}>
       {data !== null && (
@@ -399,6 +402,29 @@ function BillingPanel(): React.JSX.Element {
                       {c.context?.amountMinor ?? '—'} {c.context?.currency ?? ''}
                     </td>
                     <td>{c.context?.status ?? c.outcome}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {events.data !== null && events.data.length > 0 && (
+            <table>
+              <caption>Recent inbound PSP webhook events</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Charge</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.data.map((e) => (
+                  <tr key={`${e.at}-${e.context?.chargeId ?? ''}`}>
+                    <td>{e.at}</td>
+                    <td>{e.context?.type ?? '—'}</td>
+                    <td>{e.tenantId ?? '—'}</td>
+                    <td>{e.context?.chargeId ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

@@ -57,6 +57,12 @@ export interface HttpServerOptions {
    * metrics endpoint.
    */
   metrics?: () => string;
+  /**
+   * When true, mount the inbound PSP webhook endpoint `POST /webhooks/payment` — authenticated by the
+   * PSP **signature** (not the bearer token), so it sits outside the `/v1/*` auth. Enable only when a
+   * webhook verifier is configured on the service.
+   */
+  paymentWebhooks?: boolean;
 }
 
 /** Hono Variables: the resolved principal, set by the auth middleware. */
@@ -206,6 +212,24 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     app.get('/metrics', (c) =>
       c.text(renderMetrics(), 200, { 'content-type': 'text/plain; version=0.0.4' }),
     );
+  }
+
+  // Inbound PSP webhook endpoint — authenticated by the **signature** (not the bearer token), so it
+  // is deliberately OUTSIDE the /v1 auth. Verification uses the RAW request body; we read it as text
+  // and never re-serialize. Body-size-capped. Respond 2xx fast on success, 400 on a bad/stale
+  // signature or malformed payload (never leaking why).
+  if (options.paymentWebhooks === true) {
+    app.post('/webhooks/payment', bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
+      const signature = c.req.header('stripe-signature') ?? '';
+      const rawBody = await c.req.text();
+      try {
+        const event = await tf.ingestPaymentWebhook(rawBody, signature);
+        return c.json({ received: true, type: event.type });
+      } catch {
+        // Untrusted input: a verification/parse failure is a 400; do not echo details.
+        return problem(c, 400, 'Bad Request', 'invalid webhook signature or payload');
+      }
+    });
   }
 
   // AuthN: resolve the bearer token to a principal via the authenticator (token match or OIDC JWT).
@@ -447,6 +471,20 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
     try {
       return c.json({ charges: await tf.chargeHistory(limit) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // Recent inbound payment-webhook events (read-only).
+  app.get('/v1/billing/webhook-events', requirePermission('tenant:read'), async (c) => {
+    const limitParam = c.req.query('limit');
+    const limit = limitParam === undefined ? undefined : Number(limitParam);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      return problem(c, 400, 'Bad Request', 'limit must be a positive integer');
+    }
+    try {
+      return c.json({ events: await tf.paymentWebhookHistory(limit) });
     } catch (error) {
       return handleError(c, error);
     }

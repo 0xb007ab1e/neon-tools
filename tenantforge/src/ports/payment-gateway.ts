@@ -17,6 +17,11 @@ export interface ChargeRequest {
   idempotencyKey: string;
   /** Optional human-readable description attached to the charge (no secrets/PII). */
   description?: string;
+  /**
+   * Optional key/value metadata to attach to the charge at the PSP (e.g. `{ tenant_id }`), so inbound
+   * webhooks can be correlated back to the tenant. No secrets/PII.
+   */
+  metadata?: Record<string, string>;
 }
 
 /** The outcome of a charge attempt (no card data — safe to log/audit). */

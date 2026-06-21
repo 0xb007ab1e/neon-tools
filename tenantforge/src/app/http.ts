@@ -90,6 +90,8 @@ function main(): void {
     ...(config.migrationsDir !== undefined
       ? { dashboardReconcileCatalog: readMigrationCatalog(config.migrationsDir) }
       : {}),
+    // Mount the inbound PSP webhook endpoint when a verifier is configured (signing secret set).
+    ...(config.paymentWebhookSecret !== undefined ? { paymentWebhooks: true } : {}),
     metrics: () => metrics.render(),
   });
 

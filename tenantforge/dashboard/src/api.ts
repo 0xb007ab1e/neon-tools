@@ -205,3 +205,24 @@ export async function fetchCharges(): Promise<ChargeHistoryEntry[]> {
   if (!res.ok) throw new Error('Could not load charges');
   return ((await res.json()) as { charges: ChargeHistoryEntry[] }).charges;
 }
+
+/** One inbound payment-webhook event (a persisted `payment.webhook` audit event). */
+export interface PaymentEventEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  tenantId?: string;
+  context?: {
+    type?: string;
+    rawType?: string;
+    chargeId?: string;
+    amountMinor?: number;
+    currency?: string;
+  };
+}
+
+/** Load recent inbound payment-webhook events (read-only; empty without an audit store). */
+export async function fetchPaymentEvents(): Promise<PaymentEventEntry[]> {
+  const res = await fetch(`${BASE}/payment-events`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load payment events');
+  return ((await res.json()) as { events: PaymentEventEntry[] }).events;
+}

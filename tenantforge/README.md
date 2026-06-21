@@ -186,6 +186,8 @@ excerpt** — the durable, queryable record behind the ephemeral stdout event st
 
 **Charging (PSP):** `tf.chargeInvoice(id, period)` / `chargeInvoiceFleet(period)` (CLI `charge` / `charge-fleet`, **`--yes`-gated**) charge a tenant's invoice via the configured gateway behind the swappable **`PaymentGateway` port** — **Stripe** ships (REST + injectable `fetch`, zero SDK dep); plug in any other PSP/billing agent the same way. Money is integer minor units; charges are **idempotent** (no double-bill); the tenant's PSP customer id is `metadata.billingCustomerRef`. Opt-in via `TENANTFORGE_PAYMENT_GATEWAY=stripe` + `STRIPE_SECRET_KEY`. **Charging is CLI-only and gated — never over HTTP or MCP** (money movement, LLM08); HTTP `GET /v1/billing/charges` + the dashboard billing panel show **read-only** charge history.
 
+**Inbound PSP webhooks:** `POST /webhooks/payment` ingests payment events (Stripe `payment_intent.succeeded` / `payment_failed` / `charge.refunded`) behind the swappable **`PaymentWebhookVerifier` port** — authenticated by the **signature** (HMAC over the raw body, constant-time, replay-checked), **not** the bearer token, so it lives outside `/v1`. Verified events become redacted `payment.webhook` audit records (charges stamp `metadata.tenant_id` so events correlate back to the tenant); read them via `GET /v1/billing/webhook-events` + the dashboard billing panel. Enable with `TENANTFORGE_PAYMENT_WEBHOOK_SECRET`.
+
 **Web dashboard:** a React/Vite SPA (`dashboard/`) gives operators a browser view of the control
 plane — panels for compliance, fleet drift, and cost/margin. It logs in with an operator token
 exchanged for an **HttpOnly session cookie** by the `/dashboard` backend (mounted when

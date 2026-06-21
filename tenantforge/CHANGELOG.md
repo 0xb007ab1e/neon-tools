@@ -6,6 +6,24 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Inbound PSP webhook ingestion** — receive payment events (e.g. Stripe `payment_intent.succeeded`
+  / `payment_failed` / `charge.refunded`) behind a swappable **`PaymentWebhookVerifier` port** (the
+  inbound counterpart to the `PaymentGateway` port). The **Stripe adapter** verifies the
+  `Stripe-Signature` over the **raw body** (HMAC-SHA256, **constant-time** compare) and **replay-checks
+  the timestamp** (`topic-webhooks`), then parses + normalizes the (untrusted, schema-validated)
+  payload to a PSP-agnostic `PaymentEvent`. Charges now stamp `metadata.tenant_id` so events
+  correlate back to the tenant. Facade `ingestPaymentWebhook(rawBody, signature)` emits a redacted
+  `payment.webhook` audit event (attributed to the tenant; failed-charge events as `outcome: error`);
+  `paymentWebhookHistory()` reads them back. The endpoint is **`POST /webhooks/payment`** —
+  authenticated by the **signature, not the bearer token**, so it sits outside `/v1`; body-size-capped,
+  fails 400 without leaking why, mounted only when `TENANTFORGE_PAYMENT_WEBHOOK_SECRET` is set.
+  Read-only history on HTTP (`GET /v1/billing/webhook-events`) + the dashboard billing panel. Covered
+  by the Stripe verifier (valid / bad-sig / tampered-body / stale-timestamp / malformed / type-mapping),
+  facade (verify+audit+attribute, fail-closed, failed→error, history), HTTP (signature-authed ingest,
+  bad-sig 400, not-mounted 404, read history), and dashboard (axe) tests.
+
 ## [0.6.0] - 2026-06-21
 
 Closes the billing loop: invoice documents can now become **real charges** via a swappable
