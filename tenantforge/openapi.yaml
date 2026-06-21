@@ -29,6 +29,8 @@ tags:
     description: Read-only extension reports — compliance, cost/margin, invoices.
   - name: fleet
     description: Fleet schema-version drift reconciliation (read-only plan + history over HTTP).
+  - name: billing
+    description: Read-only charge history (charging is a CLI / gated operation, not HTTP).
   - name: meta
     description: Service metadata.
 paths:
@@ -348,6 +350,35 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/AuditEvent' }
                 required: [history]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/billing/charges:
+    get:
+      tags: [billing]
+      summary: >
+        Recent charge history (requires `tenant:read`) from the persisted audit trail. Read-only —
+        charging itself moves money and is a CLI / gated operation, never exposed over HTTP. Empty
+        unless an audit store is wired.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max entries, newest-first (default 20).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Recent charge events (no card data).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  charges:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
+                required: [charges]
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }

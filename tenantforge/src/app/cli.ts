@@ -684,6 +684,76 @@ const invoiceFleet = defineCommand({
   },
 });
 
+const charge = defineCommand({
+  meta: {
+    name: 'charge',
+    description:
+      'Charge a tenant for its invoice via the configured PSP (money movement; --yes gated)',
+  },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    from: { type: 'string', description: 'Period start (ISO-8601); default month start' },
+    to: { type: 'string', description: 'Period end (ISO-8601); default now' },
+    yes: {
+      type: 'boolean',
+      description: 'Confirm — this moves real money. Required.',
+      default: false,
+    },
+  },
+  async run({ args }) {
+    if (!args.yes) {
+      process.stderr.write('refusing to charge without --yes (this moves real money)\n');
+      process.exitCode = 1;
+      return;
+    }
+    await withTenantForge(async (tf) => {
+      const result = await tf.chargeInvoice(args.id, monthPeriod(args.from, args.to));
+      process.stdout.write(
+        `charged ${args.id}: ${result.provider} ${result.id} ${result.status} ` +
+          `${result.amountMinor} ${result.currency}\n`,
+      );
+    });
+  },
+});
+
+const chargeFleet = defineCommand({
+  meta: {
+    name: 'charge-fleet',
+    description:
+      'Charge every active tenant with a billing customer ref (the billing run; --yes gated)',
+  },
+  args: {
+    from: { type: 'string', description: 'Period start (ISO-8601); default month start' },
+    to: { type: 'string', description: 'Period end (ISO-8601); default now' },
+    json: { type: 'boolean', description: 'Emit the full report as JSON', default: false },
+    yes: {
+      type: 'boolean',
+      description: 'Confirm — this charges the fleet. Required.',
+      default: false,
+    },
+  },
+  async run({ args }) {
+    if (!args.yes) {
+      process.stderr.write('refusing to charge the fleet without --yes (this moves real money)\n');
+      process.exitCode = 1;
+      return;
+    }
+    await withTenantForge(async (tf) => {
+      const report = await tf.chargeInvoiceFleet(monthPeriod(args.from, args.to));
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      } else {
+        process.stdout.write(
+          `charge run: ${report.charged.length} charged, ${report.skipped.length} skipped, ` +
+            `${report.failed.length} failed\n`,
+        );
+        for (const f of report.failed) process.stdout.write(`  FAILED ${f.tenantId}: ${f.error}\n`);
+      }
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -714,6 +784,8 @@ const main = defineCommand({
     'cost-report': costReport,
     invoice,
     'invoice-fleet': invoiceFleet,
+    charge,
+    'charge-fleet': chargeFleet,
   },
 });
 

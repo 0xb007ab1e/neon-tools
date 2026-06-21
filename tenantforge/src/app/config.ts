@@ -160,6 +160,15 @@ const EnvSchema = z
     // prices charged to tenants (distinct from cost). Unset = usage not billed (invoice = plan fee
     // from metadata.priceUsd only). Generates invoice documents; it does not charge a card.
     TENANTFORGE_BILLING_RATES: z.string().optional(),
+    // Payment gateway (PSP) for charging invoices: `none` (default — charging fails closed) or
+    // `stripe`. `stripe` requires STRIPE_SECRET_KEY (enforced below). Charging is a money-moving
+    // outward action — opt-in only, never auto-enabled.
+    TENANTFORGE_PAYMENT_GATEWAY: z.enum(['none', 'stripe']).default('none'),
+    // Stripe secret API key (sk_…) — required when TENANTFORGE_PAYMENT_GATEWAY=stripe. A secret;
+    // from the secret manager / env, never committed or logged.
+    STRIPE_SECRET_KEY: z.string().min(1).optional(),
+    // Override the Stripe API base URL (optional; defaults to the public API — set for a mock/proxy).
+    STRIPE_API_BASE_URL: z.string().url().optional(),
     // Outbound lifecycle webhook (optional): HMAC-signed POST of each event to an external endpoint.
     TENANTFORGE_WEBHOOK_URL: z.string().url().optional(),
     TENANTFORGE_WEBHOOK_SECRET: z.string().min(1).optional(),
@@ -327,6 +336,12 @@ export interface Config {
   costRates?: CostRates;
   /** Per-unit billing (sell) rates (USD) for invoice generation; absent ⇒ usage not billed. */
   billingRates?: BillingRates;
+  /** Payment gateway for charging invoices: none (charging disabled) or stripe. */
+  paymentGateway: 'none' | 'stripe';
+  /** Stripe secret key; present ⇒ the Stripe gateway is wired (required when paymentGateway=stripe). */
+  stripeSecretKey?: string;
+  /** Override the Stripe API base URL (optional). */
+  stripeApiBaseUrl?: string;
   /** Outbound lifecycle webhook (set only when both URL + secret are configured). */
   webhook?: { url: string; secret: string; eventTypes?: string[] };
   /** Port for the HTTP entrypoint. */
@@ -359,6 +374,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rateLimitStore: parsed.TENANTFORGE_RATE_LIMIT_STORE,
     idempotencyStore: parsed.TENANTFORGE_IDEMPOTENCY_STORE,
     auditLog: parsed.TENANTFORGE_AUDIT_LOG,
+    paymentGateway: parsed.TENANTFORGE_PAYMENT_GATEWAY,
+    ...(parsed.STRIPE_SECRET_KEY !== undefined
+      ? { stripeSecretKey: parsed.STRIPE_SECRET_KEY }
+      : {}),
+    ...(parsed.STRIPE_API_BASE_URL !== undefined
+      ? { stripeApiBaseUrl: parsed.STRIPE_API_BASE_URL }
+      : {}),
     connectionCacheTtlMs: parsed.TENANTFORGE_CONNECTION_CACHE_TTL_MS,
     authMode: parsed.TENANTFORGE_AUTH_MODE,
     port: parsed.TENANTFORGE_PORT,
@@ -390,6 +412,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       throw new Error('TENANTFORGE_BILLING_RATES must be valid JSON');
     }
     config.billingRates = CostRatesSchema.parse(raw) as BillingRates;
+  }
+  if (parsed.TENANTFORGE_PAYMENT_GATEWAY === 'stripe' && parsed.STRIPE_SECRET_KEY === undefined) {
+    throw new Error('STRIPE_SECRET_KEY is required when TENANTFORGE_PAYMENT_GATEWAY=stripe');
   }
   if (parsed.TENANTFORGE_AUTH_MODE === 'oidc') {
     // superRefine guarantees issuer/audience/jwksUri are present for this mode.

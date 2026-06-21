@@ -6,6 +6,26 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Payment-gateway (PSP) charging** — turn invoice documents into real charges, behind a swappable
+  **`PaymentGateway` port** (one seam; swap Stripe for Adyen / Braintree / a custom billing agent
+  without touching the control plane). A **Stripe adapter** speaks the REST API via injectable
+  `fetch` (zero SDK dependency, like the Vault / Azure-Key-Vault adapters): a confirmed, off-session
+  PaymentIntent against the customer's saved method, with the **idempotency key on the
+  `Idempotency-Key` header** so a retry never double-bills. Money is computed in the pure core
+  (`invoiceChargeAmount` / `chargeIdempotencyKey`, 100%): **integer minor units, never floats**, and
+  a zero/negative total fails closed. Facade `chargeInvoice(id, period)` + `chargeInvoiceFleet(period)`
+  (failure-isolated billing run — skips tenants with no `metadata.billingCustomerRef` or a zero
+  invoice) emit a redacted `tenant.charged` audit event (amount/status/charge id — **no card data**);
+  `chargeHistory()` reads them back. **Safety posture (workflow-gated-actions / std-owasp-llm LLM08):**
+  charging is **CLI-only and `--yes`-gated** (`charge` / `charge-fleet`) — **never** exposed over HTTP
+  or MCP; HTTP + the dashboard expose **read-only** charge history (`GET /v1/billing/charges`, billing
+  panel). Opt-in via `TENANTFORGE_PAYMENT_GATEWAY=stripe` + `STRIPE_SECRET_KEY` (fails closed
+  otherwise; the key is never logged). Covered by core (100%), the Stripe adapter (success / processing
+  / requires-action / decline / non-2xx, idempotency-key + amount encoding), facade (charge / no-gateway
+  / no-ref / zero-amount / fleet isolation / history), HTTP, and dashboard (axe) tests.
+
 ## [0.5.0] - 2026-06-21
 
 Brings the 0.4.x extension features to the **agent (MCP) surface**, completing

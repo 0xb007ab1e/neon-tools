@@ -62,6 +62,20 @@ const invoices = {
   invoices: [{ tenantId: 'tenant-billed', currency: 'USD', totalUsd: 12 }],
   unmetered: [],
 };
+const charges = [
+  {
+    at: '2026-06-20T00:00:00.000Z',
+    outcome: 'ok',
+    tenantId: 'tenant-charged',
+    context: {
+      provider: 'stripe',
+      chargeId: 'ch_1',
+      amountMinor: 1200,
+      currency: 'usd',
+      status: 'succeeded',
+    },
+  },
+];
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -94,6 +108,7 @@ beforeEach(() => {
         return Promise.resolve(json({ target: '0003', reconciled: ['t1', 't2'], partial: [] }));
       if (url.endsWith('/reconcile')) return Promise.resolve(json(reconcile));
       if (url.endsWith('/invoices')) return Promise.resolve(json(invoices));
+      if (url.endsWith('/charges')) return Promise.resolve(json({ charges }));
       if (url.endsWith('/cost')) return Promise.resolve(json(cost));
       return Promise.resolve(json({}, 404));
     }),
@@ -140,6 +155,11 @@ describe('dashboard App', () => {
       await screen.findByRole('heading', { name: 'Invoices (this month)' }),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-billed')).toBeInTheDocument();
+    // Billing (recent charges) panel renders.
+    expect(
+      await screen.findByRole('heading', { name: 'Billing (recent charges)' }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('tenant-charged')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);
