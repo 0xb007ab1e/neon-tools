@@ -5,10 +5,10 @@
 This collection is pre-1.0 and under active development. Security fixes are applied to the latest
 `main` only; there are no maintained release branches yet.
 
-| Version | Supported |
-|---|---|
-| `main` (latest) | ✅ |
-| anything older | ❌ |
+| Version         | Supported |
+| --------------- | --------- |
+| `main` (latest) | ✅        |
+| anything older  | ❌        |
 
 ## Verifying releases
 
