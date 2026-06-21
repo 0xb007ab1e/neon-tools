@@ -110,6 +110,12 @@ export { assertRoutable, type RoutableTenant } from './routing.js';
 export { retentionCutoff, isPurgeable, type RetainableTenant } from './retention.js';
 export { redactSecrets, type TenantEvent } from './observability.js';
 export {
+  normalizeAuditQuery,
+  type AuditQueryInput,
+  type NormalizedAuditQuery,
+  type AuditQueryBounds,
+} from './audit-query.js';
+export {
   buildErasureCertificate,
   type ErasureCertificate,
   type ErasureVerification,

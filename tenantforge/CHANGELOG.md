@@ -6,6 +6,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Audit explorer** — `queryAudit({ events?, tenantId?, since?, limit? })` (CLI `audit`, HTTP
+  `GET /v1/audit`, dashboard "Audit log" panel) is the general, filterable view over the
+  operator-attributed, append-only control-plane trail; the narrow `*History` methods are now
+  conveniences over it. Pure core `normalizeAuditQuery` validates + clamps the untrusted filter
+  (de-dupes/blank-drops events, requires a parseable `since`, bounds `limit`; 100%). Read-only
+  (`tenant:read`), newest-first, already-redacted; HTTP 400s on a bad limit/since. Builder-side
+  audit for NIST AU / SOC2 / OWASP A09 — Neon has no record of the operator's control-plane
+  activity (not a Neon feature). Returns `[]` without an audit store.
+
 ## [0.22.0] - 2026-06-21
 
 Adds invoice delivery — email generated invoices to tenants (the billing arc's last mile).

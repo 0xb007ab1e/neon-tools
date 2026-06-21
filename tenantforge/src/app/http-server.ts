@@ -520,6 +520,28 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Query the control-plane audit trail (read-only): ?event (repeatable) / ?tenant / ?since / ?limit.
+  app.get('/v1/audit', requirePermission('tenant:read'), async (c) => {
+    const events = c.req.queries('event'); // repeatable: ?event=a&event=b
+    const tenant = c.req.query('tenant');
+    const since = c.req.query('since');
+    const limitParam = c.req.query('limit');
+    const query = {
+      ...(events !== undefined && events.length > 0 ? { events } : {}),
+      ...(tenant !== undefined ? { tenantId: tenant } : {}),
+      ...(since !== undefined ? { since } : {}),
+      ...(limitParam !== undefined ? { limit: Number(limitParam) } : {}),
+    };
+    try {
+      return c.json({ events: await tf.queryAudit(query) });
+    } catch (error) {
+      // normalizeAuditQuery throws on a bad limit/since → 400, not 500.
+      const message = error instanceof Error ? error.message : 'invalid query';
+      if (message.includes('audit query:')) return problem(c, 400, 'Bad Request', message);
+      return handleError(c, error);
+    }
+  });
+
   // Recent invoice-delivery history (read-only). Sending an invoice is an outward email — CLI/library.
   app.get('/v1/billing/invoices-sent', requirePermission('tenant:read'), async (c) => {
     const limitParam = c.req.query('limit');

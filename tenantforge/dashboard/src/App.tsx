@@ -19,6 +19,7 @@ import {
   fetchUsageAlerts,
   fetchPlans,
   fetchInvoicesSent,
+  fetchAudit,
   fetchSession,
   login,
   logout,
@@ -40,6 +41,7 @@ import {
   type UsageAlertEntry,
   type PlanEntry,
   type InvoiceSentEntry,
+  type AuditEventEntry,
   type Session,
 } from './api';
 
@@ -149,6 +151,7 @@ function DashboardView(props: {
         <PlansPanel />
         <InvoicesPanel />
         <BillingPanel />
+        <AuditPanel />
       </main>
     </div>
   );
@@ -649,6 +652,47 @@ function BillingPanel(): React.JSX.Element {
                       {d.context?.attempt !== undefined ? ` #${d.context.attempt}` : ''}
                     </td>
                     <td>{d.outcome}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function AuditPanel(): React.JSX.Element {
+  const { data, error } = usePanelData<AuditEventEntry[]>(fetchAudit);
+  return (
+    <Panel id="audit-h" title="Audit log (recent)" error={error} loading={data === null}>
+      {data !== null && (
+        <div>
+          <p>
+            {data.length} recent control-plane event(s) — who-did-what-when. Filter the full trail
+            via the CLI (`audit`) or `GET /v1/audit`.
+          </p>
+          {data.length > 0 && (
+            <table>
+              <caption>Recent audit events (newest first)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Event</th>
+                  <th scope="col">Outcome</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Actor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((e, i) => (
+                  <tr key={`${e.at}-${e.event}-${i}`}>
+                    <td>{e.at}</td>
+                    <td>{e.event}</td>
+                    <td>{e.outcome}</td>
+                    <td>{e.tenantId ?? '—'}</td>
+                    <td>{e.actor !== undefined ? `${e.actor.id} (${e.actor.role})` : '—'}</td>
                   </tr>
                 ))}
               </tbody>

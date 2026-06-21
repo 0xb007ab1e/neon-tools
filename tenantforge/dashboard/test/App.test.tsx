@@ -177,6 +177,16 @@ const invoicesSent = [
   },
 ];
 
+const auditEvents = [
+  {
+    at: '2026-06-20T11:00:00.000Z',
+    event: 'tenant.transition',
+    outcome: 'ok',
+    tenantId: 'tenant-audited',
+    actor: { id: 'op', role: 'admin' },
+  },
+];
+
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -216,6 +226,7 @@ beforeEach(() => {
       if (url.endsWith('/usage-alerts')) return Promise.resolve(json({ usageAlerts }));
       if (url.endsWith('/plans')) return Promise.resolve(json({ plans }));
       if (url.endsWith('/invoices-sent')) return Promise.resolve(json({ invoicesSent }));
+      if (url.endsWith('/audit')) return Promise.resolve(json({ events: auditEvents }));
       if (url.endsWith('/refunds')) return Promise.resolve(json({ refunds }));
       if (url.endsWith('/dunning')) return Promise.resolve(json({ events: dunning }));
       if (url.endsWith('/charges')) return Promise.resolve(json({ charges }));
@@ -307,6 +318,9 @@ describe('dashboard App', () => {
       await screen.findByText('Recent invoice deliveries (emailed to tenants)'),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-emailed')).toBeInTheDocument();
+    // Audit log panel renders.
+    expect(await screen.findByRole('heading', { name: 'Audit log (recent)' })).toBeInTheDocument();
+    expect(await screen.findByText('tenant-audited')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);

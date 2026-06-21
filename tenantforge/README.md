@@ -236,6 +236,8 @@ audit trail** (`TENANTFORGE_AUDIT_LOG=pg`; the `AuditLogStore` port + `tf_audit_
 attests **erasure history** (tenant deletions, with operator attribution) and a **recent audit
 excerpt** — the durable, queryable record behind the ephemeral stdout event stream.
 
+**Audit explorer:** `tf.queryAudit({ events?, tenantId?, since?, limit? })` (CLI `audit`, HTTP `GET /v1/audit?event=&tenant=&since=&limit=`, dashboard "Audit log" panel) is the general, filterable view over that operator-attributed, append-only trail — filter by event name(s), tenant, and a `since` lower bound, newest-first and bounded. The pure core `normalizeAuditQuery` validates + clamps the (untrusted) filter (100%); the narrow `*History` methods (`chargeHistory`, `planChangeHistory`, …) are conveniences over it. Read-only and already-redacted (`tenant:read`). This is **your control-plane trail** (who provisioned/charged/migrated what, when) — Neon has no record of it; it's builder-side audit for NIST AU / SOC2 / OWASP A09.
+
 **Cost / margin:** `tf.costReport(period)` (CLI `cost-report`, HTTP `GET /v1/cost/report`, dashboard panel) estimates each tenant's Neon cost (from `TENANTFORGE_COST_RATES`) vs. its price (`metadata.priceUsd`) and flags unprofitable/unpriced tenants — a read-only **cost-attribution estimate**, not an invoice.
 
 **Invoices:** `tf.invoice(id, period)` / `invoiceFleet(period)` (CLI `invoice` / `invoice-fleet`, HTTP `GET /v1/tenants/:id/invoice` + `GET /v1/invoices`, dashboard panel) generate per-tenant **invoice documents** — usage billed at your **billing (sell) rates** (`TENANTFORGE_BILLING_RATES`) plus the flat plan fee (`metadata.priceUsd`), as line items + total. These are billable **artifacts**; to actually charge them, see Charging below.

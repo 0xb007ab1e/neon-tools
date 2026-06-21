@@ -25,11 +25,13 @@ import {
   type TenantEvent,
   retentionCutoff,
   selectRegion,
+  normalizeAuditQuery,
   findPlan,
   planAssignment,
   buildComplianceReport,
   type ComplianceReport,
   type ComplianceReportOptions,
+  type AuditQueryInput,
   type PlanDefinition,
   type BillingPeriod,
   type Jurisdiction,
@@ -752,6 +754,18 @@ export interface TenantForge {
    * @returns The report and its digest.
    */
   complianceReport(): Promise<ComplianceReportResult>;
+
+  /**
+   * **Query the audit trail** — the general, filterable view over the operator-attributed,
+   * append-only control-plane event stream (who-did-what-when; NIST AU / SOC2 / OWASP A09). Filter
+   * by event name(s), tenant, and a `since` lower bound; results are newest-first and bounded
+   * (`limit` clamped). Read-only; returns `[]` when no audit store is wired. The narrow
+   * `*History` methods are conveniences over this. Events are already redacted (master §5).
+   *
+   * @param query - Optional `events` / `tenantId` / `since` filters and a `limit`.
+   * @returns Matching audit events, most-recent first.
+   */
+  queryAudit(query?: AuditQueryInput): Promise<TenantEvent[]>;
 
   /**
    * Per-tenant **cost / margin** report over `period`: estimated Neon cost (from the configured
@@ -2357,6 +2371,17 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         },
       });
       return { report, digest };
+    },
+
+    async queryAudit(query: AuditQueryInput = {}): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return [];
+      const q = normalizeAuditQuery(query); // validates + clamps (throws on bad limit/since)
+      return auditLog.query({
+        ...(q.events !== undefined ? { events: q.events } : {}),
+        ...(q.tenantId !== undefined ? { tenantId: q.tenantId } : {}),
+        ...(q.since !== undefined ? { since: q.since } : {}),
+        limit: q.limit,
+      });
     },
 
     costReport(period: BillingPeriod): Promise<CostReport> {
