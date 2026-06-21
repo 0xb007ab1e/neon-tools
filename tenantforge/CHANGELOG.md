@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-21
+
+Closes the billing lifecycle end-to-end: tenants now receive a receipt for every charge and refund.
+Additive/backward-compatible (MINOR); receipts are opt-in (`TENANTFORGE_NOTIFIER`, default `none`)
+and best-effort — a notification failure never breaks the billing operation it confirms.
+
 ### Added
 
 - **Receipts / notifications** — a successful charge or refund now **best-effort** sends a receipt to
