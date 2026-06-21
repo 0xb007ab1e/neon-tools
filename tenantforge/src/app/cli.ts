@@ -718,6 +718,57 @@ const invoiceFleet = defineCommand({
   },
 });
 
+const sendInvoice = defineCommand({
+  meta: {
+    name: 'send-invoice',
+    description: "Email a tenant's invoice to its billingEmail (requires a configured notifier)",
+  },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    from: { type: 'string', description: 'Period start (ISO-8601); default month start' },
+    to: { type: 'string', description: 'Period end (ISO-8601); default now' },
+  },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const r = await tf.sendInvoice(args.id, monthPeriod(args.from, args.to));
+      process.stdout.write(
+        r.sent
+          ? `sent invoice to ${r.tenantId} (total ${r.totalUsd})\n`
+          : `not sent to ${r.tenantId}: ${r.reason ?? 'skipped'}\n`,
+      );
+      if (!r.sent) process.exitCode = 1;
+    });
+  },
+});
+
+const sendInvoiceFleet = defineCommand({
+  meta: {
+    name: 'send-invoice-fleet',
+    description: 'Email invoices to every active tenant (failure-isolated)',
+  },
+  args: {
+    from: { type: 'string', description: 'Period start (ISO-8601); default month start' },
+    to: { type: 'string', description: 'Period end (ISO-8601); default now' },
+    json: { type: 'boolean', description: 'Emit the full report as JSON', default: false },
+  },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const report = await tf.sendInvoiceFleet(monthPeriod(args.from, args.to));
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+        return;
+      }
+      process.stdout.write(
+        `invoices delivered: ${report.sent.length} sent · ${report.skipped.length} skipped · ` +
+          `${report.failed.length} failed\n`,
+      );
+      for (const s of report.skipped) process.stdout.write(`  SKIP ${s.tenantId}: ${s.reason}\n`);
+      for (const f of report.failed) process.stdout.write(`  FAIL ${f.tenantId}: ${f.error}\n`);
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+  },
+});
+
 const setAllowance = defineCommand({
   meta: {
     name: 'set-allowance',
@@ -1234,6 +1285,8 @@ const main = defineCommand({
     'cost-report': costReport,
     invoice,
     'invoice-fleet': invoiceFleet,
+    'send-invoice': sendInvoice,
+    'send-invoice-fleet': sendInvoiceFleet,
     charge,
     'charge-fleet': chargeFleet,
     dunning,

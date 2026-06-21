@@ -18,6 +18,7 @@ import {
   fetchCreditGrants,
   fetchUsageAlerts,
   fetchPlans,
+  fetchInvoicesSent,
   fetchSession,
   login,
   logout,
@@ -38,6 +39,7 @@ import {
   type CreditGrantEntry,
   type UsageAlertEntry,
   type PlanEntry,
+  type InvoiceSentEntry,
   type Session,
 } from './api';
 
@@ -398,6 +400,7 @@ function BillingPanel(): React.JSX.Element {
   const planChanges = usePanelData<PlanChangeEntry[]>(fetchPlanChanges);
   const creditGrants = usePanelData<CreditGrantEntry[]>(fetchCreditGrants);
   const usageAlerts = usePanelData<UsageAlertEntry[]>(fetchUsageAlerts);
+  const invoicesSent = usePanelData<InvoiceSentEntry[]>(fetchInvoicesSent);
   return (
     <Panel id="billing-h" title="Billing (recent charges)" error={error} loading={data === null}>
       {data !== null && (
@@ -499,6 +502,27 @@ function BillingPanel(): React.JSX.Element {
                       {g.context?.amountMinor ?? '—'} {g.context?.currency ?? ''}
                     </td>
                     <td>{g.context?.reason ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {invoicesSent.data !== null && invoicesSent.data.length > 0 && (
+            <table>
+              <caption>Recent invoice deliveries (emailed to tenants)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Total (USD)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoicesSent.data.map((e) => (
+                  <tr key={`${e.at}-${e.tenantId ?? ''}`}>
+                    <td>{e.at}</td>
+                    <td>{e.tenantId ?? '—'}</td>
+                    <td>{e.context?.totalUsd ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

@@ -1944,6 +1944,93 @@ describe('createTenantForge.checkUsageAlerts', () => {
   });
 });
 
+describe('createTenantForge.sendInvoice', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  type Notifier = import('../../src/ports/notifier.js').Notifier;
+  type Notification = import('../../src/ports/notifier.js').Notification;
+  const provider = {
+    getProjectConsumption: () =>
+      Promise.resolve([
+        {
+          computeTimeSeconds: 100,
+          activeTimeSeconds: 0,
+          writtenDataBytes: 0,
+          syntheticStorageBytes: 0,
+        },
+      ]),
+  };
+  const fakeNotifier = (calls: Notification[] = []): Notifier => ({
+    provider: 'log',
+    notify: (n) => {
+      calls.push(n);
+      return Promise.resolve({ id: n.idempotencyKey, provider: 'log', status: 'queued' });
+    },
+  });
+  const deps = (notifier?: Notifier) => {
+    const auditLog = createInMemoryAuditLogStore();
+    return {
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      billingRates: { computeSecondUsd: 0.02 },
+      defaultRegion: 'aws-us-east-1' as const,
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+      ...(notifier !== undefined ? { notifier } : {}),
+    };
+  };
+
+  it('fails closed when no notifier is configured', async () => {
+    const tf = createTenantForge(deps());
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingEmail: 'b@acme.dev' },
+    });
+    await expect(tf.sendInvoice(tenant.id, period)).rejects.toThrow(
+      /requires a configured notifier/,
+    );
+  });
+
+  it('emails the invoice to billingEmail and records tenant.invoiced (no recipient in audit)', async () => {
+    const calls: Notification[] = [];
+    const tf = createTenantForge(deps(fakeNotifier(calls)));
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingEmail: 'b@acme.dev' },
+    });
+    const r = await tf.sendInvoice(tenant.id, period);
+    expect(r.sent).toBe(true);
+    expect(r.totalUsd).toBe(2); // 100 * 0.02
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.to).toBe('b@acme.dev');
+    expect(calls[0]?.idempotencyKey).toContain('tenantforge:invoice-email:');
+    const history = await tf.invoiceDeliveryHistory();
+    expect(history[0]?.event).toBe('tenant.invoiced');
+    expect(JSON.stringify(history)).not.toContain('b@acme.dev'); // PII not recorded
+  });
+
+  it('skips (does not send) a tenant with no billingEmail', async () => {
+    const calls: Notification[] = [];
+    const tf = createTenantForge(deps(fakeNotifier(calls)));
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    const r = await tf.sendInvoice(tenant.id, period);
+    expect(r.sent).toBe(false);
+    expect(r.reason).toMatch(/no billing email/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('sendInvoiceFleet is failure-isolated: sent vs skipped', async () => {
+    const tf = createTenantForge(deps(fakeNotifier()));
+    await tf.provision({ slug: 'has-email', metadata: { billingEmail: 'a@x.dev' } });
+    await tf.provision({ slug: 'no-email' });
+    const report = await tf.sendInvoiceFleet(period);
+    expect(report.sent).toHaveLength(1);
+    expect(report.skipped).toHaveLength(1);
+    expect(report.failed).toEqual([]);
+  });
+});
+
 describe('createTenantForge plan catalog', () => {
   const plans = [
     { id: 'starter', name: 'Starter', priceUsd: 0, includedUsage: { computeTimeSeconds: 100 } },

@@ -520,6 +520,20 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Recent invoice-delivery history (read-only). Sending an invoice is an outward email — CLI/library.
+  app.get('/v1/billing/invoices-sent', requirePermission('tenant:read'), async (c) => {
+    const limitParam = c.req.query('limit');
+    const limit = limitParam === undefined ? undefined : Number(limitParam);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      return problem(c, 400, 'Bad Request', 'limit must be a positive integer');
+    }
+    try {
+      return c.json({ invoicesSent: await tf.invoiceDeliveryHistory(limit) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // Fleet reconcile PLAN (read-only preview — which tenants are behind + what they'd receive).
   // Execution needs the migration SQL catalog, so it stays a library/CLI operation, not HTTP.
   app.get('/v1/fleet/reconcile', requirePermission('tenant:read'), async (c) => {

@@ -6,6 +6,18 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Invoice delivery (email)** — `sendInvoice(id, period)` / `sendInvoiceFleet(period)` (CLI
+  `send-invoice` / `send-invoice-fleet`) generate a tenant's invoice and email it to
+  `metadata.billingEmail` via the configured notifier — the billing arc's last mile (invoices were
+  generated but never delivered). Pure core `renderInvoiceEmail` / `invoiceEmailIdempotencyKey`
+  (100%); sends are de-duplicated per tenant + period (a re-run never double-emails), a tenant with
+  no billing email is skipped (not failed), and the fleet run is failure-isolated. Outward send
+  (not money) ⇒ **CLI/library only** (never HTTP/MCP); the recipient address is never recorded — a
+  redacted `tenant.invoiced` event is. Read-only delivery history at `GET /v1/billing/invoices-sent`
+  - the dashboard billing panel. Requires a usage provider and a notifier.
+
 ## [0.21.0] - 2026-06-21
 
 Adds an operator plan catalog: define product tiers once and assign one to a tenant in a single

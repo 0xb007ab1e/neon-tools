@@ -388,3 +388,18 @@ export async function fetchPlans(): Promise<PlanEntry[]> {
   if (!res.ok) throw new Error('Could not load plans');
   return ((await res.json()) as { plans: PlanEntry[] }).plans;
 }
+
+/** One invoice-delivery entry (a persisted `tenant.invoiced` audit event). */
+export interface InvoiceSentEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  tenantId?: string;
+  context?: { totalUsd?: number; status?: string; periodStart?: string; periodEnd?: string };
+}
+
+/** Load recent invoice-delivery history (read-only; empty without an audit store). */
+export async function fetchInvoicesSent(): Promise<InvoiceSentEntry[]> {
+  const res = await fetch(`${BASE}/invoices-sent`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load invoice deliveries');
+  return ((await res.json()) as { invoicesSent: InvoiceSentEntry[] }).invoicesSent;
+}

@@ -16,6 +16,8 @@ import {
   proratePlanChangeMinor,
   renderReceipt,
   receiptIdempotencyKey,
+  renderInvoiceEmail,
+  invoiceEmailIdempotencyKey,
   type ReceiptKind,
   planDunning,
   dunningStateFromCharges,
@@ -472,6 +474,30 @@ export interface HealthReport {
   };
 }
 
+/** The outcome of delivering one tenant's invoice by email. */
+export interface InvoiceSendResult {
+  /** The tenant billed. */
+  tenantId: string;
+  /** Whether the invoice email was handed to the notifier. */
+  sent: boolean;
+  /** Why it was not sent (e.g. `no billing email`), when `sent` is false. */
+  reason?: string;
+  /** The invoice total (USD). */
+  totalUsd: number;
+}
+
+/** A fleet invoice-delivery run. */
+export interface FleetInvoiceDeliveryReport {
+  /** When the run was generated (ISO-8601 UTC). */
+  generatedAt: string;
+  /** Tenants whose invoice was delivered (sorted by id). */
+  sent: string[];
+  /** Tenants skipped (no billing email / nothing to send), with the reason. */
+  skipped: { tenantId: string; reason: string }[];
+  /** Tenants whose delivery failed (isolated — they don't block the run). */
+  failed: { tenantId: string; error: string }[];
+}
+
 /** The TenantForge control-plane API (library surface). */
 export interface TenantForge {
   /** Apply the control-plane registry migrations idempotently. */
@@ -756,6 +782,39 @@ export interface TenantForge {
    * @returns The fleet invoice report.
    */
   invoiceFleet(period: BillingPeriod): Promise<FleetInvoiceReport>;
+
+  /**
+   * **Deliver** a tenant's invoice for `period` by email to its `metadata.billingEmail` — generates
+   * the invoice document, renders it, and sends it via the configured notifier (de-duplicated per
+   * tenant + period). An outward send (not money movement), so the surface is CLI/library only —
+   * never HTTP/MCP; the recipient address is never recorded in the audit trail (PII). Records a
+   * `tenant.invoiced` event. Requires a usage provider **and** a notifier.
+   *
+   * @param id - The tenant id.
+   * @param period - The billing period.
+   * @returns The send outcome (sent / skipped with reason + total).
+   * @throws Error if no notifier is configured, or the tenant/usage provider is unavailable.
+   */
+  sendInvoice(id: string, period: BillingPeriod): Promise<InvoiceSendResult>;
+
+  /**
+   * Deliver invoices to **every active tenant** for `period` (the scheduled run). Failure-isolated:
+   * a tenant with no billing email is `skipped`; a delivery error is recorded under `failed` rather
+   * than failing the run. CLI/library only. Requires a usage provider + a notifier.
+   *
+   * @param period - The billing period.
+   * @returns The fleet delivery report.
+   */
+  sendInvoiceFleet(period: BillingPeriod): Promise<FleetInvoiceDeliveryReport>;
+
+  /**
+   * Recent **invoice-delivery history** (`tenant.invoiced` events) from the persisted audit trail.
+   * Returns `[]` when no audit store is wired. The recipient address is never recorded (PII).
+   *
+   * @param limit - Max events to return (default 20).
+   * @returns The matching events, newest first.
+   */
+  invoiceDeliveryHistory(limit?: number): Promise<TenantEvent[]>;
 
   /**
    * Resolve a tenant id to its connection, scoped to that tenant's project. Fails closed unless the
@@ -1417,6 +1476,56 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  };
+
+  /**
+   * Generate + **deliver** one tenant's invoice by email. Fails closed without a notifier; returns
+   * a skip (not an error) when the tenant has no billing email. Records a redacted `tenant.invoiced`
+   * event (never the recipient address — PII). Shared by `sendInvoice` + `sendInvoiceFleet`.
+   */
+  const deliverInvoice = async (
+    tenantId: string,
+    period: BillingPeriod,
+  ): Promise<InvoiceSendResult> => {
+    if (notifier === undefined) throw new Error('invoice delivery requires a configured notifier');
+    const invoice = await invoiceEngine().invoice(tenantId, period); // validates provider + tenant
+    const tenant = await registry.getById(tenantId);
+    if (tenant === null) throw new Error(`tenant ${tenantId} not found`);
+    const to = billingEmail(tenant.metadata);
+    if (to === undefined) {
+      return { tenantId, sent: false, reason: 'no billing email', totalUsd: invoice.totalUsd };
+    }
+    const { subject, body } = renderInvoiceEmail({
+      tenantSlug: tenant.slug,
+      periodStart: invoice.periodStart,
+      periodEnd: invoice.periodEnd,
+      currency: invoice.currency,
+      lineItems: invoice.lineItems.map((li) => ({
+        description: li.description,
+        amountUsd: li.amountUsd,
+      })),
+      totalUsd: invoice.totalUsd,
+    });
+    const result = await notifier.notify({
+      to,
+      subject,
+      body,
+      idempotencyKey: invoiceEmailIdempotencyKey(tenantId, invoice.periodStart, invoice.periodEnd),
+      metadata: { tenant_id: tenantId },
+    });
+    observe('tenant.invoiced', {
+      tenantId,
+      outcome: 'ok',
+      context: {
+        provider: result.provider,
+        notificationId: result.id,
+        status: result.status,
+        totalUsd: invoice.totalUsd,
+        periodStart: invoice.periodStart,
+        periodEnd: invoice.periodEnd,
+      },
+    });
+    return { tenantId, sent: true, totalUsd: invoice.totalUsd };
   };
 
   /** Quote a plan change: load the tenant, read its current price, and prorate the delta. Pure-ish. */
@@ -2263,6 +2372,41 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     async invoiceFleet(period: BillingPeriod): Promise<FleetInvoiceReport> {
       assertPeriod(period);
       return invoiceEngine().invoiceFleet(period);
+    },
+
+    async sendInvoice(id: string, period: BillingPeriod): Promise<InvoiceSendResult> {
+      assertPeriod(period);
+      return deliverInvoice(id, period);
+    },
+
+    async sendInvoiceFleet(period: BillingPeriod): Promise<FleetInvoiceDeliveryReport> {
+      assertPeriod(period);
+      if (notifier === undefined) {
+        throw new Error('invoice delivery requires a configured notifier');
+      }
+      const active = await registry.list({ status: 'active', limit: MAX_SWEEP });
+      const sent: string[] = [];
+      const skipped: { tenantId: string; reason: string }[] = [];
+      const failed: { tenantId: string; error: string }[] = [];
+      for (const tenant of active) {
+        try {
+          const result = await deliverInvoice(tenant.id, period);
+          if (result.sent) sent.push(tenant.id);
+          else skipped.push({ tenantId: tenant.id, reason: result.reason ?? 'skipped' });
+        } catch (error) {
+          failed.push({
+            tenantId: tenant.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      sent.sort();
+      return { generatedAt: new Date().toISOString(), sent, skipped, failed };
+    },
+
+    invoiceDeliveryHistory(limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.invoiced'], limit });
     },
 
     async chargeInvoice(id: string, period: BillingPeriod): Promise<ChargeResult> {
