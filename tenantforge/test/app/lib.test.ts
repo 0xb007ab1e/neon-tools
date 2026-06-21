@@ -1196,6 +1196,206 @@ describe('createTenantForge.chargeInvoice', () => {
   });
 });
 
+describe('createTenantForge.runDunning', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  const schedule = { maxAttempts: 4, minHoursBetweenAttempts: 24 };
+  const provider = {
+    getProjectConsumption: () =>
+      Promise.resolve([
+        {
+          computeTimeSeconds: 100,
+          activeTimeSeconds: 0,
+          writtenDataBytes: 0,
+          syntheticStorageBytes: 0,
+        },
+      ]),
+  };
+  type Gw = import('../../src/ports/payment-gateway.js').PaymentGateway;
+  type Req = import('../../src/ports/payment-gateway.js').ChargeRequest;
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+
+  /** Seed an active tenant with billing metadata directly into a fake registry. */
+  function seedTenant(
+    registry: ReturnType<typeof fakeRegistry>,
+    id: string,
+    metadata: Record<string, string>,
+  ) {
+    registry.seed({
+      id,
+      slug: id,
+      region: 'aws-us-east-1',
+      status: 'active',
+      neonProjectId: `proj-${id}`,
+      metadata,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+  }
+
+  it('fails closed without a payment gateway', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      billingRates: { computeSecondUsd: 0.02 },
+      defaultRegion: 'aws-us-east-1',
+    });
+    await expect(tf.runDunning(period, schedule)).rejects.toThrow(
+      /requires a configured payment gateway/,
+    );
+  });
+
+  it('skips every active tenant when no audit store is wired (no failure history to act on)', async () => {
+    const registry = fakeRegistry();
+    seedTenant(registry, 't1', { billingCustomerRef: 'cus_1' });
+    const gw: Gw = { provider: 'stripe', charge: () => Promise.reject(new Error('unused')) };
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      billingRates: { computeSecondUsd: 0.02 },
+      defaultRegion: 'aws-us-east-1',
+      paymentGateway: gw,
+    });
+    const report = await tf.runDunning(period, schedule);
+    expect(report.skipped).toEqual([{ tenantId: 't1', reason: 'no audit store' }]);
+    expect(report.retried).toEqual([]);
+  });
+
+  it('retries past-due tenants with a per-attempt key, suspends the exhausted, skips the rest', async () => {
+    const registry = fakeRegistry();
+    const auditLog = createInMemoryAuditLogStore();
+    seedTenant(registry, 'retry-due', { billingCustomerRef: 'cus_retry' });
+    seedTenant(registry, 'backoff', { billingCustomerRef: 'cus_back' });
+    seedTenant(registry, 'healthy', { billingCustomerRef: 'cus_ok' });
+    seedTenant(registry, 'exhausted', { billingCustomerRef: 'cus_exh' });
+    seedTenant(registry, 'noref', {});
+
+    const charged = (tenantId: string, outcome: 'ok' | 'error', at: string) =>
+      auditLog.append({ event: 'tenant.charged', at, outcome, tenantId });
+    // retry-due: 2 consecutive failures, last attempt 48h ago (backoff elapsed) → retry attempt 2
+    await charged('retry-due', 'error', hoursAgo(72));
+    await charged('retry-due', 'error', hoursAgo(48));
+    // backoff: 1 failure 1h ago → within backoff window → wait
+    await charged('backoff', 'error', hoursAgo(1));
+    // healthy: last charge succeeded → not failing → wait
+    await charged('healthy', 'error', hoursAgo(100));
+    await charged('healthy', 'ok', hoursAgo(50));
+    // exhausted: 4 consecutive failures → suspend
+    await charged('exhausted', 'error', hoursAgo(96));
+    await charged('exhausted', 'error', hoursAgo(72));
+    await charged('exhausted', 'error', hoursAgo(48));
+    await charged('exhausted', 'error', hoursAgo(24));
+
+    const calls: Req[] = [];
+    const gw: Gw = {
+      provider: 'stripe',
+      charge: (r) => {
+        calls.push(r);
+        return Promise.resolve({
+          id: 'ch_retry',
+          status: 'succeeded',
+          amountMinor: r.amountMinor,
+          currency: r.currency,
+          provider: 'stripe',
+        });
+      },
+    };
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      billingRates: { computeSecondUsd: 0.02 },
+      defaultRegion: 'aws-us-east-1',
+      paymentGateway: gw,
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+
+    const report = await tf.runDunning(period, schedule);
+
+    expect(report.retried).toEqual([
+      {
+        tenantId: 'retry-due',
+        attempt: 2,
+        id: 'ch_retry',
+        status: 'succeeded',
+        amountMinor: 200,
+        currency: 'usd',
+        provider: 'stripe',
+      },
+    ]);
+    expect(report.suspended).toEqual([{ tenantId: 'exhausted', failures: 4 }]);
+    expect(report.skipped).toEqual([
+      { tenantId: 'backoff', reason: 'within backoff' },
+      { tenantId: 'healthy', reason: 'no failures' },
+      { tenantId: 'noref', reason: 'no billingCustomerRef' },
+    ]);
+    // Only the past-due tenant was charged, and with a fresh per-attempt idempotency key.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.idempotencyKey).toContain(':retry-2');
+    // The exhausted tenant is actually suspended (reversible escalation).
+    expect((await registry.getById('exhausted'))?.status).toBe('suspended');
+    // A redacted tenant.dunning event was recorded for each action.
+    const dunning = await tf.dunningHistory();
+    expect(dunning.map((e) => e.context?.action).sort()).toEqual(['retry', 'suspend']);
+  });
+
+  it('isolates a retry that declines again into report.failed (never blocking others)', async () => {
+    const registry = fakeRegistry();
+    const auditLog = createInMemoryAuditLogStore();
+    seedTenant(registry, 'declines', { billingCustomerRef: 'cus_d' });
+    await auditLog.append({
+      event: 'tenant.charged',
+      at: hoursAgo(48),
+      outcome: 'error',
+      tenantId: 'declines',
+    });
+    const gw: Gw = {
+      provider: 'stripe',
+      charge: () => Promise.reject(new Error('card declined again')),
+    };
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      billingRates: { computeSecondUsd: 0.02 },
+      defaultRegion: 'aws-us-east-1',
+      paymentGateway: gw,
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const report = await tf.runDunning(period, schedule);
+    expect(report.retried).toEqual([]);
+    expect(report.failed).toEqual([
+      { tenantId: 'declines', attempt: 1, error: 'card declined again' },
+    ]);
+    const dunning = await tf.dunningHistory();
+    expect(dunning[0]?.outcome).toBe('error');
+  });
+
+  it('dunningHistory returns [] without an audit store; defaults period + schedule when omitted', async () => {
+    const noStore = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      billingRates: { computeSecondUsd: 0.02 },
+      defaultRegion: 'aws-us-east-1',
+      paymentGateway: { provider: 'stripe', charge: () => Promise.reject(new Error('unused')) },
+    });
+    expect(await noStore.dunningHistory()).toEqual([]);
+    // No args → current-month period + DEFAULT_DUNNING_SCHEDULE; empty registry → empty report.
+    const report = await noStore.runDunning();
+    expect(report.schedule).toEqual({ maxAttempts: 4, minHoursBetweenAttempts: 24 });
+    expect(report.retried).toEqual([]);
+  });
+});
+
 describe('createTenantForge.ingestPaymentWebhook', () => {
   type Verifier = import('../../src/ports/payment-webhook.js').PaymentWebhookVerifier;
   type Event = import('../../src/ports/payment-webhook.js').PaymentEvent;

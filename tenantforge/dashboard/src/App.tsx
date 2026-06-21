@@ -10,6 +10,7 @@ import {
   runReconcile,
   fetchCharges,
   fetchPaymentEvents,
+  fetchDunning,
   fetchSession,
   login,
   logout,
@@ -22,6 +23,7 @@ import {
   type ReconcileHistoryEntry,
   type ChargeHistoryEntry,
   type PaymentEventEntry,
+  type DunningHistoryEntry,
   type Session,
 } from './api';
 
@@ -374,6 +376,7 @@ function ReconcilePanel(): React.JSX.Element {
 function BillingPanel(): React.JSX.Element {
   const { data, error } = usePanelData<ChargeHistoryEntry[]>(fetchCharges);
   const events = usePanelData<PaymentEventEntry[]>(fetchPaymentEvents);
+  const dunning = usePanelData<DunningHistoryEntry[]>(fetchDunning);
   return (
     <Panel id="billing-h" title="Billing (recent charges)" error={error} loading={data === null}>
       {data !== null && (
@@ -425,6 +428,32 @@ function BillingPanel(): React.JSX.Element {
                     <td>{e.context?.type ?? '—'}</td>
                     <td>{e.tenantId ?? '—'}</td>
                     <td>{e.context?.chargeId ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {dunning.data !== null && dunning.data.length > 0 && (
+            <table>
+              <caption>Recent dunning (failed-charge retries)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Action</th>
+                  <th scope="col">Outcome</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dunning.data.map((d) => (
+                  <tr key={`${d.at}-${d.tenantId ?? ''}`}>
+                    <td>{d.at}</td>
+                    <td>{d.tenantId ?? '—'}</td>
+                    <td>
+                      {d.context?.action ?? '—'}
+                      {d.context?.attempt !== undefined ? ` #${d.context.attempt}` : ''}
+                    </td>
+                    <td>{d.outcome}</td>
                   </tr>
                 ))}
               </tbody>

@@ -34,10 +34,16 @@ export function invoiceChargeAmount(invoice: Invoice): ChargeAmount {
  * never double-bills; a corrected amount yields a new key (a genuinely different charge). Readable
  * and bounded for normal ids (PSP idempotency keys are arbitrary strings ≤255 chars).
  *
+ * A dunning **retry** must use a *different* key per attempt — otherwise the PSP would replay the
+ * original (failed) result instead of making a fresh attempt. Pass the attempt number for retries;
+ * the base charge (attempt 0 / omitted) keeps the stable key so an accidental double-call de-dupes.
+ *
  * @param invoice - The invoice being charged.
+ * @param attempt - Retry attempt number; omit (or 0) for the first/base charge.
  * @returns A deterministic idempotency key.
  */
-export function chargeIdempotencyKey(invoice: Invoice): string {
+export function chargeIdempotencyKey(invoice: Invoice, attempt = 0): string {
   const { amountMinor, currency } = invoiceChargeAmount(invoice);
-  return `tenantforge:charge:${invoice.tenantId}:${invoice.periodStart}..${invoice.periodEnd}:${amountMinor}${currency}`;
+  const base = `tenantforge:charge:${invoice.tenantId}:${invoice.periodStart}..${invoice.periodEnd}:${amountMinor}${currency}`;
+  return attempt > 0 ? `${base}:retry-${attempt}` : base;
 }

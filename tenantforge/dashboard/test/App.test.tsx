@@ -84,6 +84,14 @@ const paymentEvents = [
     context: { type: 'charge.succeeded', rawType: 'payment_intent.succeeded', chargeId: 'pi_1' },
   },
 ];
+const dunning = [
+  {
+    at: '2026-06-20T02:00:00.000Z',
+    outcome: 'ok',
+    tenantId: 'tenant-dunned',
+    context: { action: 'retry', attempt: 2, status: 'succeeded' },
+  },
+];
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -117,6 +125,7 @@ beforeEach(() => {
       if (url.endsWith('/reconcile')) return Promise.resolve(json(reconcile));
       if (url.endsWith('/invoices')) return Promise.resolve(json(invoices));
       if (url.endsWith('/payment-events')) return Promise.resolve(json({ events: paymentEvents }));
+      if (url.endsWith('/dunning')) return Promise.resolve(json({ events: dunning }));
       if (url.endsWith('/charges')) return Promise.resolve(json({ charges }));
       if (url.endsWith('/cost')) return Promise.resolve(json(cost));
       return Promise.resolve(json({}, 404));
@@ -172,6 +181,9 @@ describe('dashboard App', () => {
     // Inbound PSP webhook events render in the billing panel.
     expect(await screen.findByText('Recent inbound PSP webhook events')).toBeInTheDocument();
     expect(await screen.findByText('tenant-hooked')).toBeInTheDocument();
+    // Dunning (failed-charge retries) render in the billing panel.
+    expect(await screen.findByText('Recent dunning (failed-charge retries)')).toBeInTheDocument();
+    expect(await screen.findByText('tenant-dunned')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);

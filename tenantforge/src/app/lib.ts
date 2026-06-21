@@ -10,6 +10,9 @@ import {
   redactSecrets,
   invoiceChargeAmount,
   chargeIdempotencyKey,
+  planDunning,
+  dunningStateFromCharges,
+  type DunningSchedule,
   type TenantEvent,
   retentionCutoff,
   selectRegion,
@@ -129,8 +132,25 @@ export interface FleetChargeReport {
   failed: { tenantId: string; error: string }[];
 }
 
+/** Per-tenant outcome + the run summary of a dunning (failed-charge retry) sweep. */
+export interface DunningReport {
+  /** When the run was generated (ISO-8601 UTC). */
+  generatedAt: string;
+  /** The schedule the run applied. */
+  schedule: DunningSchedule;
+  /** Retried tenants whose retry charge succeeded/processed this run. */
+  retried: (ChargeResult & { tenantId: string; attempt: number })[];
+  /** Tenants whose retry charge errored again — isolated, never blocking others. */
+  failed: { tenantId: string; attempt: number; error: string }[];
+  /** Tenants suspended this run (retries exhausted — reversible escalation). */
+  suspended: { tenantId: string; failures: number }[];
+  /** Tenants examined but not acted on (not failing, within backoff, or no billing ref). */
+  skipped: { tenantId: string; reason: string }[];
+}
+
 export type { ChargeRequest, ChargeResult, PaymentGateway } from '../ports/payment-gateway.js';
 export type { PaymentEvent, PaymentWebhookVerifier } from '../ports/payment-webhook.js';
+export type { DunningSchedule, DunningDecision, DunningState } from '../core/dunning.js';
 export type {
   FleetMigrationSpec,
   MigrateFleetOptions,
@@ -231,6 +251,16 @@ export interface TenantForgeDeps {
 const DEFAULT_RETENTION_DAYS = 30;
 /** Upper bound on offboarding tenants scanned per sweep. */
 const MAX_SWEEP = 100_000;
+
+/**
+ * Default dunning policy: give up after 4 consecutive failed attempts (then suspend), waiting at
+ * least 24h between retries. Conservative — a card decline often clears within a day, and suspending
+ * a paying tenant prematurely is worse than one more wait.
+ */
+export const DEFAULT_DUNNING_SCHEDULE: DunningSchedule = {
+  maxAttempts: 4,
+  minHoursBetweenAttempts: 24,
+};
 
 /** Options for {@link TenantForge.purgeExpired}. */
 export interface PurgeSweepOptions {
@@ -658,6 +688,31 @@ export interface TenantForge {
   chargeHistory(limit?: number): Promise<TenantEvent[]>;
 
   /**
+   * Run a **dunning sweep**: for every active tenant with a billing customer ref, derive its
+   * consecutive-failure count from the persisted `tenant.charged` audit trail and decide
+   * (`planDunning`) whether to **retry** the charge now (with a per-attempt idempotency key so the
+   * PSP makes a fresh attempt, never replays the failure), **suspend** the tenant (retries exhausted
+   * — a reversible escalation), or **wait** (not failing, or within the backoff window). Each action
+   * emits a redacted `tenant.dunning` audit event. Failure-isolated and idempotent — re-running is
+   * safe. Requires a payment gateway and an audit store (without the trail there is no failure
+   * history to act on, so every tenant is skipped).
+   *
+   * @param period - The billing period to (re)charge; defaults to the current month.
+   * @param schedule - Retry policy; defaults to {@link DEFAULT_DUNNING_SCHEDULE}.
+   * @returns A per-tenant dunning report (retried / failed / suspended / skipped).
+   */
+  runDunning(period?: BillingPeriod, schedule?: DunningSchedule): Promise<DunningReport>;
+
+  /**
+   * Recent **dunning history** (`tenant.dunning` events) from the persisted audit trail. Returns `[]`
+   * when no audit store is wired.
+   *
+   * @param limit - Max entries, newest-first. Defaults to 20.
+   * @returns Recent dunning audit events.
+   */
+  dunningHistory(limit?: number): Promise<TenantEvent[]>;
+
+  /**
    * **Ingest an inbound PSP webhook** (e.g. Stripe): verify its signature over the raw body, parse +
    * normalize it, and emit a redacted `payment.webhook` audit event (attributed to the tenant when
    * the event carries one). Requires a configured webhook verifier; throws on a bad/stale signature
@@ -804,6 +859,12 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     return tenant;
   };
 
+  /** The current calendar month [first day 00:00 UTC, now] — the default dunning/charge period. */
+  const currentMonthPeriod = (): BillingPeriod => {
+    const now = new Date();
+    return { from: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)), to: now };
+  };
+
   /** Read a tenant's PSP customer reference from metadata, if present + non-empty. */
   const billingCustomerRef = (metadata: JsonObject): string | undefined => {
     const v = metadata['billingCustomerRef'];
@@ -819,6 +880,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     id: string,
     customerRef: string,
     period: BillingPeriod,
+    attempt = 0,
   ): Promise<ChargeResult> => {
     const invoice = await invoiceEngine().invoice(id, period);
     const { amountMinor, currency } = invoiceChargeAmount(invoice); // throws if not positive
@@ -827,7 +889,9 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         amountMinor,
         currency,
         customerRef,
-        idempotencyKey: chargeIdempotencyKey(invoice),
+        // A dunning retry (attempt > 0) gets a distinct key so the PSP makes a fresh attempt
+        // rather than replaying the original failure.
+        idempotencyKey: chargeIdempotencyKey(invoice, attempt),
         description: `TenantForge ${id} ${invoice.periodStart}..${invoice.periodEnd}`,
         // Stamp the tenant id so inbound PSP webhooks correlate back to this tenant.
         metadata: { tenant_id: id },
@@ -1374,6 +1438,93 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     chargeHistory(limit = 20): Promise<TenantEvent[]> {
       if (auditLog === undefined) return Promise.resolve([]);
       return auditLog.query({ events: ['tenant.charged'], limit });
+    },
+
+    async runDunning(
+      period: BillingPeriod = currentMonthPeriod(),
+      schedule: DunningSchedule = DEFAULT_DUNNING_SCHEDULE,
+    ): Promise<DunningReport> {
+      assertPeriod(period);
+      if (paymentGateway === undefined) {
+        throw new Error('dunning requires a configured payment gateway');
+      }
+      const report: DunningReport = {
+        generatedAt: new Date().toISOString(),
+        schedule,
+        retried: [],
+        failed: [],
+        suspended: [],
+        skipped: [],
+      };
+      // No persisted trail ⇒ no failure history to act on ⇒ nothing to dun (fail closed, not silent).
+      if (auditLog === undefined) {
+        for (const tenant of await registry.list({ status: 'active', limit: MAX_SWEEP })) {
+          report.skipped.push({ tenantId: tenant.id, reason: 'no audit store' });
+        }
+        return report;
+      }
+
+      const active = await registry.list({ status: 'active', limit: MAX_SWEEP });
+      for (const tenant of active) {
+        const customerRef = billingCustomerRef(tenant.metadata);
+        if (customerRef === undefined) {
+          report.skipped.push({ tenantId: tenant.id, reason: 'no billingCustomerRef' });
+          continue;
+        }
+        const charges = await auditLog.query({
+          events: ['tenant.charged'],
+          tenantId: tenant.id,
+          limit: schedule.maxAttempts + 1,
+        });
+        const { consecutiveFailures, hoursSinceLastAttempt } = dunningStateFromCharges(
+          charges,
+          new Date(),
+        );
+        const decision = planDunning({ consecutiveFailures, hoursSinceLastAttempt, schedule });
+
+        if (decision.action === 'wait') {
+          report.skipped.push({
+            tenantId: tenant.id,
+            reason: consecutiveFailures === 0 ? 'no failures' : 'within backoff',
+          });
+          continue;
+        }
+        if (decision.action === 'suspend') {
+          await transition(tenant, 'suspended');
+          report.suspended.push({ tenantId: tenant.id, failures: consecutiveFailures });
+          observe('tenant.dunning', {
+            tenantId: tenant.id,
+            outcome: 'ok',
+            context: { action: 'suspend', failures: consecutiveFailures },
+          });
+          continue;
+        }
+        // retry
+        try {
+          const result = await chargeTenant(tenant.id, customerRef, period, decision.attempt);
+          report.retried.push({ tenantId: tenant.id, attempt: decision.attempt, ...result });
+          observe('tenant.dunning', {
+            tenantId: tenant.id,
+            outcome: 'ok',
+            context: { action: 'retry', attempt: decision.attempt, status: result.status },
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          report.failed.push({ tenantId: tenant.id, attempt: decision.attempt, error: message });
+          observe('tenant.dunning', {
+            tenantId: tenant.id,
+            outcome: 'error',
+            context: { action: 'retry', attempt: decision.attempt },
+            error: message,
+          });
+        }
+      }
+      return report;
+    },
+
+    dunningHistory(limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.dunning'], limit });
     },
 
     async ingestPaymentWebhook(rawBody: string, signature: string): Promise<PaymentEvent> {

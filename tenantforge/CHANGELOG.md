@@ -6,6 +6,26 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Dunning / failed-charge retry** — a fleet sweep that retries past-due charges and escalates the
+  hopeless, behind a pure decision core. `planDunning(consecutiveFailures, hoursSinceLastAttempt,
+schedule)` decides **retry** / **wait** / **suspend**; `dunningStateFromCharges` derives the
+  consecutive-failure count + backoff window from the persisted `tenant.charged` audit trail (no new
+  migration — state is audit-derived, like reconcile/compliance). The critical correctness fix:
+  retries use a **per-attempt idempotency key** (`chargeIdempotencyKey(invoice, attempt)` →
+  `…:retry-N`) so the PSP makes a **fresh** attempt instead of replaying the original failure, while
+  the base charge keeps its stable key (accidental double-calls still de-dupe). Facade
+  `runDunning(period?, schedule?)` is failure-isolated + idempotent, suspends the exhausted
+  (reversible escalation via the lifecycle state machine), and emits a redacted `tenant.dunning`
+  event per action; `dunningHistory()` reads them back. Surfaces: CLI **`dunning`** (`--yes` gated —
+  it moves money and may suspend; `--from/--to/--max-attempts/--min-hours`), read-only history on
+  HTTP (`GET /v1/billing/dunning`) and the dashboard billing panel. **Deliberately NOT on MCP** (the
+  run moves money + suspends — gated, off the agent surface; `std-owasp-llm` LLM08). Default schedule:
+  4 attempts, ≥24h backoff. Covered by the pure core at 100% (decision matrix, failure-run counting,
+  bad-timestamp guard), facade (retry/suspend/skip routing, per-attempt key, decline isolation,
+  defaults), HTTP, dashboard, and OpenAPI contract tests.
+
 ## [0.7.0] - 2026-06-21
 
 Makes the billing surface **bidirectional**: TenantForge now both charges (0.6.0) and **ingests the
