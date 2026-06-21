@@ -6,6 +6,20 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **OIDC tenant auth for the portal** — a second `TenantAuthenticator` adapter
+  (`createOidcTenantAuthenticator`) that verifies a customer-IdP **JWT** (via `jose`, against the
+  IdP's JWKS) and reads the **tenant id** from a claim (default `tenant`) — the production auth for
+  the self-serve portal, vs. the static token map. Same security posture as the operator OIDC:
+  signature + `iss`/`aud`/`exp` checked, algorithm constrained to an asymmetric allow-list (rejects
+  `alg:none` / `HS*` confusion), https-only JWKS; any failure or a missing/empty tenant claim →
+  `null` (fail closed). The portal still derives the tenant **only** from the verified token.
+  Selected by `TENANTFORGE_PORTAL_AUTH_MODE=oidc` with `TENANTFORGE_PORTAL_OIDC_ISSUER` /
+  `_AUDIENCE` / `_JWKS_URI` (+ `_TENANT_CLAIM`); config fails fast if any are missing. Covered by
+  adapter tests (valid token, custom claim, missing/empty claim, bad signature, wrong iss/aud,
+  expired, HS256-rejection).
+
 ## [0.12.0] - 2026-06-21
 
 TenantForge's first **customer-facing** surface: a self-serve portal where a tenant sees its own

@@ -203,6 +203,14 @@ const EnvSchema = z
     // Portal credentials: comma-separated `tenantId:token` pairs (the token is a secret). Each token
     // authenticates as exactly its tenant; the portal shows only that tenant's data.
     TENANTFORGE_PORTAL_CREDENTIALS: z.string().min(1).optional(),
+    // Portal auth mode: `token` (default — the static PORTAL_CREDENTIALS map) or `oidc` (verify a
+    // customer-IdP JWT whose claim carries the tenant id). For `oidc`, the PORTAL_OIDC_* below are required.
+    TENANTFORGE_PORTAL_AUTH_MODE: z.enum(['token', 'oidc']).default('token'),
+    TENANTFORGE_PORTAL_OIDC_ISSUER: z.string().url().optional(),
+    TENANTFORGE_PORTAL_OIDC_AUDIENCE: z.string().min(1).optional(),
+    TENANTFORGE_PORTAL_OIDC_JWKS_URI: z.string().url().optional(),
+    // The JWT claim carrying the tenant id. Defaults to `tenant`.
+    TENANTFORGE_PORTAL_OIDC_TENANT_CLAIM: z.string().min(1).default('tenant'),
     // Directory of ordered migration `.sql` files (the catalog). When set, the dashboard can EXECUTE
     // a fleet reconcile (tenant:provision-gated) — the server loads the SQL from here. Unset =
     // reconcile is preview-only in the browser (execution stays a CLI op).
@@ -304,6 +312,22 @@ const EnvSchema = z
         });
       }
     }
+    // Portal OIDC mode needs its issuer/audience/JWKS (the static credentials aren't used then).
+    if (env.TENANTFORGE_PORTAL_AUTH_MODE === 'oidc') {
+      for (const key of [
+        'TENANTFORGE_PORTAL_OIDC_ISSUER',
+        'TENANTFORGE_PORTAL_OIDC_AUDIENCE',
+        'TENANTFORGE_PORTAL_OIDC_JWKS_URI',
+      ] as const) {
+        if (env[key] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when TENANTFORGE_PORTAL_AUTH_MODE=oidc`,
+          });
+        }
+      }
+    }
     // The pg-dump exporter needs a destination directory until S3/GCS object stores land.
     if (env.TENANTFORGE_EXPORTER === 'pg-dump' && env.TENANTFORGE_EXPORT_DIR === undefined) {
       ctx.addIssue({
@@ -398,6 +422,19 @@ export interface Config {
   portalSecret?: string;
   /** Static portal credentials (`tenantId` → token); set ⇒ the token tenant-authenticator is wired. */
   portalCredentials?: { tenantId: string; token: string }[];
+  /** Portal auth mode: static `token` map or `oidc` (verify a customer-IdP JWT's tenant claim). */
+  portalAuthMode: 'token' | 'oidc';
+  /** Portal OIDC settings, set when `portalAuthMode` is `oidc`. */
+  portalOidc?: {
+    /** Expected token issuer (`iss`). */
+    issuer: string;
+    /** Expected audience (`aud`). */
+    audience: string;
+    /** The issuer's JWKS endpoint. */
+    jwksUri: string;
+    /** The claim carrying the tenant id. */
+    tenantClaim: string;
+  };
   /** Unit cost rates (USD) for the cost/margin report; absent ⇒ zero cost. */
   costRates?: CostRates;
   /** Per-unit billing (sell) rates (USD) for invoice generation; absent ⇒ usage not billed. */
@@ -456,6 +493,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       : {}),
     connectionCacheTtlMs: parsed.TENANTFORGE_CONNECTION_CACHE_TTL_MS,
     authMode: parsed.TENANTFORGE_AUTH_MODE,
+    portalAuthMode: parsed.TENANTFORGE_PORTAL_AUTH_MODE,
     port: parsed.TENANTFORGE_PORT,
     ...(parsed.TENANTFORGE_DASHBOARD_SECRET !== undefined
       ? { dashboardSecret: parsed.TENANTFORGE_DASHBOARD_SECRET }
@@ -512,6 +550,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const portalCredentials = parseTenantCredentials(parsed.TENANTFORGE_PORTAL_CREDENTIALS);
   if (portalCredentials !== undefined) {
     config.portalCredentials = portalCredentials;
+  }
+  if (parsed.TENANTFORGE_PORTAL_AUTH_MODE === 'oidc') {
+    // superRefine guarantees issuer/audience/jwks are present for this mode.
+    config.portalOidc = {
+      issuer: parsed.TENANTFORGE_PORTAL_OIDC_ISSUER!,
+      audience: parsed.TENANTFORGE_PORTAL_OIDC_AUDIENCE!,
+      jwksUri: parsed.TENANTFORGE_PORTAL_OIDC_JWKS_URI!,
+      tenantClaim: parsed.TENANTFORGE_PORTAL_OIDC_TENANT_CLAIM,
+    };
   }
   if (parsed.TENANTFORGE_SECRET_KEY !== undefined) {
     config.secretKey = parsed.TENANTFORGE_SECRET_KEY;

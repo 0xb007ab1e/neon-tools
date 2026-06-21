@@ -11,6 +11,7 @@ import type { EventSink } from '../ports/event-sink.js';
 import { loadConfig } from './config.js';
 import { createHttpServer } from './http-server.js';
 import { createTokenTenantAuthenticator } from '../adapters/auth/tenant-token-authenticator.js';
+import { createOidcTenantAuthenticator } from '../adapters/auth/oidc-tenant-authenticator.js';
 import { tenantForgeFromConfig } from './lib.js';
 
 /** Read an ordered migration catalog from a directory of `*.sql` files (sorted by filename). */
@@ -85,6 +86,20 @@ function main(): void {
             : {}),
         })
       : undefined;
+  // Portal tenant authenticator: OIDC (verify the customer IdP's JWT, tenant from a claim) when
+  // configured, else the static token map; undefined ⇒ the portal isn't mounted.
+  const tenantAuthenticator =
+    config.portalOidc !== undefined
+      ? createOidcTenantAuthenticator({
+          issuer: config.portalOidc.issuer,
+          audience: config.portalOidc.audience,
+          jwksUri: config.portalOidc.jwksUri,
+          tenantClaim: config.portalOidc.tenantClaim,
+          allowInsecure: config.allowInsecureUrls,
+        })
+      : config.portalCredentials !== undefined
+        ? createTokenTenantAuthenticator(config.portalCredentials)
+        : undefined;
   const app = createHttpServer(tf, {
     ...(authenticator !== undefined ? { authenticator } : {}),
     ...(config.httpCredentials !== undefined ? { credentials: config.httpCredentials } : {}),
@@ -100,12 +115,11 @@ function main(): void {
       : {}),
     // Mount the inbound PSP webhook endpoint when a verifier is configured (signing secret set).
     ...(config.paymentWebhookSecret !== undefined ? { paymentWebhooks: true } : {}),
-    // Mount the customer-facing self-serve portal when a session key + tenant credentials are set.
-    ...(config.portalSecret !== undefined && config.portalCredentials !== undefined
-      ? {
-          portalSecret: config.portalSecret,
-          tenantAuthenticator: createTokenTenantAuthenticator(config.portalCredentials),
-        }
+    // Mount the customer-facing self-serve portal when a session key + a tenant authenticator are
+    // configured: OIDC (verify the customer IdP's JWT) when portalAuthMode=oidc, else the static
+    // token map. Either way the portal derives the tenant only from the verified principal.
+    ...(config.portalSecret !== undefined && tenantAuthenticator !== undefined
+      ? { portalSecret: config.portalSecret, tenantAuthenticator }
       : {}),
     metrics: () => metrics.render(),
   });
