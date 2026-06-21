@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-06-21
+
+Adds per-tenant included usage allowances so usage within a plan's free tier is free and only the
+overage is billed. Additive/backward-compatible (MINOR) — with no `metadata.includedUsage`, billing
+is unchanged.
+
 ### Added
 
 - **Included allowances / overage billing** — set a tenant's per-period included usage
