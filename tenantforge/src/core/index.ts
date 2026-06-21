@@ -59,6 +59,7 @@ export {
   type DunningDecision,
   type DunningState,
 } from './dunning.js';
+export { assertHttpsUrl, assertPostgresTls } from './transport-security.js';
 export {
   can,
   permissionsFor,

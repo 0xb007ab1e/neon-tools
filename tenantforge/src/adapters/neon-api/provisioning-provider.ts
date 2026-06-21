@@ -4,6 +4,7 @@ import type {
   ProvisionRequest,
   ProvisionResult,
 } from '../../ports/provisioning-provider.js';
+import { assertHttpsUrl } from '../../core/transport-security.js';
 
 /** Shape of the Neon "create project" response we depend on. */
 const CreateProjectResponseSchema = z.object({
@@ -48,6 +49,8 @@ export interface NeonProvisioningOptions {
   maxAttempts?: number;
   /** Injectable fetch (for testing). Defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /** Permit a non-https base URL (local dev / mock only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /** A transient (retryable) Neon API failure. */
@@ -67,6 +70,7 @@ export function createNeonProvisioningProvider(
   options: NeonProvisioningOptions,
 ): ProvisioningProvider {
   const baseUrl = (options.baseUrl ?? 'https://console.neon.tech/api/v2').replace(/\/+$/, '');
+  assertHttpsUrl(baseUrl, 'NEON_API_BASE_URL', options.allowInsecure);
   const timeoutMs = options.timeoutMs ?? 30_000;
   const maxAttempts = options.maxAttempts ?? 3;
   const doFetch = options.fetchImpl ?? globalThis.fetch;

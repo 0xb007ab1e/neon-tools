@@ -55,12 +55,18 @@ function main(): void {
   // Shared (cross-instance) rate-limit counter when configured; else the in-memory default.
   const rateLimitStore =
     config.rateLimitStore === 'pg'
-      ? createPgRateLimitStore({ connectionString: config.databaseUrl })
+      ? createPgRateLimitStore({
+          connectionString: config.databaseUrl,
+          allowInsecure: config.allowInsecureDb,
+        })
       : undefined;
   // Shared (cross-instance) idempotency store when configured; else the in-memory default.
   const idempotencyStore =
     config.idempotencyStore === 'pg'
-      ? createPgIdempotencyStore({ connectionString: config.databaseUrl })
+      ? createPgIdempotencyStore({
+          connectionString: config.databaseUrl,
+          allowInsecure: config.allowInsecureDb,
+        })
       : undefined;
   // OIDC mode: verify Bearer JWTs against the issuer's JWKS; else use the static-token authenticator
   // built by createHttpServer from the credentials / admin-token shorthand.
@@ -70,6 +76,7 @@ function main(): void {
           issuer: config.oidc.issuer,
           audience: config.oidc.audience,
           jwksUri: config.oidc.jwksUri,
+          allowInsecure: config.allowInsecureUrls,
           subjectClaim: config.oidc.subjectClaim,
           roleClaim: config.oidc.roleClaim,
           ...(config.oidc.permissionsClaim !== undefined

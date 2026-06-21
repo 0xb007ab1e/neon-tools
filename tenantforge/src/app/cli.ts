@@ -382,7 +382,11 @@ const enqueue = defineCommand({
       ...(args.region ? { region: args.region } : {}),
       ...(args.residency ? { residency: args.residency } : {}),
     });
-    const queue = createPgMessageQueue({ connectionString: loadConfig().databaseUrl });
+    const cfg = loadConfig();
+    const queue = createPgMessageQueue({
+      connectionString: cfg.databaseUrl,
+      allowInsecure: cfg.allowInsecureDb,
+    });
     try {
       const messageId = await queue.enqueue(command);
       process.stdout.write(

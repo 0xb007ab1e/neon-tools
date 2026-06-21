@@ -163,7 +163,7 @@ describe('spawnPgDump', () => {
       return child;
     }) as unknown as typeof nodeSpawn;
 
-    const p = spawnPgDump('postgres://host/', { spawnImpl });
+    const p = spawnPgDump('postgres://host/', { spawnImpl, allowInsecure: true });
     child.emit('close', 0);
     await p;
     expect(capturedEnv['PGPORT']).toBeUndefined();
@@ -179,7 +179,7 @@ describe('spawnPgDump', () => {
       child = fakeChild({ withStreams: false });
       return child;
     }) as unknown as typeof nodeSpawn;
-    const p = spawnPgDump('postgres://h/db', { spawnImpl });
+    const p = spawnPgDump('postgres://h/db', { spawnImpl, allowInsecure: true });
     child.emit('close', 0);
     expect((await p).byteLength).toBe(0);
   });
@@ -195,7 +195,7 @@ describe('spawnPgDump', () => {
       child = fakeChild();
       return child;
     }) as unknown as typeof nodeSpawn;
-    const p = spawnPgDump('postgres://h/db', { spawnImpl });
+    const p = spawnPgDump('postgres://h/db', { spawnImpl, allowInsecure: true });
     child.stderr!.emit('data', Buffer.from('connection refused'));
     child.emit('close', 1);
     await expect(p).rejects.toThrow(/pg_dump exited with code 1: connection refused/);
@@ -207,7 +207,7 @@ describe('spawnPgDump', () => {
       child = fakeChild();
       return child;
     }) as unknown as typeof nodeSpawn;
-    const p = spawnPgDump('postgres://h/db', { spawnImpl });
+    const p = spawnPgDump('postgres://h/db', { spawnImpl, allowInsecure: true });
     child.emit('error', new Error('ENOENT pg_dump'));
     await expect(p).rejects.toThrow(/ENOENT pg_dump/);
   });
@@ -218,7 +218,7 @@ describe('spawnPgDump', () => {
       child = fakeChild();
       return child;
     }) as unknown as typeof nodeSpawn;
-    const p = spawnPgDump('postgres://h/db', { spawnImpl, timeoutMs: 5 });
+    const p = spawnPgDump('postgres://h/db', { spawnImpl, timeoutMs: 5, allowInsecure: true });
     await expect(p).rejects.toThrow(/timed out after 5ms/);
     expect(child.kill).toHaveBeenCalledWith('SIGKILL');
   });
@@ -229,7 +229,7 @@ describe('spawnPgDump', () => {
       child = fakeChild();
       return child;
     }) as unknown as typeof nodeSpawn;
-    const p = spawnPgDump('postgres://h/db', { spawnImpl });
+    const p = spawnPgDump('postgres://h/db', { spawnImpl, allowInsecure: true });
     child.stdout!.emit('data', Buffer.from('OK'));
     child.emit('close', 0);
     const result = await p;
@@ -247,7 +247,11 @@ describe('spawnPgDump', () => {
       child = fakeChild();
       return child;
     }) as unknown as typeof nodeSpawn;
-    const p = spawnPgDump('postgres://h/db', { spawnImpl, pgDumpPath: '/usr/local/bin/pg_dump' });
+    const p = spawnPgDump('postgres://h/db', {
+      spawnImpl,
+      pgDumpPath: '/usr/local/bin/pg_dump',
+      allowInsecure: true,
+    });
     child.emit('close', 0);
     await p;
     expect(cmd).toBe('/usr/local/bin/pg_dump');

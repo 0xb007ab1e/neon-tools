@@ -137,6 +137,62 @@ endpoint. A **GCS** store (`createGcsObjectStore`, over the `@google-cloud/stora
 references) and an **Azure Blob** store (`createAzureBlobObjectStore`, over the `@azure/storage-blob`
 client) ship the same way — completing object-store parity across the big three.
 
+## Security: TLS & network surface
+
+Every connection is TLS by default, and TenantForge **fails closed at startup** on a plaintext one
+(master §5 — no plaintext protocols). This section documents what is enforced, the two escape
+hatches, and the **intentionally-open endpoints** (the "potentially leaky" surface) so the trade-off
+is explicit rather than implicit.
+
+**Outbound — enforced (the app rejects a plaintext target before connecting):**
+
+- **Postgres** (control-plane registry, encrypted secret store, message queue, rate-limit /
+  idempotency / audit stores, per-tenant migration + dump/restore connections): the connection
+  string must carry `sslmode=require` (or `verify-ca` / `verify-full`). Neon always requires TLS, so
+  a real Neon URL passes; a misconfigured self-hosted target with `sslmode=disable`/`prefer`/absent
+  is refused. Guard: `assertPostgresTls` (`src/core/transport-security.ts`).
+- **HTTPS APIs** (Neon API, HashiCorp Vault, Azure Key Vault, OIDC JWKS, Stripe): the URL must be
+  `https://` — checked at adapter construction (`assertHttpsUrl`). The defaults are already https;
+  this catches a bad `*_BASE_URL` / `VAULT_ADDR` / `JWKS_URI` override. A plaintext JWKS in
+  particular is a trivial key-substitution MITM, so it is hard-refused.
+- **Outbound lifecycle webhooks** require `https://` (the webhook sink enforces it independently) and
+  do not follow redirects (SSRF defense).
+- **Cloud SDK adapters** (AWS/GCP/Azure Secrets Managers, SQS, Pub/Sub, S3, GCS, Blob): TLS is
+  enforced by the vendor SDK, which talks https to the service endpoint by default.
+
+**The two escape hatches (local dev only — the documented leaky endpoints):**
+
+- `TENANTFORGE_ALLOW_INSECURE_DB=true` permits a non-TLS Postgres connection.
+- `TENANTFORGE_ALLOW_INSECURE_URLS=true` permits a non-https outbound URL (Neon / Vault / KV / OIDC
+  / Stripe).
+
+Both default to `false`. Set them **only** for local development against a loopback service that has
+no certificate. Enabling either in production sends credentials and tenant data over plaintext —
+never do it; there is no production reason to.
+
+**Inbound — TLS terminated at the edge (the acknowledged design boundary):** the HTTP control-plane
+and dashboard servers (Hono) **do not terminate TLS themselves**. Deploy them **behind a
+TLS-terminating reverse proxy / load balancer** (nginx, Caddy, a cloud LB) and **never expose the
+listener port directly to the internet**. In dev/preview the listener is **tailnet-only, never
+public** ([topic-tailnet-dev-access]) — bound to the host's Tailscale IP + loopback, reached at
+`http://<host>:<port>` over WireGuard, with app auth still on. This is the one place plaintext can
+exist on the wire (proxy↔app on a trusted local hop / encrypted tailnet), and it is a deliberate,
+documented deploy contract — not an open door to the public internet.
+
+**Deliberately-unauthenticated endpoints (each open by design, with its risk):**
+
+| Endpoint                 | Why it is open                                            | Risk / mitigation                                                                                                                                             |
+| ------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health`            | Liveness probe — must answer before auth is in play.      | No secrets, no dependency calls; returns a static `ok`. Lowest-value surface.                                                                                 |
+| `GET /ready`             | Readiness probe — gates traffic on registry connectivity. | Reveals only up/down of a dependency; no data. Keep it off the public internet.                                                                               |
+| `GET /metrics`           | Prometheus scrape (opt-in; only when `metrics` is set).   | Operational counters only (no PII/secrets). Scope to the metrics network.                                                                                     |
+| `POST /webhooks/payment` | The PSP can't present a bearer token.                     | Authenticated by **HMAC signature over the raw body** (constant-time, replay-checked) — the signature _is_ the auth; an unsigned/forged call is rejected 400. |
+
+Everything under **`/v1/*`** requires authentication (static token or OIDC JWT) + per-principal rate
+limiting; the **MCP** server uses a **stdio** transport (a subprocess of the LLM host — not a network
+listener, so there is no port to expose); money-moving / destructive operations are **CLI-only and
+gated** and are never reachable over HTTP or MCP.
+
 ## Operations
 
 Runbooks live in [`docs/runbooks/`](./docs/runbooks/) ([index](./docs/runbooks/README.md)) — deploy,

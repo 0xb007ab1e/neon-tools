@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { TenantRecord } from '../../core/index.js';
+import { assertPostgresTls } from '../../core/transport-security.js';
 import type { ObjectStore } from '../../ports/object-store.js';
 import type { ExportResult, TenantExporter } from '../../ports/tenant-exporter.js';
 
@@ -61,6 +62,8 @@ export interface SpawnPgDumpOptions {
   spawnImpl?: typeof spawn;
   /** Kill + fail the dump after this many ms. Defaults to 600000 (10 min). */
   timeoutMs?: number;
+  /** Permit a non-TLS connection (local dev only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /**
@@ -84,6 +87,12 @@ export function spawnPgDump(
   const url = new URL(connectionUri);
   if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
     return Promise.reject(new Error(`pg_dump: unsupported connection scheme ${url.protocol}`));
+  }
+  // The dumped data is tenant content — refuse to read it over a plaintext connection.
+  try {
+    assertPostgresTls(connectionUri, 'tenant connection URI', options.allowInsecure);
+  } catch (error) {
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
   }
 
   // Per-component PG* env so the password never reaches argv. Inherit PATH etc. from the parent.

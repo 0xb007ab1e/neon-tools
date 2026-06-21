@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { BillingPeriod, Consumption } from '../../core/usage.js';
 import type { UsageProvider } from '../../ports/usage-provider.js';
+import { assertHttpsUrl } from '../../core/transport-security.js';
 
 /** Shape of the Neon "consumption history per project" response we depend on. */
 const ConsumptionResponseSchema = z.object({
@@ -36,6 +37,8 @@ export interface NeonUsageOptions {
   timeoutMs?: number;
   /** Injectable fetch (for testing). Defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /** Permit a non-https base URL (local dev / mock only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /**
@@ -48,6 +51,7 @@ export interface NeonUsageOptions {
  */
 export function createNeonUsageProvider(options: NeonUsageOptions): UsageProvider {
   const baseUrl = (options.baseUrl ?? 'https://console.neon.tech/api/v2').replace(/\/+$/, '');
+  assertHttpsUrl(baseUrl, 'NEON_API_BASE_URL', options.allowInsecure);
   const timeoutMs = options.timeoutMs ?? 30_000;
   const granularity = options.granularity ?? 'daily';
   const doFetch = options.fetchImpl ?? globalThis.fetch;

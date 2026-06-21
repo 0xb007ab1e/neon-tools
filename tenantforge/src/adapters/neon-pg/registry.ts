@@ -10,6 +10,7 @@ import type {
   TenantStatus,
 } from '../../core/domain.js';
 import type { NewTenant, TenantRegistry } from '../../ports/tenant-registry.js';
+import { assertPostgresTls } from '../../core/transport-security.js';
 
 /** A raw `tf_tenants` row as returned by pg. */
 interface TenantRow {
@@ -43,6 +44,8 @@ export interface PgRegistryOptions {
   connectionString: string;
   /** Max pool size. Defaults to the `pg` default. */
   maxConnections?: number;
+  /** Permit a non-TLS connection (local dev only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /** Directory holding the control-plane registry migrations (resolved relative to this module). */
@@ -58,6 +61,8 @@ const MIGRATIONS_DIR = fileURLToPath(new URL('../../../migrations', import.meta.
  * @returns A tenant registry.
  */
 export function createPgTenantRegistry(options: PgRegistryOptions): TenantRegistry {
+  // Fail closed at startup if the control-plane connection would run over plaintext (master §5).
+  assertPostgresTls(options.connectionString, 'DATABASE_URL', options.allowInsecure);
   const pool = new Pool({
     connectionString: options.connectionString,
     ...(options.maxConnections === undefined ? {} : { max: options.maxConnections }),

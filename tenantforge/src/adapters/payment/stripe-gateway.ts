@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ChargeRequest, ChargeResult, PaymentGateway } from '../../ports/payment-gateway.js';
+import { assertHttpsUrl } from '../../core/transport-security.js';
 
 /** The PaymentIntent fields we depend on from Stripe's response. */
 const PaymentIntentSchema = z.object({
@@ -25,6 +26,8 @@ export interface StripeGatewayOptions {
   timeoutMs?: number;
   /** Injectable fetch (for testing). Defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /** Permit a non-https base URL override (local dev / mock only — documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /** Map Stripe's PaymentIntent status to the port's normalized status; throw on a non-terminal/declined one. */
@@ -59,6 +62,8 @@ function normalizeStatus(status: string): ChargeResult['status'] {
  */
 export function createStripeGateway(options: StripeGatewayOptions): PaymentGateway {
   const baseUrl = (options.baseUrl ?? 'https://api.stripe.com').replace(/\/+$/, '');
+  // The default is https; a custom baseUrl (mock/proxy) must stay TLS too — card-charge traffic.
+  assertHttpsUrl(baseUrl, 'STRIPE_API_BASE_URL', options.allowInsecure);
   const timeoutMs = options.timeoutMs ?? 30_000;
   const doFetch = options.fetchImpl ?? globalThis.fetch;
 

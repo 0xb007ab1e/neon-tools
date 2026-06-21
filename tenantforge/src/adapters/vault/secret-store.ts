@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { SecretStore } from '../../ports/secret-store.js';
+import { assertHttpsUrl } from '../../core/transport-security.js';
 
 /** Shape of the Vault KV v2 read response we depend on (`GET .../data/{path}`). */
 const ReadResponseSchema = z.object({
@@ -27,6 +28,8 @@ export interface VaultSecretStoreOptions {
   timeoutMs?: number;
   /** Injectable fetch (for testing). Defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /** Permit a non-https Vault address (local dev only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /**
@@ -45,6 +48,8 @@ export interface VaultSecretStoreOptions {
  * @returns A Vault-backed secret store.
  */
 export function createVaultSecretStore(options: VaultSecretStoreOptions): SecretStore {
+  // Vault carries per-tenant connection secrets — refuse a plaintext address (master §5).
+  assertHttpsUrl(options.address, 'VAULT_ADDR', options.allowInsecure);
   const address = options.address.replace(/\/+$/, '');
   const mount = (options.mountPath ?? 'secret').replace(/^\/+|\/+$/g, '');
   const prefix = (options.pathPrefix ?? 'tenantforge').replace(/^\/+|\/+$/g, '');

@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import type { MigrationExecution, MigrationRunner } from '../../ports/migration-runner.js';
+import { assertPostgresTls } from '../../core/transport-security.js';
 
 /** Options for {@link createPgMigrationRunner}. */
 export interface PgMigrationRunnerOptions {
@@ -7,6 +8,8 @@ export interface PgMigrationRunnerOptions {
   connectionTimeoutMs?: number;
   /** Statement timeout in ms applied to the migration session. Defaults to 60000. */
   statementTimeoutMs?: number;
+  /** Permit a non-TLS per-tenant connection (local dev only — documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /**
@@ -27,6 +30,9 @@ export function createPgMigrationRunner(options: PgMigrationRunnerOptions = {}):
 
   return {
     async applyToTenant(connectionUri: string, migration: MigrationExecution): Promise<void> {
+      // The per-tenant URI is resolved server-side from the secret store; verify it negotiates TLS
+      // before opening the connection (a tenant DB carries customer data — never plaintext).
+      assertPostgresTls(connectionUri, 'tenant connection URI', options.allowInsecure);
       // One transient pool per tenant application; the orchestrator bounds overall concurrency.
       const pool = new Pool({ connectionString: connectionUri, max: 1, connectionTimeoutMillis });
       const client = await pool.connect();

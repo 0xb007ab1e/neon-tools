@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { TenantDataMover } from '../../ports/tenant-data-mover.js';
 import { spawnPgDump, type SpawnPgDumpOptions } from './exporter.js';
+import { assertPostgresTls } from '../../core/transport-security.js';
 
 /** Options for {@link spawnPgRestore}. */
 export interface SpawnPgRestoreOptions {
@@ -10,6 +11,8 @@ export interface SpawnPgRestoreOptions {
   spawnImpl?: typeof spawn;
   /** Kill + fail the restore after this many ms. Defaults to 600000 (10 min). */
   timeoutMs?: number;
+  /** Permit a non-TLS connection (local dev only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /**
@@ -35,6 +38,12 @@ export function spawnPgRestore(
   const url = new URL(connectionUri);
   if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
     return Promise.reject(new Error(`pg_restore: unsupported connection scheme ${url.protocol}`));
+  }
+  // The restored data is tenant content — refuse to write it over a plaintext connection.
+  try {
+    assertPostgresTls(connectionUri, 'target connection URI', options.allowInsecure);
+  } catch (error) {
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
   }
 
   const env: NodeJS.ProcessEnv = { ...process.env };

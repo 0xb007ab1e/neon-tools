@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import type { MessageQueue, QueueMessage } from '../../ports/message-queue.js';
+import { assertPostgresTls } from '../../core/transport-security.js';
 
 /** A Postgres-backed {@link MessageQueue}, plus a producer `enqueue` and `close`. */
 export interface PgMessageQueue extends MessageQueue {
@@ -20,6 +21,8 @@ export interface PgMessageQueueOptions {
   visibilityTimeoutMs?: number;
   /** Max pool size. */
   maxConnections?: number;
+  /** Permit a non-TLS connection (local dev only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /**
@@ -36,6 +39,7 @@ export interface PgMessageQueueOptions {
  */
 export function createPgMessageQueue(options: PgMessageQueueOptions): PgMessageQueue {
   const visibilityTimeoutMs = options.visibilityTimeoutMs ?? 60_000;
+  assertPostgresTls(options.connectionString, 'DATABASE_URL', options.allowInsecure);
   const pool = new Pool({
     connectionString: options.connectionString,
     ...(options.maxConnections === undefined ? {} : { max: options.maxConnections }),

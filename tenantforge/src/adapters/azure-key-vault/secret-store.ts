@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { SecretStore } from '../../ports/secret-store.js';
+import { assertHttpsUrl } from '../../core/transport-security.js';
 
 /** Shape of the Key Vault secret bundle we depend on (`GET .../secrets/{name}`). */
 const SecretBundleSchema = z.object({ value: z.string() });
@@ -25,6 +26,8 @@ export interface AzureKeyVaultStoreOptions {
   timeoutMs?: number;
   /** Injectable fetch (for testing). Defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /** Permit a non-https vault URL (local dev only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /**
@@ -45,6 +48,8 @@ export interface AzureKeyVaultStoreOptions {
  * @returns An Azure Key Vault-backed secret store.
  */
 export function createAzureKeyVaultStore(options: AzureKeyVaultStoreOptions): SecretStore {
+  // Key Vault carries per-tenant connection secrets — refuse a plaintext URL (master §5).
+  assertHttpsUrl(options.vaultUrl, 'Azure Key Vault URL', options.allowInsecure);
   const vaultUrl = options.vaultUrl.replace(/\/+$/, '');
   const apiVersion = options.apiVersion ?? '7.4';
   const rawPrefix = (options.prefix ?? 'tenantforge').replace(/^-+|-+$/g, '');

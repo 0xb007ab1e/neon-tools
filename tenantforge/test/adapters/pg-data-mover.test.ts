@@ -59,7 +59,10 @@ describe('spawnPgRestore', () => {
       captured = { args, env: opts.env };
       return child;
     }) as unknown as typeof nodeSpawn;
-    const p = spawnPgRestore('postgres://host/', Buffer.from('x'), { spawnImpl });
+    const p = spawnPgRestore('postgres://host/', Buffer.from('x'), {
+      spawnImpl,
+      allowInsecure: true,
+    });
     child.emit('close', 0);
     await p;
     expect(captured!.args).toEqual(['--no-password', '--no-owner']); // no -d (no database)
@@ -76,7 +79,10 @@ describe('spawnPgRestore', () => {
   it('rejects on a non-zero exit, including stderr', async () => {
     const child = fakeChild();
     const spawnImpl = (() => child) as unknown as typeof nodeSpawn;
-    const p = spawnPgRestore('postgres://h/db', Buffer.from('x'), { spawnImpl });
+    const p = spawnPgRestore('postgres://h/db', Buffer.from('x'), {
+      spawnImpl,
+      allowInsecure: true,
+    });
     child.stderr!.emit('data', Buffer.from('restore failed'));
     child.emit('close', 1);
     await expect(p).rejects.toThrow(/pg_restore exited with code 1: restore failed/);
@@ -85,7 +91,10 @@ describe('spawnPgRestore', () => {
   it('rejects when the process fails to spawn', async () => {
     const child = fakeChild();
     const spawnImpl = (() => child) as unknown as typeof nodeSpawn;
-    const p = spawnPgRestore('postgres://h/db', Buffer.from('x'), { spawnImpl });
+    const p = spawnPgRestore('postgres://h/db', Buffer.from('x'), {
+      spawnImpl,
+      allowInsecure: true,
+    });
     child.emit('error', new Error('ENOENT pg_restore'));
     await expect(p).rejects.toThrow(/ENOENT pg_restore/);
   });
@@ -93,7 +102,10 @@ describe('spawnPgRestore', () => {
   it('tolerates a child without a stderr stream', async () => {
     const child = fakeChild({ withStderr: false });
     const spawnImpl = (() => child) as unknown as typeof nodeSpawn;
-    const p = spawnPgRestore('postgres://h/db', Buffer.from('x'), { spawnImpl });
+    const p = spawnPgRestore('postgres://h/db', Buffer.from('x'), {
+      spawnImpl,
+      allowInsecure: true,
+    });
     child.emit('close', 0);
     await expect(p).resolves.toBeUndefined();
   });
@@ -101,7 +113,10 @@ describe('spawnPgRestore', () => {
   it('ignores a second terminal event after settling (idempotent finish)', async () => {
     const child = fakeChild();
     const spawnImpl = (() => child) as unknown as typeof nodeSpawn;
-    const p = spawnPgRestore('postgres://h/db', Buffer.from('x'), { spawnImpl });
+    const p = spawnPgRestore('postgres://h/db', Buffer.from('x'), {
+      spawnImpl,
+      allowInsecure: true,
+    });
     child.emit('close', 0); // settles (resolve)
     child.emit('error', new Error('late error')); // no-op — already settled
     await expect(p).resolves.toBeUndefined();
@@ -111,7 +126,11 @@ describe('spawnPgRestore', () => {
     const child = fakeChild();
     const killed = vi.spyOn(child, 'kill');
     const spawnImpl = (() => child) as unknown as typeof nodeSpawn;
-    const p = spawnPgRestore('postgres://h/db', Buffer.from('x'), { spawnImpl, timeoutMs: 5 });
+    const p = spawnPgRestore('postgres://h/db', Buffer.from('x'), {
+      spawnImpl,
+      timeoutMs: 5,
+      allowInsecure: true,
+    });
     await expect(p).rejects.toThrow(/timed out after 5ms/);
     expect(killed).toHaveBeenCalledWith('SIGKILL');
   });
@@ -138,8 +157,8 @@ describe('createPgDataMover', () => {
     }) as unknown as typeof nodeSpawn;
 
     const mover = createPgDataMover({
-      dumpOptions: { spawnImpl },
-      restoreOptions: { spawnImpl },
+      dumpOptions: { spawnImpl, allowInsecure: true },
+      restoreOptions: { spawnImpl, allowInsecure: true },
     });
     const p = mover.move({ from: 'postgres://old/db', to: 'postgres://new/db' });
     // pg_dump completes first (no stdout stream → empty archive), then pg_restore.
