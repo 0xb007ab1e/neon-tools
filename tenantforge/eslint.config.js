@@ -8,7 +8,16 @@ import globals from 'globals';
 import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'coverage/**', 'docs/api/**', 'dashboard/dist/**', 'eslint.config.js'] },
+  {
+    ignores: [
+      'dist/**',
+      'coverage/**',
+      'docs/api/**',
+      'dashboard/dist/**',
+      'eslint.config.js',
+      'scripts/**',
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
