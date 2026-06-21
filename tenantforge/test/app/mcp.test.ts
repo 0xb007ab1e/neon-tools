@@ -40,13 +40,23 @@ describe('MCP server', () => {
     const client = await connect(fakeTf({}));
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      'tf_compliance_report',
+      'tf_cost_report',
+      'tf_invoice',
+      'tf_invoices',
       'tf_list_tenants',
       'tf_offboard',
       'tf_provision',
+      'tf_reconcile_history',
+      'tf_reconcile_plan',
       'tf_resume',
       'tf_suspend',
       'tf_tenant',
     ]);
+    // Mutating/SQL-bearing fleet ops + purge are intentionally NOT on the agent surface (LLM08).
+    const names = tools.map((t) => t.name);
+    expect(names).not.toContain('tf_purge');
+    expect(names).not.toContain('tf_reconcile'); // execution; only the read-only plan is exposed
     await client.close();
   });
 
@@ -156,6 +166,83 @@ describe('MCP server', () => {
     const client = await connect(fakeTf({}));
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).not.toContain('tf_purge');
+    await client.close();
+  });
+
+  it('tf_compliance_report returns the report + digest', async () => {
+    const report = { report: { inventory: { total: 2 } }, digest: 'abc123' };
+    const client = await connect(fakeTf({ complianceReport: async () => report as never }));
+    const out = body(await client.callTool({ name: 'tf_compliance_report', arguments: {} }));
+    expect(out).toContain('"digest": "abc123"');
+    await client.close();
+  });
+
+  it('tf_cost_report passes the period through and returns the report', async () => {
+    let seen: { from: Date; to: Date } | undefined;
+    const cost = { generatedAt: 'x', rows: [], unmetered: [], totals: { tenants: 0 } };
+    const client = await connect(
+      fakeTf({
+        costReport: async (p) => {
+          seen = p;
+          return cost as never;
+        },
+      }),
+    );
+    const out = body(
+      await client.callTool({
+        name: 'tf_cost_report',
+        arguments: { from: '2026-06-01T00:00:00.000Z', to: '2026-06-30T00:00:00.000Z' },
+      }),
+    );
+    expect(out).toContain('"generatedAt": "x"');
+    expect(seen?.from.toISOString()).toBe('2026-06-01T00:00:00.000Z');
+    await client.close();
+  });
+
+  it('tf_cost_report rejects a bad date (fail closed, no service call)', async () => {
+    let called = false;
+    const client = await connect(
+      fakeTf({
+        costReport: async () => {
+          called = true;
+          return {} as never;
+        },
+      }),
+    );
+    const out = body(
+      await client.callTool({ name: 'tf_cost_report', arguments: { from: 'not-a-date' } }),
+    );
+    expect(out).toContain('invalid from/to date');
+    expect(called).toBe(false);
+    await client.close();
+  });
+
+  it('tf_reconcile_plan is read-only and forwards the target; history reads the trail', async () => {
+    let target: string | undefined;
+    const plan = {
+      target: '0003',
+      perTenant: [],
+      pendingTenants: [],
+      upToDate: [],
+      totalMissing: 0,
+    };
+    const client = await connect(
+      fakeTf({
+        reconcilePlan: async (o) => {
+          target = o?.targetVersion;
+          return plan as never;
+        },
+        reconcileHistory: async () =>
+          [{ event: 'fleet.reconcile', at: 'x', outcome: 'ok' }] as never,
+      }),
+    );
+    const planOut = body(
+      await client.callTool({ name: 'tf_reconcile_plan', arguments: { target: '0003' } }),
+    );
+    expect(planOut).toContain('"target": "0003"');
+    expect(target).toBe('0003');
+    const histOut = body(await client.callTool({ name: 'tf_reconcile_history', arguments: {} }));
+    expect(histOut).toContain('fleet.reconcile');
     await client.close();
   });
 });

@@ -6,6 +6,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **MCP parity for the extension reports** — the agent surface gains read-only tools for the 0.4.0
+  features: `tf_compliance_report`, `tf_cost_report`, `tf_invoice` / `tf_invoices`, `tf_reconcile_plan`,
+  and `tf_reconcile_history` (cost/invoice take optional ISO `from`/`to`, defaulting to the current
+  month; bad dates fail closed with a clear message). **Agent-safety (std-owasp-llm LLM08):** these
+  are read-only and secret-free, and fleet reconcile is exposed **plan/history only** — execution
+  stays on the CLI / gated dashboard, alongside the already-excluded purge. Covered by MCP tests
+  (surface list, period pass-through, bad-date fail-closed, reconcile read-only, execution absent).
+
 ## [0.4.1] - 2026-06-21
 
 Docs/tooling patch — no functional changes. Syncs the collection index and adds a guard so the
