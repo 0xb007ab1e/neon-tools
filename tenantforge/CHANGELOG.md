@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-21
+
+Makes the billing surface **bidirectional**: TenantForge now both charges (0.6.0) and **ingests the
+PSP's webhooks** about those charges, behind a swappable verifier port. Additive/backward-compatible
+(MINOR); the endpoint is opt-in, signature-authed, and off by default.
+
 ### Added
 
 - **Inbound PSP webhook ingestion** — receive payment events (e.g. Stripe `payment_intent.succeeded`
@@ -636,6 +642,7 @@ and real-world validation.
 - Alternate adapters — other message brokers (SQS/NATS/Pub-Sub), Vault/cloud secret stores, and
   `pg_dump`→object-store exporters — are deferred to their own branches behind the existing ports.
 
+[0.7.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.7.0
 [0.6.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.6.0
 [0.5.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.5.0
 [0.4.1]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.4.1
