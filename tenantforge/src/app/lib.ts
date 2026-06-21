@@ -8,6 +8,8 @@ import {
   assertTransition,
   isPurgeable,
   redactSecrets,
+  invoiceChargeAmount,
+  chargeIdempotencyKey,
   type TenantEvent,
   retentionCutoff,
   selectRegion,
@@ -95,6 +97,8 @@ import type { ExportResult, TenantExporter } from '../ports/tenant-exporter.js';
 import type { SecretStore } from '../ports/secret-store.js';
 import type { EventSink } from '../ports/event-sink.js';
 import type { AuditLogStore } from '../ports/audit-log-store.js';
+import type { ChargeResult, PaymentGateway } from '../ports/payment-gateway.js';
+import { createStripeGateway } from '../adapters/payment/stripe-gateway.js';
 import type { UsageProvider } from '../ports/usage-provider.js';
 import type { MigrationRunner } from '../ports/migration-runner.js';
 import type { TenantConnection } from '../ports/connection-router.js';
@@ -110,6 +114,20 @@ export interface ComplianceReportResult {
   /** SHA-256 hex digest of the report JSON (integrity anchor; not an authenticity signature). */
   digest: string;
 }
+
+/** The outcome of a fleet-wide charge run (failure-isolated, per-tenant). */
+export interface FleetChargeReport {
+  /** When the run was generated (ISO-8601 UTC). */
+  generatedAt: string;
+  /** Tenants charged this run (success/processing). */
+  charged: (ChargeResult & { tenantId: string })[];
+  /** Tenants intentionally skipped (no billing customer ref, or a zero/no-charge invoice). */
+  skipped: { tenantId: string; reason: string }[];
+  /** Tenants whose charge attempt errored (declines/transport) — isolated, never blocking others. */
+  failed: { tenantId: string; error: string }[];
+}
+
+export type { ChargeRequest, ChargeResult, PaymentGateway } from '../ports/payment-gateway.js';
 export type {
   FleetMigrationSpec,
   MigrateFleetOptions,
@@ -186,6 +204,12 @@ export interface TenantForgeDeps {
   costRates?: CostRates;
   /** Per-unit billing (sell) rates for {@link TenantForge.invoice}; defaults to empty (usage not billed). */
   billingRates?: BillingRates;
+  /**
+   * Payment gateway (PSP) for {@link TenantForge.chargeInvoice}. Optional and swappable behind the
+   * {@link PaymentGateway} port (Stripe ships; others plug in the same way). Absent ⇒ charging fails
+   * closed. Charging is a money-moving outward action — never auto-wired without explicit config.
+   */
+  paymentGateway?: PaymentGateway;
   /**
    * Persisted audit trail. When provided, {@link TenantForge.complianceReport} includes erasure
    * history + a recent audit excerpt; absent = the report omits the `audit` section. (Wire the
@@ -593,6 +617,38 @@ export interface TenantForge {
   reconcileHistory(limit?: number): Promise<TenantEvent[]>;
 
   /**
+   * **Charge** a tenant for its invoice over a period via the configured payment gateway (PSP). A
+   * money-moving outward action: requires a payment gateway and the tenant's `billingCustomerRef`
+   * (metadata); the amount is the invoice total in minor units; the charge is **idempotent** (a retry
+   * never double-bills). Emits a redacted `tenant.charged` audit event (amount/status/charge id — no
+   * card data). Fails closed without a gateway / customer ref / positive amount.
+   *
+   * @param id - The tenant id.
+   * @param period - The billing period to invoice + charge.
+   * @returns The charge result (no card data).
+   */
+  chargeInvoice(id: string, period: BillingPeriod): Promise<ChargeResult>;
+
+  /**
+   * Charge every active tenant that has a billing customer ref for the period — failure-isolated
+   * (a decline/error on one tenant never blocks others; tenants without a ref or with a zero invoice
+   * are skipped, not failed). The billing-run sweep (for a cron). Requires a payment gateway.
+   *
+   * @param period - The billing period.
+   * @returns A per-tenant charge report (charged / skipped / failed).
+   */
+  chargeInvoiceFleet(period: BillingPeriod): Promise<FleetChargeReport>;
+
+  /**
+   * Recent **charge history** from the persisted audit trail (`tenant.charged` events). Returns `[]`
+   * when no audit store is wired.
+   *
+   * @param limit - Max entries, newest-first. Defaults to 20.
+   * @returns Recent charge audit events.
+   */
+  chargeHistory(limit?: number): Promise<TenantEvent[]>;
+
+  /**
    * Meter a tenant's resource consumption over a period (for billing) — resolves the tenant's Neon
    * project and aggregates its consumption. Requires a usage provider in the deps.
    *
@@ -634,6 +690,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const invalidateConnection = (id: string): void => cachingRouter?.invalidate(id);
   const eventSink = deps.eventSink ?? createNoopEventSink();
   const auditLog = deps.auditLog;
+  const paymentGateway = deps.paymentGateway;
 
   /** Build the backup engine on demand; fails closed if no snapshot provider was configured. */
   const backupEngine = (): ReturnType<typeof createBackupEngine> => {
@@ -713,6 +770,55 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     const tenant = await registry.getById(id);
     if (!tenant) throw new Error(`tenant ${id} not found`);
     return tenant;
+  };
+
+  /** Read a tenant's PSP customer reference from metadata, if present + non-empty. */
+  const billingCustomerRef = (metadata: JsonObject): string | undefined => {
+    const v = metadata['billingCustomerRef'];
+    return typeof v === 'string' && v.length > 0 ? v : undefined;
+  };
+
+  /**
+   * Invoice + charge one tenant via the gateway (idempotent), emitting a redacted `tenant.charged`
+   * audit event. Assumes the gateway + customer ref exist (the callers check). Throws on a
+   * zero-amount invoice or a gateway decline/error (attributed to the operator in scope).
+   */
+  const chargeTenant = async (
+    id: string,
+    customerRef: string,
+    period: BillingPeriod,
+  ): Promise<ChargeResult> => {
+    const invoice = await invoiceEngine().invoice(id, period);
+    const { amountMinor, currency } = invoiceChargeAmount(invoice); // throws if not positive
+    try {
+      const result = await paymentGateway!.charge({
+        amountMinor,
+        currency,
+        customerRef,
+        idempotencyKey: chargeIdempotencyKey(invoice),
+        description: `TenantForge ${id} ${invoice.periodStart}..${invoice.periodEnd}`,
+      });
+      observe('tenant.charged', {
+        tenantId: id,
+        outcome: 'ok',
+        context: {
+          provider: result.provider,
+          chargeId: result.id,
+          amountMinor,
+          currency,
+          status: result.status,
+        },
+      });
+      return result;
+    } catch (error) {
+      observe('tenant.charged', {
+        tenantId: id,
+        outcome: 'error',
+        context: { amountMinor, currency },
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   };
 
   /** Validate + apply a status transition, returning the refreshed record. Emits a lifecycle event. */
@@ -1185,6 +1291,57 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return invoiceEngine().invoiceFleet(period);
     },
 
+    async chargeInvoice(id: string, period: BillingPeriod): Promise<ChargeResult> {
+      assertPeriod(period);
+      if (paymentGateway === undefined) {
+        throw new Error('charging requires a configured payment gateway');
+      }
+      const tenant = await requireTenant(id);
+      const customerRef = billingCustomerRef(tenant.metadata);
+      if (customerRef === undefined) {
+        throw new Error(`tenant ${id} has no billingCustomerRef in metadata`);
+      }
+      return chargeTenant(id, customerRef, period);
+    },
+
+    async chargeInvoiceFleet(period: BillingPeriod): Promise<FleetChargeReport> {
+      assertPeriod(period);
+      if (paymentGateway === undefined) {
+        throw new Error('charging requires a configured payment gateway');
+      }
+      const active = await registry.list({ status: 'active', limit: MAX_SWEEP });
+      const charged: (ChargeResult & { tenantId: string })[] = [];
+      const skipped: { tenantId: string; reason: string }[] = [];
+      const failed: { tenantId: string; error: string }[] = [];
+      for (const tenant of active) {
+        const customerRef = billingCustomerRef(tenant.metadata);
+        if (customerRef === undefined) {
+          skipped.push({ tenantId: tenant.id, reason: 'no billingCustomerRef' });
+          continue;
+        }
+        try {
+          charged.push({
+            tenantId: tenant.id,
+            ...(await chargeTenant(tenant.id, customerRef, period)),
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          // A zero/no-charge invoice is an intentional skip, not a billing failure.
+          if (/no positive amount to charge/.test(message)) {
+            skipped.push({ tenantId: tenant.id, reason: 'zero invoice' });
+          } else {
+            failed.push({ tenantId: tenant.id, error: message });
+          }
+        }
+      }
+      return { generatedAt: new Date().toISOString(), charged, skipped, failed };
+    },
+
+    chargeHistory(limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.charged'], limit });
+    },
+
     async close(): Promise<void> {
       // Release the audit store's own pool (the pg adapter owns one) before the registry.
       await (auditLog as { close?: () => Promise<void> } | undefined)?.close?.();
@@ -1277,6 +1434,16 @@ export function tenantForgeFromConfig(
     // Unit cost rates for the per-tenant cost/margin report (empty = zero cost).
     ...(config.costRates !== undefined ? { costRates: config.costRates } : {}),
     ...(config.billingRates !== undefined ? { billingRates: config.billingRates } : {}),
+    // Payment gateway (PSP): wired only when explicitly configured (charging is money movement).
+    // Stripe ships; swap in any other provider behind the PaymentGateway port at this seam.
+    ...(config.paymentGateway === 'stripe'
+      ? {
+          paymentGateway: createStripeGateway({
+            secretKey: config.stripeSecretKey!,
+            ...(config.stripeApiBaseUrl !== undefined ? { baseUrl: config.stripeApiBaseUrl } : {}),
+          }),
+        }
+      : {}),
     // Off-Neon archive tier (pg_dump → object store) — enabled when an export object store is
     // configured (TENANTFORGE_EXPORT_DIR); archives use the `archives/` key prefix. Retention is the
     // object store's lifecycle policy. Without it, archive() fails closed.

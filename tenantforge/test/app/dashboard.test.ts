@@ -35,6 +35,7 @@ const app = () =>
       reconcilePlan: async () => reconcile,
       reconcileHistory: async () => [{ event: 'fleet.reconcile', at: 'x', outcome: 'ok' }] as never,
       invoiceFleet: async () => invoices,
+      chargeHistory: async () => [{ event: 'tenant.charged', at: 'x', outcome: 'ok' }] as never,
     }),
     { token: TOKEN, dashboardSecret: 'session-secret' },
   );
@@ -83,11 +84,17 @@ describe('dashboard backend', () => {
     const inv = await server.request('/dashboard/api/invoices', { headers: { cookie } });
     expect(inv.status).toBe(200);
     expect(await inv.json()).toEqual(invoices);
+    const ch = await server.request('/dashboard/api/charges', { headers: { cookie } });
+    expect(ch.status).toBe(200);
+    expect(await ch.json()).toEqual({
+      charges: [{ event: 'tenant.charged', at: 'x', outcome: 'ok' }],
+    });
     // The panels require a session.
     expect((await server.request('/dashboard/api/cost')).status).toBe(401);
     expect((await server.request('/dashboard/api/reconcile')).status).toBe(401);
     expect((await server.request('/dashboard/api/reconcile-history')).status).toBe(401);
     expect((await server.request('/dashboard/api/invoices')).status).toBe(401);
+    expect((await server.request('/dashboard/api/charges')).status).toBe(401);
   });
 
   it('rejects an invalid operator token (401) and sets no cookie', async () => {

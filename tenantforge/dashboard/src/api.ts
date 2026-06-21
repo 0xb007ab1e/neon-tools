@@ -184,3 +184,24 @@ export async function runReconcile(): Promise<ReconcileResult> {
   if (!res.ok) throw new Error(res.status === 403 ? 'Not permitted' : 'Reconcile failed');
   return (await res.json()) as ReconcileResult;
 }
+
+/** One charge-history entry (a persisted `tenant.charged` audit event). */
+export interface ChargeHistoryEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  tenantId?: string;
+  context?: {
+    provider?: string;
+    chargeId?: string;
+    amountMinor?: number;
+    currency?: string;
+    status?: string;
+  };
+}
+
+/** Load recent charge history (read-only; empty without an audit store). */
+export async function fetchCharges(): Promise<ChargeHistoryEntry[]> {
+  const res = await fetch(`${BASE}/charges`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load charges');
+  return ((await res.json()) as { charges: ChargeHistoryEntry[] }).charges;
+}

@@ -1049,6 +1049,152 @@ describe('createTenantForge.invoice', () => {
   });
 });
 
+describe('createTenantForge.chargeInvoice', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  const provider = {
+    getProjectConsumption: () =>
+      Promise.resolve([
+        {
+          computeTimeSeconds: 100,
+          activeTimeSeconds: 0,
+          writtenDataBytes: 0,
+          syntheticStorageBytes: 0,
+        },
+      ]),
+  };
+  type Gw = import('../../src/ports/payment-gateway.js').PaymentGateway;
+  type Req = import('../../src/ports/payment-gateway.js').ChargeRequest;
+  /** A recording fake gateway; `fail` makes charge throw (a decline). */
+  const fakeGateway = (calls: Req[] = [], fail = false): Gw => ({
+    provider: 'stripe',
+    charge: (r) => {
+      calls.push(r);
+      if (fail) return Promise.reject(new Error('card declined'));
+      return Promise.resolve({
+        id: 'ch_1',
+        status: 'succeeded',
+        amountMinor: r.amountMinor,
+        currency: r.currency,
+        provider: 'stripe',
+      });
+    },
+  });
+  const base = () => ({
+    registry: fakeRegistry(),
+    provisioning: fakeProvisioning(),
+    secretStore: createInMemorySecretStore(),
+    usageProvider: provider,
+    billingRates: { computeSecondUsd: 0.02 }, // 100 * 0.02 = $2.00 invoice
+    defaultRegion: 'aws-us-east-1' as const,
+  });
+
+  it('fails closed without a payment gateway', async () => {
+    const tf = createTenantForge(base());
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+    await expect(tf.chargeInvoice(tenant.id, period)).rejects.toThrow(
+      /requires a configured payment gateway/,
+    );
+  });
+
+  it('fails closed when the tenant has no billingCustomerRef', async () => {
+    const tf = createTenantForge({ ...base(), paymentGateway: fakeGateway() });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await expect(tf.chargeInvoice(tenant.id, period)).rejects.toThrow(/no billingCustomerRef/);
+  });
+
+  it('charges the invoice total (minor units) via the gateway, idempotently', async () => {
+    const calls: Req[] = [];
+    const tf = createTenantForge({ ...base(), paymentGateway: fakeGateway(calls) });
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+    const result = await tf.chargeInvoice(tenant.id, period);
+    expect(result.status).toBe('succeeded');
+    expect(calls[0]?.amountMinor).toBe(200); // $2.00
+    expect(calls[0]?.currency).toBe('usd');
+    expect(calls[0]?.customerRef).toBe('cus_1');
+    expect(calls[0]?.idempotencyKey).toContain(`:${tenant.id}:`); // stable, tenant-scoped
+  });
+
+  it('chargeInvoiceFleet skips no-ref + zero-invoice tenants and isolates a decline', async () => {
+    const registry = fakeRegistry();
+    // Seed four active tenants directly with distinct metadata.
+    const seed = (id: string, metadata: Record<string, string>) =>
+      registry.seed({
+        id,
+        slug: id,
+        region: 'aws-us-east-1',
+        status: 'active',
+        neonProjectId: `proj-${id}`,
+        metadata,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      });
+    seed('ok', { billingCustomerRef: 'cus_ok' });
+    seed('noref', {});
+    seed('decline', { billingCustomerRef: 'cus_d' });
+
+    let n = 0;
+    const gateway: Gw = {
+      provider: 'stripe',
+      charge: (r) => {
+        n += 1;
+        // The second charged tenant (decline) rejects; the first succeeds.
+        return r.customerRef === 'cus_d'
+          ? Promise.reject(new Error('card declined'))
+          : Promise.resolve({
+              id: `ch_${n}`,
+              status: 'succeeded',
+              amountMinor: r.amountMinor,
+              currency: r.currency,
+              provider: 'stripe',
+            });
+      },
+    };
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      billingRates: { computeSecondUsd: 0.02 },
+      defaultRegion: 'aws-us-east-1',
+      paymentGateway: gateway,
+    });
+    const report = await tf.chargeInvoiceFleet(period);
+    expect(report.charged.map((c) => c.tenantId)).toEqual(['ok']);
+    expect(report.skipped.find((s) => s.tenantId === 'noref')?.reason).toBe(
+      'no billingCustomerRef',
+    );
+    expect(report.failed.map((f) => f.tenantId)).toEqual(['decline']);
+  });
+
+  it('chargeHistory returns [] without an audit store, and reads tenant.charged with one', async () => {
+    const noStore = createTenantForge({ ...base(), paymentGateway: fakeGateway() });
+    expect(await noStore.chargeHistory()).toEqual([]);
+
+    const auditLog = createInMemoryAuditLogStore();
+    const tf = createTenantForge({
+      ...base(),
+      paymentGateway: fakeGateway(),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+    await tf.chargeInvoice(tenant.id, period);
+    const history = await tf.chargeHistory();
+    expect(history).toHaveLength(1);
+    expect(history[0]?.event).toBe('tenant.charged');
+    expect(history[0]?.context?.status).toBe('succeeded');
+  });
+});
+
 describe('createTenantForge.provision residency', () => {
   const make = (allowedRegions?: string[]) => {
     const provisioning = fakeProvisioning();

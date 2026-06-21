@@ -301,6 +301,26 @@ describe('HTTP control-plane', () => {
     expect(bad.status).toBe(400);
   });
 
+  it('serves charge history (tenant:read), 400 on a bad limit; charging is not over HTTP', async () => {
+    const charges = [{ event: 'tenant.charged', at: 'x', outcome: 'ok' }];
+    const server = app({ chargeHistory: async () => charges as never });
+    const ok = await server.request('/v1/billing/charges', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ charges });
+    const bad = await server.request('/v1/billing/charges?limit=-1', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(bad.status).toBe(400);
+    // No charge endpoint is exposed (money movement is CLI/gated, not HTTP).
+    const post = await server.request('/v1/billing/charges', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(post.status).toBe(404);
+  });
+
   it('emits a keyset nextCursor on a full page and forwards it to the next request', async () => {
     const calls: Array<{ limit?: number; cursor?: { createdAt: Date; id: string } }> = [];
     const server = createHttpServer(

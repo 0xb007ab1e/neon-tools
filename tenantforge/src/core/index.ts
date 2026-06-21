@@ -50,6 +50,7 @@ export {
   type InvoiceLineItem,
   type InvoiceOptions,
 } from './invoice.js';
+export { invoiceChargeAmount, chargeIdempotencyKey, type ChargeAmount } from './billing.js';
 export {
   can,
   permissionsFor,

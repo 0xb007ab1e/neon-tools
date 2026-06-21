@@ -8,6 +8,7 @@ import {
   fetchReconcileHistory,
   fetchReconcileCapabilities,
   runReconcile,
+  fetchCharges,
   fetchSession,
   login,
   logout,
@@ -18,6 +19,7 @@ import {
   type ReconcileCapabilities,
   type ReconcilePlan,
   type ReconcileHistoryEntry,
+  type ChargeHistoryEntry,
   type Session,
 } from './api';
 
@@ -125,6 +127,7 @@ function DashboardView(props: {
         <ReconcilePanel />
         <CostPanel />
         <InvoicesPanel />
+        <BillingPanel />
       </main>
     </div>
   );
@@ -355,6 +358,47 @@ function ReconcilePanel(): React.JSX.Element {
                   <tr key={t.tenantId}>
                     <th scope="row">{t.tenantId}</th>
                     <td>{t.missing.join(', ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function BillingPanel(): React.JSX.Element {
+  const { data, error } = usePanelData<ChargeHistoryEntry[]>(fetchCharges);
+  return (
+    <Panel id="billing-h" title="Billing (recent charges)" error={error} loading={data === null}>
+      {data !== null && (
+        <div>
+          <p>
+            {data.length} recent charge(s). Charging runs via the CLI (`charge` / `charge-fleet`),
+            not the dashboard.
+          </p>
+          {data.length > 0 && (
+            <table>
+              <caption>Recent charges (audit trail)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((c) => (
+                  <tr key={`${c.at}-${c.tenantId ?? ''}`}>
+                    <td>{c.at}</td>
+                    <td>{c.tenantId ?? '—'}</td>
+                    <td>
+                      {c.context?.amountMinor ?? '—'} {c.context?.currency ?? ''}
+                    </td>
+                    <td>{c.context?.status ?? c.outcome}</td>
                   </tr>
                 ))}
               </tbody>
