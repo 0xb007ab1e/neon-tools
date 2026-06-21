@@ -83,3 +83,53 @@ export function refundIdempotencyKey(chargeId: string, amountMinor?: number): st
   const suffix = amountMinor === undefined ? 'full' : String(amountMinor);
   return `tenantforge:refund:${chargeId}:${suffix}`;
 }
+
+/** Inputs to {@link prorateRefundMinor}: the original charge and the period it covered. */
+export interface ProrationInput {
+  /** The original charge amount in minor units (positive integer). */
+  chargeAmountMinor: number;
+  /** Period start (ISO-8601) the charge covered. */
+  periodStart: string;
+  /** Period end (ISO-8601) the charge covered. */
+  periodEnd: string;
+  /** The instant to prorate as of (e.g. the offboard time, ISO-8601). */
+  asOf: string;
+}
+
+/**
+ * Compute the **prorated refund** (minor units) for the *unused* portion of a charged period — the
+ * money to return when a tenant offboards mid-period. Pure and deterministic (numeric-correctness:
+ * integer minor units, explicit rounding). The unused fraction is `(periodEnd - asOf) / (periodEnd -
+ * periodStart)`, clamped so:
+ *
+ * - `asOf` at/before the period start ⇒ the whole period is unused ⇒ full refund.
+ * - `asOf` at/after the period end ⇒ the period is fully consumed ⇒ refund `0`.
+ * - otherwise ⇒ `round(chargeAmountMinor × unusedFraction)`, bounded to `[0, chargeAmountMinor]`.
+ *
+ * Rounding is half-up (`Math.round`) at the boundary — a sub-cent unused remainder rounds to the
+ * nearest minor unit; the result never exceeds the original charge.
+ *
+ * @param input - Original charge amount + period bounds + the as-of instant.
+ * @returns The integer minor-unit amount to refund (0 … chargeAmountMinor).
+ * @throws Error if the amount is not a positive integer, or the period bounds are invalid.
+ */
+export function prorateRefundMinor(input: ProrationInput): number {
+  const { chargeAmountMinor } = input;
+  if (!Number.isInteger(chargeAmountMinor) || chargeAmountMinor <= 0) {
+    throw new Error(`charge amount must be a positive integer, got ${chargeAmountMinor}`);
+  }
+  const start = Date.parse(input.periodStart);
+  const end = Date.parse(input.periodEnd);
+  const asOf = Date.parse(input.asOf);
+  if (Number.isNaN(start) || Number.isNaN(end) || Number.isNaN(asOf)) {
+    throw new Error('proration period/asOf bounds must be valid ISO-8601 dates');
+  }
+  if (end <= start) {
+    throw new Error('proration period end must be after start');
+  }
+  if (asOf <= start) return chargeAmountMinor; // entire period unused → full refund
+  if (asOf >= end) return 0; // period fully consumed → nothing to refund
+  const unusedFraction = (end - asOf) / (end - start);
+  const refund = Math.round(chargeAmountMinor * unusedFraction);
+  return Math.max(0, Math.min(chargeAmountMinor, refund));
+}

@@ -12,6 +12,7 @@ import {
   chargeIdempotencyKey,
   assertRefundAmount,
   refundIdempotencyKey,
+  prorateRefundMinor,
   planDunning,
   dunningStateFromCharges,
   type DunningSchedule,
@@ -799,6 +800,23 @@ export interface TenantForge {
   refundHistory(limit?: number): Promise<TenantEvent[]>;
 
   /**
+   * **Refund the unused portion of a tenant's latest charge**, prorated to `asOf` (the offboard
+   * instant) — the money to return when a tenant leaves mid-period. Derives the charge id / amount /
+   * currency / period from the most recent successful `tenant.charged` audit event and refunds
+   * `prorateRefundMinor(...)` of it via {@link refundCharge} (idempotent). Returns the refund result,
+   * or `null` when there is nothing to refund (no prior charge, or the period is fully consumed).
+   * Requires a payment gateway + an audit store. Money movement — keep it CLI-gated, off HTTP/MCP.
+   *
+   * @param id - The tenant id.
+   * @param opts - `asOf` (defaults to now), `reason` (recorded on the refund).
+   * @returns The prorated refund result, or `null` if nothing is owed.
+   */
+  refundUnusedPeriod(
+    id: string,
+    opts?: { asOf?: Date; reason?: string },
+  ): Promise<RefundResult | null>;
+
+  /**
    * **Ingest an inbound PSP webhook** (e.g. Stripe): verify its signature over the raw body, parse +
    * normalize it, and emit a redacted `payment.webhook` audit event (attributed to the tenant when
    * the event carries one). Requires a configured webhook verifier; throws on a bad/stale signature
@@ -980,6 +998,64 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   };
 
   /**
+   * Refund a charge via the gateway (idempotent), emitting a redacted `tenant.refunded` event. The
+   * shared implementation behind {@link TenantForge.refundCharge} and refund-on-offboard.
+   */
+  const refundChargeImpl = async (
+    chargeId: string,
+    opts: RefundOptions = {},
+  ): Promise<RefundResult> => {
+    if (paymentGateway === undefined) {
+      throw new Error('refunds require a configured payment gateway');
+    }
+    const original = await findChargeInAudit(chargeId);
+    const currency = opts.currency ?? original?.currency;
+    if (currency === undefined) {
+      throw new Error(
+        `refund requires a currency (charge ${chargeId} not found in the audit trail — pass currency)`,
+      );
+    }
+    // Bound a partial refund by the original amount when we know it (can't refund more than charged).
+    assertRefundAmount(opts.amountMinor, original?.amountMinor);
+    const tenantId = opts.tenantId ?? original?.tenantId;
+    try {
+      const result = await paymentGateway.refund({
+        chargeId,
+        ...(opts.amountMinor !== undefined ? { amountMinor: opts.amountMinor } : {}),
+        currency,
+        idempotencyKey: refundIdempotencyKey(chargeId, opts.amountMinor),
+        ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+        ...(tenantId !== undefined ? { metadata: { tenant_id: tenantId } } : {}),
+      });
+      observe('tenant.refunded', {
+        ...(tenantId !== undefined ? { tenantId } : {}),
+        outcome: 'ok',
+        context: {
+          provider: result.provider,
+          refundId: result.id,
+          chargeId,
+          amountMinor: result.amountMinor,
+          currency: result.currency,
+          status: result.status,
+          ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+        },
+      });
+      return result;
+    } catch (error) {
+      observe('tenant.refunded', {
+        ...(tenantId !== undefined ? { tenantId } : {}),
+        outcome: 'error',
+        context: {
+          chargeId,
+          ...(opts.amountMinor !== undefined ? { amountMinor: opts.amountMinor } : {}),
+        },
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  };
+
+  /**
    * Invoice + charge one tenant via the gateway (idempotent), emitting a redacted `tenant.charged`
    * audit event. Assumes the gateway + customer ref exist (the callers check). Throws on a
    * zero-amount invoice or a gateway decline/error (attributed to the operator in scope).
@@ -1013,6 +1089,9 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
           amountMinor,
           currency,
           status: result.status,
+          // The period this charge covered — lets refund-on-offboard prorate the unused portion.
+          periodStart: invoice.periodStart,
+          periodEnd: invoice.periodEnd,
         },
       });
       return result;
@@ -1699,60 +1778,65 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return auditLog.query({ events: ['billing.run'], limit });
     },
 
-    async refundCharge(chargeId: string, opts: RefundOptions = {}): Promise<RefundResult> {
-      if (paymentGateway === undefined) {
-        throw new Error('refunds require a configured payment gateway');
-      }
-      const original = await findChargeInAudit(chargeId);
-      const currency = opts.currency ?? original?.currency;
-      if (currency === undefined) {
-        throw new Error(
-          `refund requires a currency (charge ${chargeId} not found in the audit trail — pass currency)`,
-        );
-      }
-      // Bound a partial refund by the original amount when we know it (can't refund more than charged).
-      assertRefundAmount(opts.amountMinor, original?.amountMinor);
-      const tenantId = opts.tenantId ?? original?.tenantId;
-      try {
-        const result = await paymentGateway.refund({
-          chargeId,
-          ...(opts.amountMinor !== undefined ? { amountMinor: opts.amountMinor } : {}),
-          currency,
-          idempotencyKey: refundIdempotencyKey(chargeId, opts.amountMinor),
-          ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
-          ...(tenantId !== undefined ? { metadata: { tenant_id: tenantId } } : {}),
-        });
-        observe('tenant.refunded', {
-          ...(tenantId !== undefined ? { tenantId } : {}),
-          outcome: 'ok',
-          context: {
-            provider: result.provider,
-            refundId: result.id,
-            chargeId,
-            amountMinor: result.amountMinor,
-            currency: result.currency,
-            status: result.status,
-            ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
-          },
-        });
-        return result;
-      } catch (error) {
-        observe('tenant.refunded', {
-          ...(tenantId !== undefined ? { tenantId } : {}),
-          outcome: 'error',
-          context: {
-            chargeId,
-            ...(opts.amountMinor !== undefined ? { amountMinor: opts.amountMinor } : {}),
-          },
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
+    refundCharge(chargeId: string, opts: RefundOptions = {}): Promise<RefundResult> {
+      return refundChargeImpl(chargeId, opts);
     },
 
     refundHistory(limit = 20): Promise<TenantEvent[]> {
       if (auditLog === undefined) return Promise.resolve([]);
       return auditLog.query({ events: ['tenant.refunded'], limit });
+    },
+
+    async refundUnusedPeriod(
+      id: string,
+      opts: { asOf?: Date; reason?: string } = {},
+    ): Promise<RefundResult | null> {
+      if (paymentGateway === undefined) {
+        throw new Error('refunds require a configured payment gateway');
+      }
+      if (auditLog === undefined) {
+        throw new Error('refund-on-offboard requires an audit store to find the charge to prorate');
+      }
+      // The most recent *successful* charge for this tenant — the one to prorate.
+      const charges = await auditLog.query({
+        events: ['tenant.charged'],
+        tenantId: id,
+        limit: MAX_SWEEP,
+      });
+      const latest = charges.find(
+        (e) => e.outcome === 'ok' && e.context?.['chargeId'] !== undefined,
+      );
+      if (latest === undefined) return null; // nothing charged → nothing to refund
+      const ctx = latest.context ?? {};
+      const chargeId = ctx['chargeId'];
+      const amountMinor = ctx['amountMinor'];
+      const currency = ctx['currency'];
+      const periodStart = ctx['periodStart'];
+      const periodEnd = ctx['periodEnd'];
+      if (
+        typeof chargeId !== 'string' ||
+        typeof amountMinor !== 'number' ||
+        typeof currency !== 'string' ||
+        typeof periodStart !== 'string' ||
+        typeof periodEnd !== 'string'
+      ) {
+        throw new Error(
+          `cannot prorate: latest charge for ${id} lacks amount/currency/period in the audit trail`,
+        );
+      }
+      const refundMinor = prorateRefundMinor({
+        chargeAmountMinor: amountMinor,
+        periodStart,
+        periodEnd,
+        asOf: (opts.asOf ?? new Date()).toISOString(),
+      });
+      if (refundMinor <= 0) return null; // period fully consumed → nothing owed
+      return refundChargeImpl(chargeId, {
+        amountMinor: refundMinor,
+        currency,
+        tenantId: id,
+        reason: opts.reason ?? 'offboard proration (unused period)',
+      });
     },
 
     async ingestPaymentWebhook(rawBody: string, signature: string): Promise<PaymentEvent> {
