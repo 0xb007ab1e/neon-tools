@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import type { SecretStore } from '../../ports/secret-store.js';
 import { open, seal } from '../secret-crypto.js';
+import { assertPostgresTls } from '../../core/transport-security.js';
 
 /** Options for {@link createNeonPgSecretStore}. */
 export interface NeonPgSecretStoreOptions {
@@ -10,6 +11,8 @@ export interface NeonPgSecretStoreOptions {
   key: Buffer;
   /** Max pool size. Defaults to the `pg` default. */
   maxConnections?: number;
+  /** Permit a non-TLS connection (local dev only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /**
@@ -26,6 +29,8 @@ export interface NeonPgSecretStoreOptions {
  */
 export function createNeonPgSecretStore(options: NeonPgSecretStoreOptions): SecretStore {
   const { key } = options;
+  // Fail closed if the control-plane connection (holding encrypted secrets) would run plaintext.
+  assertPostgresTls(options.connectionString, 'DATABASE_URL', options.allowInsecure);
   const pool = new Pool({
     connectionString: options.connectionString,
     ...(options.maxConnections === undefined ? {} : { max: options.maxConnections }),

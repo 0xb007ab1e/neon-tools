@@ -6,6 +6,24 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- **Project-wide TLS/mTLS enforcement** — every outbound connection now fails closed at startup
+  unless it negotiates TLS, with a pure, 100%-covered guard pair in
+  `src/core/transport-security.ts`: `assertPostgresTls` (connection string must carry
+  `sslmode=require`/`verify-ca`/`verify-full`) and `assertHttpsUrl` (URL must be `https://`). Wired
+  into **all** network adapters — the Postgres registry, encrypted secret store, message queue,
+  rate-limit / idempotency / audit stores, per-tenant migration runner, and `pg_dump`/`pg_restore`
+  (Postgres); and the Neon API (usage/provisioning/snapshot), HashiCorp Vault, Azure Key Vault, OIDC
+  JWKS fetch, and the Stripe gateway base URL (https). Cloud SDK adapters already enforce TLS via
+  their SDK. Two explicit, default-`false` opt-outs (`TENANTFORGE_ALLOW_INSECURE_DB`,
+  `TENANTFORGE_ALLOW_INSECURE_URLS`) exist for local dev against a certificate-less loopback service
+  — the documented "leaky endpoints." A new **README "Security: TLS & network surface"** section
+  documents the enforcement, the proxy-terminates-TLS inbound contract (dev = tailnet-only, never
+  public), and every intentionally-unauthenticated endpoint (`/health`, `/ready`, `/metrics`,
+  signature-authed `POST /webhooks/payment`) with its risk. Covered by core guards (100%) +
+  adapter fail-closed tests.
+
 ### Added
 
 - **Dunning / failed-charge retry** — a fleet sweep that retries past-due charges and escalates the

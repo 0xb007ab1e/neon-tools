@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { assertPostgresTls } from '../../core/transport-security.js';
 import type {
   IdempotencyBegin,
   IdempotencyStore,
@@ -22,6 +23,8 @@ export interface PgIdempotencyStoreOptions {
   ttlMs?: number;
   /** Max pool size. */
   maxConnections?: number;
+  /** Permit a non-TLS connection (local dev only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 interface Row {
@@ -45,6 +48,7 @@ interface Row {
  */
 export function createPgIdempotencyStore(options: PgIdempotencyStoreOptions): PgIdempotencyStore {
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
+  assertPostgresTls(options.connectionString, 'DATABASE_URL', options.allowInsecure);
   const pool = new Pool({
     connectionString: options.connectionString,
     ...(options.maxConnections === undefined ? {} : { max: options.maxConnections }),

@@ -1576,10 +1576,18 @@ export function tenantForgeFromConfig(
   config: Config,
   opts?: { eventSink?: EventSink },
 ): TenantForge {
-  const registry = createPgTenantRegistry({ connectionString: config.databaseUrl });
+  // Transport-security opt-outs (default false → TLS enforced everywhere). These are the documented
+  // "leaky endpoint" escape hatches for local dev only (README §TLS, master §5).
+  const allowInsecureDb = config.allowInsecureDb;
+  const allowInsecureUrls = config.allowInsecureUrls;
+  const registry = createPgTenantRegistry({
+    connectionString: config.databaseUrl,
+    allowInsecure: allowInsecureDb,
+  });
   const provisioning = createNeonProvisioningProvider({
     apiKey: config.neonApiKey,
     orgId: config.neonOrgId,
+    allowInsecure: allowInsecureUrls,
     ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
   });
   // Per-tenant connection secrets: the Neon-prioritized default is an AES-256-GCM-encrypted store in
@@ -1592,11 +1600,13 @@ export function tenantForgeFromConfig(
           token: config.vault!.token,
           mountPath: config.vault!.mount,
           pathPrefix: config.vault!.pathPrefix,
+          allowInsecure: allowInsecureUrls,
           ...(config.vault!.namespace !== undefined ? { namespace: config.vault!.namespace } : {}),
         })
       : createNeonPgSecretStore({
           connectionString: config.databaseUrl,
           key: deriveKey(config.secretKey!),
+          allowInsecure: allowInsecureDb,
         });
   // Offboard export: the Neon-prioritized default retains the project (scale-to-zero, no data
   // movement); `pg-dump` instead dumps the tenant DB to an object store (filesystem for now —
@@ -1606,7 +1616,7 @@ export function tenantForgeFromConfig(
       ? createPgDumpExporter({
           resolveConnectionUri: (tenant) => secretStore.get(tenant.id),
           objectStore: createFilesystemObjectStore({ dir: config.exportDir! }),
-          dump: (uri) => spawnPgDump(uri),
+          dump: (uri) => spawnPgDump(uri, { allowInsecure: allowInsecureDb }),
         })
       : createNeonArchiveExporter();
   // Persisted audit trail (compliance evidence): when enabled, store events in Postgres and fan the
@@ -1615,7 +1625,10 @@ export function tenantForgeFromConfig(
   const baseSink = opts?.eventSink ?? createJsonEventSink();
   const auditLog =
     config.auditLog === 'pg'
-      ? createPgAuditLogStore({ connectionString: config.databaseUrl })
+      ? createPgAuditLogStore({
+          connectionString: config.databaseUrl,
+          allowInsecure: allowInsecureDb,
+        })
       : undefined;
   const eventSink =
     auditLog !== undefined
@@ -1625,7 +1638,7 @@ export function tenantForgeFromConfig(
     registry,
     provisioning,
     secretStore,
-    migrationRunner: createPgMigrationRunner(),
+    migrationRunner: createPgMigrationRunner({ allowInsecure: allowInsecureDb }),
     exporter,
     eventSink,
     ...(auditLog !== undefined ? { auditLog } : {}),
@@ -1638,10 +1651,14 @@ export function tenantForgeFromConfig(
     allowedRegions: config.allowedRegions,
     connectionCacheTtlMs: config.connectionCacheTtlMs,
     // pg_dump → pg_restore mover so re-homing works out of the box (needs pg_dump/pg_restore on PATH).
-    dataMover: createPgDataMover(),
+    dataMover: createPgDataMover({
+      dumpOptions: { allowInsecure: allowInsecureDb },
+      restoreOptions: { allowInsecure: allowInsecureDb },
+    }),
     // Neon-branch snapshots for scheduled backups (instant, copy-on-write restore points).
     snapshots: createNeonSnapshotProvider({
       apiKey: config.neonApiKey,
+      allowInsecure: allowInsecureUrls,
       ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
     }),
     // Unit cost rates for the per-tenant cost/margin report (empty = zero cost).
@@ -1653,6 +1670,7 @@ export function tenantForgeFromConfig(
       ? {
           paymentGateway: createStripeGateway({
             secretKey: config.stripeSecretKey!,
+            allowInsecure: allowInsecureUrls,
             ...(config.stripeApiBaseUrl !== undefined ? { baseUrl: config.stripeApiBaseUrl } : {}),
           }),
         }
@@ -1673,7 +1691,7 @@ export function tenantForgeFromConfig(
           archiveExporter: createPgDumpExporter({
             resolveConnectionUri: (tenant) => secretStore.get(tenant.id),
             objectStore: createFilesystemObjectStore({ dir: config.exportDir }),
-            dump: (uri) => spawnPgDump(uri),
+            dump: (uri) => spawnPgDump(uri, { allowInsecure: allowInsecureDb }),
             keyPrefix: 'archives',
           }),
         }

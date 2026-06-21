@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { assertPostgresTls } from '../../core/transport-security.js';
 import type { JsonObject } from '../../core/index.js';
 import type { TenantEvent } from '../../core/observability.js';
 import type { AuditLogStore, AuditQuery } from '../../ports/audit-log-store.js';
@@ -15,6 +16,8 @@ export interface PgAuditLogStoreOptions {
   connectionString: string;
   /** Max pool size. */
   maxConnections?: number;
+  /** Permit a non-TLS connection (local dev only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 interface Row {
@@ -52,6 +55,7 @@ function toEvent(row: Row): TenantEvent {
  * @returns A Postgres-backed audit-log store.
  */
 export function createPgAuditLogStore(options: PgAuditLogStoreOptions): PgAuditLogStore {
+  assertPostgresTls(options.connectionString, 'DATABASE_URL', options.allowInsecure);
   const pool = new Pool({
     connectionString: options.connectionString,
     ...(options.maxConnections === undefined ? {} : { max: options.maxConnections }),

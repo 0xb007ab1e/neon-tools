@@ -141,6 +141,19 @@ const EnvSchema = z
     // queryable `tf_audit_log`). `pg` enables erasure-history + recent-excerpt in the compliance
     // report and survives restarts/multi-instance. Requires migration 0006.
     TENANTFORGE_AUDIT_LOG: z.enum(['none', 'pg']).default('none'),
+    // Transport-security escape hatches (default false — fail closed). `..._DB` permits a non-TLS
+    // Postgres connection (no `sslmode=require`); `..._URLS` permits a non-https outbound URL
+    // (Neon API / Vault / Azure Key Vault / OIDC JWKS / Stripe). Set ONLY for local development
+    // against a loopback service with no certificate — these are the documented "leaky endpoints"
+    // (README §TLS); never enable in production (master §5: no plaintext, fail closed).
+    TENANTFORGE_ALLOW_INSECURE_DB: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
+    TENANTFORGE_ALLOW_INSECURE_URLS: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
     // Cache getConnection resolutions for this many ms (0 = disabled). Process-local + tenant-keyed.
     TENANTFORGE_CONNECTION_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(0),
     // Web dashboard: when set, mount the cookie-session dashboard backend at /dashboard. The value
@@ -274,6 +287,10 @@ export interface Config {
   defaultRegion: string;
   /** Allow-listed regions tenants may be provisioned in (empty = all known regions). */
   allowedRegions: string[];
+  /** Permit non-TLS Postgres connections (no `sslmode=require`). Local dev only — leaky; default false. */
+  allowInsecureDb: boolean;
+  /** Permit non-https outbound URLs (Neon API / Vault / KV / OIDC / Stripe). Local dev only; default false. */
+  allowInsecureUrls: boolean;
   /** Which backend stores per-tenant connection secrets. */
   secretBackend: 'neon-pg' | 'vault';
   /** AES passphrase for the `neon-pg` secret backend (separate from the DB cred); set when that backend is used. */
@@ -369,6 +386,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     neonOrgId: parsed.NEON_ORG_ID,
     defaultRegion: parsed.TENANTFORGE_DEFAULT_REGION,
     allowedRegions: parsed.TENANTFORGE_ALLOWED_REGIONS,
+    allowInsecureDb: parsed.TENANTFORGE_ALLOW_INSECURE_DB,
+    allowInsecureUrls: parsed.TENANTFORGE_ALLOW_INSECURE_URLS,
     secretBackend: parsed.TENANTFORGE_SECRET_BACKEND,
     exporter: parsed.TENANTFORGE_EXPORTER,
     retentionDays: parsed.TENANTFORGE_RETENTION_DAYS,

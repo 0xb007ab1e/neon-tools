@@ -1,7 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import type { JWTVerifyGetKey, CryptoKey, KeyObject, JWK } from 'jose';
 import type { Authenticator, Principal } from '../../ports/authenticator.js';
-import { isRole, isPermission } from '../../core/index.js';
+import { isRole, isPermission, assertHttpsUrl } from '../../core/index.js';
 
 /** The key/key-resolver argument `jose.jwtVerify` accepts (a key, or a JWKS getter function). */
 type VerifyKey = CryptoKey | KeyObject | JWK | Uint8Array | JWTVerifyGetKey;
@@ -27,6 +27,8 @@ export interface OidcAuthenticatorOptions {
   subjectClaim?: string;
   /** Accepted signature algorithms (allow-list). Defaults to common asymmetric algs. */
   algorithms?: string[];
+  /** Permit a non-https JWKS URI (local dev only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /**
@@ -52,6 +54,9 @@ export function createOidcAuthenticator(options: OidcAuthenticatorOptions): Auth
       if (options.jwksUri === undefined) {
         throw new Error('createOidcAuthenticator: jwksUri or keys is required');
       }
+      // The JWKS endpoint serves the keys that gate all auth — fetch it only over TLS (a plaintext
+      // JWKS is a trivial key-substitution MITM).
+      assertHttpsUrl(options.jwksUri, 'TENANTFORGE_OIDC_JWKS_URI', options.allowInsecure);
       return createRemoteJWKSet(new URL(options.jwksUri));
     })();
 

@@ -23,7 +23,10 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const tf = tenantForgeFromConfig(config);
   await tf.migrate(); // ensure the queue + registry tables exist
-  const queue = createPgMessageQueue({ connectionString: config.databaseUrl });
+  const queue = createPgMessageQueue({
+    connectionString: config.databaseUrl,
+    allowInsecure: config.allowInsecureDb,
+  });
   const consumer = createLifecycleConsumer({ queue, handle: createLifecycleHandler(tf) });
 
   const state = { cancelled: false };

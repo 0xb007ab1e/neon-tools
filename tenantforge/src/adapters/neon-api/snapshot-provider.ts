@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ProjectSnapshot, SnapshotProvider } from '../../ports/snapshot-provider.js';
+import { assertHttpsUrl } from '../../core/transport-security.js';
 
 /** Prefix marking branches that are TenantForge snapshots (vs. the project's own branches). */
 const SNAPSHOT_PREFIX = 'snapshot-';
@@ -26,6 +27,8 @@ export interface NeonSnapshotOptions {
   maxAttempts?: number;
   /** Injectable fetch (for testing). Defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /** Permit a non-https base URL (local dev / mock only — the documented leaky-endpoint opt-out). */
+  allowInsecure?: boolean;
 }
 
 /** A transient (retryable) Neon API failure. */
@@ -46,6 +49,7 @@ function toSnapshot(branch: z.infer<typeof BranchSchema>): ProjectSnapshot {
  */
 export function createNeonSnapshotProvider(options: NeonSnapshotOptions): SnapshotProvider {
   const baseUrl = (options.baseUrl ?? 'https://console.neon.tech/api/v2').replace(/\/+$/, '');
+  assertHttpsUrl(baseUrl, 'NEON_API_BASE_URL', options.allowInsecure);
   const timeoutMs = options.timeoutMs ?? 30_000;
   const maxAttempts = options.maxAttempts ?? 3;
   const doFetch = options.fetchImpl ?? globalThis.fetch;
