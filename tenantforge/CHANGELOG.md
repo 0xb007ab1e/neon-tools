@@ -6,6 +6,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-21
+
+TenantForge's first **customer-facing** surface: a self-serve portal where a tenant sees its own
+account, charges, and refunds — strictly scoped so it can never reach another tenant's data.
+Additive/backward-compatible (MINOR); the portal is opt-in (mounted only when configured) and
+read-only.
+
 ### Added
 
 - **Tenant self-serve portal** — a **customer-facing** web surface (`/portal`, distinct from the
