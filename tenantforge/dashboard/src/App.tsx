@@ -16,6 +16,7 @@ import {
   fetchNotifications,
   fetchPlanChanges,
   fetchCreditGrants,
+  fetchUsageAlerts,
   fetchSession,
   login,
   logout,
@@ -34,6 +35,7 @@ import {
   type NotificationEntry,
   type PlanChangeEntry,
   type CreditGrantEntry,
+  type UsageAlertEntry,
   type Session,
 } from './api';
 
@@ -392,6 +394,7 @@ function BillingPanel(): React.JSX.Element {
   const notifications = usePanelData<NotificationEntry[]>(fetchNotifications);
   const planChanges = usePanelData<PlanChangeEntry[]>(fetchPlanChanges);
   const creditGrants = usePanelData<CreditGrantEntry[]>(fetchCreditGrants);
+  const usageAlerts = usePanelData<UsageAlertEntry[]>(fetchUsageAlerts);
   return (
     <Panel id="billing-h" title="Billing (recent charges)" error={error} loading={data === null}>
       {data !== null && (
@@ -493,6 +496,31 @@ function BillingPanel(): React.JSX.Element {
                       {g.context?.amountMinor ?? '—'} {g.context?.currency ?? ''}
                     </td>
                     <td>{g.context?.reason ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {usageAlerts.data !== null && usageAlerts.data.length > 0 && (
+            <table>
+              <caption>Recent usage alerts (approaching/over plan allowance)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Dimensions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {usageAlerts.data.map((a) => (
+                  <tr key={`${a.at}-${a.tenantId ?? ''}`}>
+                    <td>{a.at}</td>
+                    <td>{a.tenantId ?? '—'}</td>
+                    <td>
+                      {(a.context?.alerts ?? [])
+                        .map((x) => `${x.metric} ${Math.round(x.usedFraction * 100)}%`)
+                        .join(', ') || '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>

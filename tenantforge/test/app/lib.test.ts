@@ -1857,6 +1857,93 @@ describe('createTenantForge billing receipts (notifier)', () => {
   });
 });
 
+describe('createTenantForge.checkUsageAlerts', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  type Notifier = import('../../src/ports/notifier.js').Notifier;
+  type Notification = import('../../src/ports/notifier.js').Notification;
+  const provider = {
+    getProjectConsumption: () =>
+      Promise.resolve([
+        {
+          computeTimeSeconds: 90,
+          activeTimeSeconds: 0,
+          writtenDataBytes: 0,
+          syntheticStorageBytes: 0,
+        },
+      ]),
+  };
+  const fakeNotifier = (calls: Notification[] = []): Notifier => ({
+    provider: 'log',
+    notify: (n) => {
+      calls.push(n);
+      return Promise.resolve({ id: n.idempotencyKey, provider: 'log', status: 'queued' });
+    },
+  });
+  const deps = (over: { thresholds?: number[]; notifier?: Notifier } = {}) => {
+    const auditLog = createInMemoryAuditLogStore();
+    return {
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      defaultRegion: 'aws-us-east-1' as const,
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+      usageAlertThresholds: over.thresholds ?? [0.8, 1.0],
+      ...(over.notifier !== undefined ? { notifier: over.notifier } : {}),
+    };
+  };
+
+  it('fails closed without a usage provider or without configured thresholds', async () => {
+    const noThresholds = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      usageAlertThresholds: [],
+      defaultRegion: 'aws-us-east-1',
+    });
+    await expect(noThresholds.checkUsageAlerts(period)).rejects.toThrow(/THRESHOLDS/);
+  });
+
+  it('alerts tenants over a threshold of their allowance and records tenant.usage_alert', async () => {
+    const tf = createTenantForge(deps());
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { includedUsage: { computeTimeSeconds: 100 } }, // 90/100 = 90% → crosses 0.8
+    });
+    const report = await tf.checkUsageAlerts(period);
+    expect(report.alerted.map((a) => a.tenantId)).toEqual([tenant.id]);
+    expect(report.alerted[0]?.alerts[0]?.thresholdCrossed).toBe(0.8);
+    const history = await tf.usageAlertHistory();
+    expect(history[0]?.event).toBe('tenant.usage_alert');
+  });
+
+  it('with notify, emails the alerted tenant (billingEmail) without recording the recipient', async () => {
+    const calls: Notification[] = [];
+    const tf = createTenantForge(deps({ notifier: fakeNotifier(calls) }));
+    await tf.provision({
+      slug: 'acme',
+      metadata: { includedUsage: { computeTimeSeconds: 100 }, billingEmail: 'ops@acme.example' },
+    });
+    const report = await tf.checkUsageAlerts(period, { notify: true });
+    expect(report.alerted).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.to).toBe('ops@acme.example');
+    expect(calls[0]?.idempotencyKey).toContain('usage-alert:');
+    // The recipient address is never written to the audit trail (PII).
+    const history = await tf.usageAlertHistory();
+    expect(JSON.stringify(history)).not.toContain('ops@acme.example');
+  });
+
+  it('does not alert a tenant with no allowances configured', async () => {
+    const tf = createTenantForge(deps());
+    await tf.provision({ slug: 'acme', metadata: {} });
+    const report = await tf.checkUsageAlerts(period);
+    expect(report.alerted).toEqual([]);
+  });
+});
+
 describe('createTenantForge credit ledger', () => {
   const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
   const provider = {

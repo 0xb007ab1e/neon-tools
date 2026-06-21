@@ -381,6 +381,16 @@ describe('HTTP control-plane', () => {
     expect(post.status).toBe(404);
   });
 
+  it('serves usage-alert history (tenant:read); the live sweep is not over HTTP', async () => {
+    const alerts = [{ event: 'tenant.usage_alert', at: 'x', outcome: 'ok' }];
+    const server = app({ usageAlertHistory: async () => alerts as never });
+    const ok = await server.request('/v1/usage-alerts', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ alerts });
+  });
+
   it('serves plan-change history (tenant:read)', async () => {
     const planChanges = [{ event: 'tenant.plan_changed', at: 'x', outcome: 'ok' }];
     const server = app({ planChangeHistory: async () => planChanges as never });

@@ -753,6 +753,48 @@ const setAllowance = defineCommand({
   },
 });
 
+const usageAlerts = defineCommand({
+  meta: {
+    name: 'usage-alerts',
+    description:
+      'Check the fleet for tenants approaching/over their plan allowance (TENANTFORGE_USAGE_ALERT_THRESHOLDS)',
+  },
+  args: {
+    from: { type: 'string', description: 'Period start (ISO-8601); default month start' },
+    to: { type: 'string', description: 'Period end (ISO-8601); default now' },
+    notify: {
+      type: 'boolean',
+      description: 'Also email alerted tenants (metadata.billingEmail) via the configured notifier',
+      default: false,
+    },
+    json: { type: 'boolean', description: 'Emit the full report as JSON', default: false },
+  },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const report = await tf.checkUsageAlerts(monthPeriod(args.from, args.to), {
+        notify: args.notify,
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+        return;
+      }
+      process.stdout.write(
+        `usage alerts: ${report.alerted.length} tenant(s) alerting` +
+          (report.failed.length > 0 ? ` · ${report.failed.length} failed` : '') +
+          ` of ${report.scanned} active\n`,
+      );
+      for (const a of report.alerted) {
+        const dims = a.alerts
+          .map((x) => `${x.metric} ${Math.round(x.usedFraction * 100)}%`)
+          .join(', ');
+        process.stdout.write(`  ${a.tenantId}: ${dims}\n`);
+      }
+      for (const f of report.failed) process.stdout.write(`  FAILED ${f.tenantId}: ${f.error}\n`);
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+  },
+});
+
 const charge = defineCommand({
   meta: {
     name: 'charge',
@@ -1153,6 +1195,7 @@ const main = defineCommand({
     refund,
     'plan-change': planChange,
     'set-allowance': setAllowance,
+    'usage-alerts': usageAlerts,
     'credit-grant': creditGrant,
     'credit-balance': creditBalance,
   },

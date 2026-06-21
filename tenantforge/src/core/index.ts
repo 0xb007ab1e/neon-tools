@@ -72,6 +72,7 @@ export {
   type RenderedReceipt,
 } from './receipts.js';
 export { creditBalanceMinor, creditToApply, type CreditEntryAmount } from './credit.js';
+export { evaluateUsageAlerts, normalizeThresholds, type UsageAlert } from './usage-alert.js';
 export {
   planDunning,
   dunningStateFromCharges,
