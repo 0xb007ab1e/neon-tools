@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-21
+
+Makes billing **operate unattended**. The charge → dunning loop, manual until now, is wrapped into a
+single scheduled **billing run** for a cron / K8s CronJob — the capstone of the billing arc.
+Additive/backward-compatible (MINOR); the run is opt-in, CLI-only, and `--yes` gated.
+
 ### Added
 
 - **Scheduled billing run** — `tf.billingRun(period?, opts?)` (CLI `billing-run`, `--yes` gated) is
