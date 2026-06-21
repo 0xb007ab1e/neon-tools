@@ -6,6 +6,22 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Refund on offboard (proration)** — `tf.refundUnusedPeriod(id, { asOf?, reason? })` refunds the
+  **unused portion** of a tenant's latest charge when it leaves mid-period. Pure core
+  `prorateRefundMinor` (100%) computes `round(amount × (periodEnd − asOf) / (periodEnd −
+periodStart))`, clamped (offboard at/before the period start → full refund; at/after the end →
+  nothing; integer minor units, half-up). The facade derives the charge id / amount / currency /
+  period from the most recent successful `tenant.charged` event (which now **stamps its
+  `periodStart`/`periodEnd`**) and issues the prorated refund through `refundCharge` — inheriting its
+  idempotency, the redacted `tenant.refunded` event, and the refunds panel. Surfaced as
+  **`offboard <id> --refund --yes`**, where the refund is a **separate, explicitly-gated step** so
+  plain `offboard` (still on HTTP/MCP) never moves money; returns `null` when nothing is owed.
+  Proration policy is unused-time; other policies can wrap the same primitive. Covered by the pure
+  core (full / none / half / rounding / invalid-period) and facade (prorate, fully-consumed→null,
+  no-charge→null, fail-closed without gateway/audit) tests.
+
 ## [0.10.0] - 2026-06-21
 
 Completes the money flow with its reverse: charges can now be **refunded** (fully or partially)

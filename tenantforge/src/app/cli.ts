@@ -182,14 +182,44 @@ const offboard = defineCommand({
     name: 'offboard',
     description: 'Offboard a tenant: archive (retain, scale-to-zero), reversible until purge',
   },
-  args: { id: { type: 'positional', description: 'Tenant id (UUID)', required: true } },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    refund: {
+      type: 'boolean',
+      description: 'Also refund the unused (prorated) portion of the latest charge — moves money',
+      default: false,
+    },
+    reason: { type: 'string', description: 'Reason recorded on the proration refund' },
+    yes: {
+      type: 'boolean',
+      description: 'Confirm the refund — required with --refund (it returns real money).',
+      default: false,
+    },
+  },
   async run({ args }) {
+    if (args.refund && !args.yes) {
+      process.stderr.write('refusing to refund without --yes (this returns real money)\n');
+      process.exitCode = 1;
+      return;
+    }
     await withTenantForge(async (tf) => {
       const { tenant, archive } = await tf.offboard(args.id);
       process.stdout.write(`${formatTenant(tenant)}\n`);
       process.stdout.write(
         `archived (retained, pending purge): ${archive ? archive.location : 'n/a'}\n`,
       );
+      // Refund the unused period as a separate, explicitly-gated step (offboard itself is money-free).
+      if (args.refund) {
+        const refund = await tf.refundUnusedPeriod(args.id, {
+          ...(args.reason !== undefined ? { reason: args.reason } : {}),
+        });
+        process.stdout.write(
+          refund === null
+            ? 'proration refund: nothing owed (no prior charge, or the period is fully consumed)\n'
+            : `proration refund: ${refund.provider} ${refund.id} ${refund.status} ` +
+                `${refund.amountMinor} ${refund.currency}\n`,
+        );
+      }
     });
   },
 });

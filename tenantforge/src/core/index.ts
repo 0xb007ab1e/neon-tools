@@ -55,7 +55,9 @@ export {
   chargeIdempotencyKey,
   assertRefundAmount,
   refundIdempotencyKey,
+  prorateRefundMinor,
   type ChargeAmount,
+  type ProrationInput,
 } from './billing.js';
 export {
   planDunning,

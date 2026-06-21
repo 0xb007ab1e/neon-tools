@@ -4,6 +4,7 @@ import {
   chargeIdempotencyKey,
   assertRefundAmount,
   refundIdempotencyKey,
+  prorateRefundMinor,
 } from '../../src/core/billing.js';
 import type { Invoice } from '../../src/core/invoice.js';
 
@@ -89,6 +90,67 @@ describe('assertRefundAmount', () => {
 
   it('rejects refunding more than the original charge', () => {
     expect(() => assertRefundAmount(1500, 1000)).toThrow(/exceeds the original charge/);
+  });
+});
+
+describe('prorateRefundMinor', () => {
+  const period = { periodStart: '2026-06-01T00:00:00.000Z', periodEnd: '2026-07-01T00:00:00.000Z' };
+
+  it('refunds the full charge when offboarding at/before the period start', () => {
+    expect(
+      prorateRefundMinor({ chargeAmountMinor: 200, ...period, asOf: '2026-06-01T00:00:00.000Z' }),
+    ).toBe(200);
+    expect(
+      prorateRefundMinor({ chargeAmountMinor: 200, ...period, asOf: '2026-05-20T00:00:00.000Z' }),
+    ).toBe(200);
+  });
+
+  it('refunds nothing when the period is fully consumed (asOf at/after the end)', () => {
+    expect(
+      prorateRefundMinor({ chargeAmountMinor: 200, ...period, asOf: '2026-07-01T00:00:00.000Z' }),
+    ).toBe(0);
+    expect(
+      prorateRefundMinor({ chargeAmountMinor: 200, ...period, asOf: '2026-08-01T00:00:00.000Z' }),
+    ).toBe(0);
+  });
+
+  it('prorates the unused fraction (half the 30-day period left → half the charge)', () => {
+    expect(
+      prorateRefundMinor({ chargeAmountMinor: 200, ...period, asOf: '2026-06-16T00:00:00.000Z' }),
+    ).toBe(100);
+  });
+
+  it('rounds half-up to whole minor units and never exceeds the original charge', () => {
+    // 1 of 30 days used → 29/30 unused × 100 = 96.67 → 97.
+    const r = prorateRefundMinor({
+      chargeAmountMinor: 100,
+      ...period,
+      asOf: '2026-06-02T00:00:00.000Z',
+    });
+    expect(r).toBe(97);
+    expect(r).toBeLessThanOrEqual(100);
+  });
+
+  it('rejects a non-positive charge amount and an invalid/empty period', () => {
+    expect(() =>
+      prorateRefundMinor({ chargeAmountMinor: 0, ...period, asOf: period.periodStart }),
+    ).toThrow(/positive integer/);
+    expect(() =>
+      prorateRefundMinor({
+        chargeAmountMinor: 200,
+        periodStart: '2026-07-01T00:00:00.000Z',
+        periodEnd: '2026-06-01T00:00:00.000Z',
+        asOf: '2026-06-15T00:00:00.000Z',
+      }),
+    ).toThrow(/end must be after start/);
+    expect(() =>
+      prorateRefundMinor({
+        chargeAmountMinor: 200,
+        periodStart: 'nope',
+        periodEnd: period.periodEnd,
+        asOf: period.periodStart,
+      }),
+    ).toThrow(/valid ISO-8601 dates/);
   });
 });
 

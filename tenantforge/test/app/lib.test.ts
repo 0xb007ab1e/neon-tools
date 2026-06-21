@@ -1633,6 +1633,75 @@ describe('createTenantForge.refundCharge', () => {
     const tf = createTenantForge({ ...base(), paymentGateway: gateway() });
     expect(await tf.refundHistory()).toEqual([]);
   });
+
+  it('refundUnusedPeriod prorates the latest charge to the offboard instant', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const refundCalls: RefundReq[] = [];
+    const tf = createTenantForge({
+      ...base(),
+      paymentGateway: gateway(refundCalls, 'ch_acme'),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+    await tf.chargeInvoice(tenant.id, period); // $2.00 = 200 minor over Jun 1 → Jul 1
+
+    // Offboard halfway through the 30-day period → refund half (100 minor units).
+    const result = await tf.refundUnusedPeriod(tenant.id, {
+      asOf: new Date('2026-06-16T00:00:00.000Z'),
+    });
+    expect(result?.amountMinor).toBe(100);
+    expect(refundCalls[0]?.amountMinor).toBe(100);
+    expect(refundCalls[0]?.idempotencyKey).toBe('tenantforge:refund:ch_acme:100');
+    const history = await tf.refundHistory();
+    expect(history[0]?.context?.reason).toBe('offboard proration (unused period)');
+  });
+
+  it('refunds nothing (null) when the period is already fully consumed', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const refundCalls: RefundReq[] = [];
+    const tf = createTenantForge({
+      ...base(),
+      paymentGateway: gateway(refundCalls, 'ch_acme'),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+    await tf.chargeInvoice(tenant.id, period);
+    const result = await tf.refundUnusedPeriod(tenant.id, {
+      asOf: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    expect(result).toBeNull();
+    expect(refundCalls).toHaveLength(0);
+  });
+
+  it('returns null when the tenant has no prior charge', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const tf = createTenantForge({
+      ...base(),
+      paymentGateway: gateway(),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+    expect(await tf.refundUnusedPeriod(tenant.id)).toBeNull();
+  });
+
+  it('fails closed without a gateway, and without an audit store', async () => {
+    const noGw = createTenantForge(base());
+    await expect(noGw.refundUnusedPeriod('t1')).rejects.toThrow(/payment gateway/);
+    const noAudit = createTenantForge({ ...base(), paymentGateway: gateway() });
+    await expect(noAudit.refundUnusedPeriod('t1')).rejects.toThrow(/requires an audit store/);
+  });
 });
 
 describe('createTenantForge.ingestPaymentWebhook', () => {
