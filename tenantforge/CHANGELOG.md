@@ -6,6 +6,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Portal usage display** — the tenant portal account page now shows **this period's metered usage**
+  (compute time, active time, data written, peak storage) in a readable, accessible table, alongside
+  the existing charges/refunds. Usage is fetched best-effort (if metering isn't configured or the
+  upstream is down, the page still renders — usage is just omitted, never a 500). Both the rendered
+  HTML and the `GET /portal/api/usage` JSON **project away the internal Neon project id** — the tenant
+  sees only its period + consumption (consistent with `tenantSummary`'s safe projection). Covered by
+  the portal tests (usage section renders; infra id not exposed in HTML or JSON).
+
 ## [0.13.0] - 2026-06-21
 
 Makes the tenant portal production-ready: tenants can authenticate against a customer IdP via OIDC,
