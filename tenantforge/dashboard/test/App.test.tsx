@@ -164,6 +164,10 @@ const usageAlerts = [
   },
 ];
 
+const plans = [
+  { id: 'pro', name: 'Pro plan', priceUsd: 49, includedUsage: { computeTimeSeconds: 10000 } },
+];
+
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -201,6 +205,7 @@ beforeEach(() => {
       if (url.endsWith('/plan-changes')) return Promise.resolve(json({ planChanges }));
       if (url.endsWith('/credit-grants')) return Promise.resolve(json({ creditGrants }));
       if (url.endsWith('/usage-alerts')) return Promise.resolve(json({ usageAlerts }));
+      if (url.endsWith('/plans')) return Promise.resolve(json({ plans }));
       if (url.endsWith('/refunds')) return Promise.resolve(json({ refunds }));
       if (url.endsWith('/dunning')) return Promise.resolve(json({ events: dunning }));
       if (url.endsWith('/charges')) return Promise.resolve(json({ charges }));
@@ -284,6 +289,9 @@ describe('dashboard App', () => {
       await screen.findByText('Recent usage alerts (approaching/over plan allowance)'),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-near-limit')).toBeInTheDocument();
+    // Plan catalog renders.
+    expect(await screen.findByRole('heading', { name: 'Plan catalog' })).toBeInTheDocument();
+    expect(await screen.findByText('Pro plan')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);

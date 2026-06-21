@@ -795,6 +795,52 @@ const usageAlerts = defineCommand({
   },
 });
 
+const plans = defineCommand({
+  meta: { name: 'plans', description: 'List the operator plan catalog (TENANTFORGE_PLANS)' },
+  args: { json: { type: 'boolean', description: 'Emit the catalog as JSON', default: false } },
+  async run({ args }) {
+    await withTenantForge((tf) => {
+      const catalog = tf.listPlans();
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(catalog, null, 2)}\n`);
+        return Promise.resolve();
+      }
+      if (catalog.length === 0) {
+        process.stdout.write('no plans configured (set TENANTFORGE_PLANS)\n');
+        return Promise.resolve();
+      }
+      for (const p of catalog) {
+        const inc = p.includedUsage
+          ? Object.entries(p.includedUsage)
+              .map(([k, v]) => `${k}=${v}`)
+              .join(' ')
+          : '(none)';
+        process.stdout.write(`${p.id}  ${p.name ?? p.id}  $${p.priceUsd ?? 0}  included: ${inc}\n`);
+      }
+      return Promise.resolve();
+    });
+  },
+});
+
+const assignPlan = defineCommand({
+  meta: {
+    name: 'assign-plan',
+    description: 'Assign a catalog plan to a tenant (sets its price + included allowances)',
+  },
+  args: {
+    id: { type: 'positional', description: 'Tenant id (UUID)', required: true },
+    plan: { type: 'positional', description: 'Plan id from the catalog', required: true },
+  },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const tenant = await tf.assignPlan(args.id, args.plan);
+      const planId = (tenant.metadata.planId as string | undefined) ?? '(none)';
+      const price = (tenant.metadata.priceUsd as number | undefined) ?? 0;
+      process.stdout.write(`${formatTenant(tenant)}  plan=${planId} price=$${price}\n`);
+    });
+  },
+});
+
 const charge = defineCommand({
   meta: {
     name: 'charge',
@@ -1196,6 +1242,8 @@ const main = defineCommand({
     'plan-change': planChange,
     'set-allowance': setAllowance,
     'usage-alerts': usageAlerts,
+    plans,
+    'assign-plan': assignPlan,
     'credit-grant': creditGrant,
     'credit-balance': creditBalance,
   },

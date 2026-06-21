@@ -1944,6 +1944,57 @@ describe('createTenantForge.checkUsageAlerts', () => {
   });
 });
 
+describe('createTenantForge plan catalog', () => {
+  const plans = [
+    { id: 'starter', name: 'Starter', priceUsd: 0, includedUsage: { computeTimeSeconds: 100 } },
+    { id: 'pro', priceUsd: 49, includedUsage: { computeTimeSeconds: 10_000 } },
+  ];
+  const base = () => ({
+    registry: fakeRegistry(),
+    provisioning: fakeProvisioning(),
+    secretStore: createInMemorySecretStore(),
+    defaultRegion: 'aws-us-east-1' as const,
+  });
+
+  it('listPlans returns the configured catalog (empty without one)', () => {
+    expect(
+      createTenantForge({ ...base(), plans })
+        .listPlans()
+        .map((p) => p.id),
+    ).toEqual(['starter', 'pro']);
+    expect(createTenantForge(base()).listPlans()).toEqual([]);
+  });
+
+  it('assignPlan sets the tenant price + included allowances + planId', async () => {
+    const tf = createTenantForge({ ...base(), plans });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    const updated = await tf.assignPlan(tenant.id, 'pro');
+    expect(updated.metadata.planId).toBe('pro');
+    expect(updated.metadata.priceUsd).toBe(49);
+    expect(updated.metadata.includedUsage).toEqual({ computeTimeSeconds: 10_000 });
+  });
+
+  it('assignPlan fully redefines billing (a no-allowance plan clears prior overrides)', async () => {
+    const tf = createTenantForge({ ...base(), plans });
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { includedUsage: { computeTimeSeconds: 999 }, priceUsd: 7 },
+    });
+    const updated = await tf.assignPlan(tenant.id, 'starter');
+    expect(updated.metadata.priceUsd).toBe(0);
+    expect(updated.metadata.includedUsage).toEqual({ computeTimeSeconds: 100 });
+  });
+
+  it('assignPlan fails closed without a catalog, on an unknown plan, and an unknown tenant', async () => {
+    const noCatalog = createTenantForge(base());
+    await expect(noCatalog.assignPlan('t', 'pro')).rejects.toThrow(/no plan catalog/);
+    const tf = createTenantForge({ ...base(), plans });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await expect(tf.assignPlan(tenant.id, 'ghost')).rejects.toThrow(/unknown plan/);
+    await expect(tf.assignPlan('nope', 'pro')).rejects.toThrow(/not found/);
+  });
+});
+
 describe('createTenantForge credit ledger', () => {
   const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
   const provider = {

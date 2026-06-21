@@ -74,6 +74,13 @@ export {
 export { creditBalanceMinor, creditToApply, type CreditEntryAmount } from './credit.js';
 export { evaluateUsageAlerts, normalizeThresholds, type UsageAlert } from './usage-alert.js';
 export {
+  assertPlanCatalog,
+  findPlan,
+  planAssignment,
+  type PlanDefinition,
+  type PlanAssignment,
+} from './plan.js';
+export {
   planDunning,
   dunningStateFromCharges,
   type DunningSchedule,

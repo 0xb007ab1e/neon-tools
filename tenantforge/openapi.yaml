@@ -285,6 +285,26 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/plans:
+    get:
+      tags: [reports]
+      summary: >
+        The operator's plan catalog (requires `tenant:read`) — published tiers (id, name, price,
+        included allowances). Read-only; assigning a plan to a tenant is a billing-policy CLI op.
+      responses:
+        '200':
+          description: The plan catalog (empty when none configured).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plans:
+                    type: array
+                    items: { type: object }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/usage-alerts:
     get:
       tags: [reports]

@@ -23,9 +23,12 @@ import {
   type TenantEvent,
   retentionCutoff,
   selectRegion,
+  findPlan,
+  planAssignment,
   buildComplianceReport,
   type ComplianceReport,
   type ComplianceReportOptions,
+  type PlanDefinition,
   type BillingPeriod,
   type Jurisdiction,
   type JsonObject,
@@ -347,6 +350,12 @@ export interface TenantForgeDeps {
    * included allowance to alert at (e.g. `[0.8, 1.0]`). Empty/absent ⇒ usage alerts are off.
    */
   usageAlertThresholds?: number[];
+  /**
+   * The operator's **plan catalog** for {@link TenantForge.assignPlan} / {@link TenantForge.listPlans}
+   * — named tiers bundling price + included allowances. Absent/empty ⇒ no catalog (assignPlan fails
+   * closed). Validate with `assertPlanCatalog` before passing.
+   */
+  plans?: PlanDefinition[];
   /**
    * Payment gateway (PSP) for {@link TenantForge.chargeInvoice}. Optional and swappable behind the
    * {@link PaymentGateway} port (Stripe ships; others plug in the same way). Absent ⇒ charging fails
@@ -1032,6 +1041,28 @@ export interface TenantForge {
    * @throws Error if the tenant is unknown or an allowance is negative/non-finite.
    */
   setIncludedUsage(id: string, allowance: IncludedUsage): Promise<TenantRecord>;
+
+  /**
+   * The operator's **plan catalog** — the published tiers (id, name, price, included allowances).
+   * Read-only; empty when no catalog is configured (`TENANTFORGE_PLANS`).
+   *
+   * @returns The plan definitions.
+   */
+  listPlans(): PlanDefinition[];
+
+  /**
+   * **Assign a plan** to a tenant: set its price (`metadata.priceUsd`), included allowances
+   * (`metadata.includedUsage`), and `metadata.planId` to exactly what the plan defines — the plan
+   * fully defines the tenant's billing (a metadata merge; never touches tenant content). Emits a
+   * `tenant.plan_assigned` event. Billing policy, so the surface is CLI-only (never HTTP/MCP). Does
+   * **not** settle proration — use {@link TenantForge.changePlan} with `settle` for that.
+   *
+   * @param tenantId - The tenant id.
+   * @param planId - A plan id from the catalog.
+   * @returns The updated tenant record.
+   * @throws Error if no catalog is configured, the plan is unknown, or the tenant is unknown.
+   */
+  assignPlan(tenantId: string, planId: string): Promise<TenantRecord>;
 
   /**
    * Recent **plan-change history** (`tenant.plan_changed` events) from the persisted audit trail.
@@ -2555,6 +2586,36 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return updated;
     },
 
+    listPlans(): PlanDefinition[] {
+      return deps.plans ?? [];
+    },
+
+    async assignPlan(tenantId: string, planId: string): Promise<TenantRecord> {
+      const catalog = deps.plans ?? [];
+      if (catalog.length === 0)
+        throw new Error('no plan catalog configured (set TENANTFORGE_PLANS)');
+      const plan = findPlan(catalog, planId);
+      if (plan === undefined) throw new Error(`unknown plan: ${planId}`);
+      const tenant = await registry.getById(tenantId);
+      if (!tenant) throw new Error(`tenant ${tenantId} not found`);
+      // The plan fully defines the tenant's billing: price + allowances + the plan id.
+      const patch = planAssignment(plan);
+      await registry.updateMetadata(tenantId, {
+        planId: patch.planId,
+        priceUsd: patch.priceUsd,
+        includedUsage: patch.includedUsage as unknown as JsonObject,
+      });
+      invalidateConnection(tenantId);
+      observe('tenant.plan_assigned', {
+        tenantId,
+        outcome: 'ok',
+        context: { planId: patch.planId, priceUsd: patch.priceUsd },
+      });
+      const updated = await registry.getById(tenantId);
+      if (!updated) throw new Error(`tenant ${tenantId} not found`);
+      return updated;
+    },
+
     async grantCredit(
       tenantId: string,
       amountMinor: number,
@@ -2744,6 +2805,7 @@ export function tenantForgeFromConfig(
     ...(config.costRates !== undefined ? { costRates: config.costRates } : {}),
     ...(config.billingRates !== undefined ? { billingRates: config.billingRates } : {}),
     usageAlertThresholds: config.usageAlertThresholds,
+    ...(config.plans !== undefined ? { plans: config.plans } : {}),
     // Payment gateway (PSP): wired only when explicitly configured (charging is money movement).
     // Stripe ships; swap in any other provider behind the PaymentGateway port at this seam.
     ...(config.paymentGateway === 'stripe'
