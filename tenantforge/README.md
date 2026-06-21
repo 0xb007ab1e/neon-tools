@@ -1,13 +1,13 @@
 # TenantForge
 
-[![version](https://img.shields.io/badge/version-0.17.0-blue)](https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.17.0)
+[![version](https://img.shields.io/badge/version-0.18.0-blue)](https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.18.0)
 
 > **The control plane for database-per-tenant SaaS, on Neon.**
 > Provision an isolated Neon project per customer, route connections, run schema migrations across
 > the whole fleet, and handle suspend / offboard / residency — so you get hard data isolation and a
 > clean compliance story without building tenant provisioning, routing, and lifecycle yourself.
 
-**Status:** `stable` (v0.17.0) — feature-complete and hardened. Implemented: the pure core
+**Status:** `stable` (v0.18.0) — feature-complete and hardened. Implemented: the pure core
 (slug/region validation, the tenant-lifecycle state machine, the fleet-migration planner) at 100%
 test coverage; the Neon-API provisioning and Postgres registry / encrypted secret-store adapters; the
 full lifecycle (`provision` / `suspend` / `resume` / `offboard` / `purge`, plus the scheduled
