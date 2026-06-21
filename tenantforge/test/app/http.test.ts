@@ -331,6 +331,42 @@ describe('HTTP control-plane', () => {
     expect(await ok.json()).toEqual({ events });
   });
 
+  it('previews a plan change (tenant:read); 400 without a valid price; applying is not over HTTP', async () => {
+    const preview = {
+      tenantId: 't1',
+      oldPriceUsd: 10,
+      newPriceUsd: 20,
+      period: { from: 'a', to: 'b' },
+      proratedDeltaMinor: 500,
+    };
+    const server = app({ previewPlanChange: async () => preview });
+    const ok = await server.request('/v1/tenants/t1/plan/preview?price=20', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual(preview);
+    const bad = await server.request('/v1/tenants/t1/plan/preview', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(bad.status).toBe(400);
+    // No apply/change endpoint over HTTP (mutation + optional money — CLI only).
+    const post = await server.request('/v1/tenants/t1/plan/preview', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(post.status).toBe(404);
+  });
+
+  it('serves plan-change history (tenant:read)', async () => {
+    const planChanges = [{ event: 'tenant.plan_changed', at: 'x', outcome: 'ok' }];
+    const server = app({ planChangeHistory: async () => planChanges as never });
+    const ok = await server.request('/v1/billing/plan-changes', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ planChanges });
+  });
+
   it('serves billing-receipt notification history (tenant:read)', async () => {
     const notifications = [{ event: 'tenant.notified', at: 'x', outcome: 'ok' }];
     const server = app({ notificationHistory: async () => notifications as never });

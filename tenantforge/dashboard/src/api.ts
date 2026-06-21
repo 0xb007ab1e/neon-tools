@@ -308,3 +308,23 @@ export async function fetchNotifications(): Promise<NotificationEntry[]> {
   if (!res.ok) throw new Error('Could not load notifications');
   return ((await res.json()) as { notifications: NotificationEntry[] }).notifications;
 }
+
+/** One plan-change entry (a persisted `tenant.plan_changed` audit event). */
+export interface PlanChangeEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  tenantId?: string;
+  context?: {
+    oldPriceUsd?: number;
+    newPriceUsd?: number;
+    proratedDeltaMinor?: number;
+    settlement?: string;
+  };
+}
+
+/** Load recent plan-change history (read-only; empty without an audit store). */
+export async function fetchPlanChanges(): Promise<PlanChangeEntry[]> {
+  const res = await fetch(`${BASE}/plan-changes`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load plan changes');
+  return ((await res.json()) as { planChanges: PlanChangeEntry[] }).planChanges;
+}

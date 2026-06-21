@@ -169,6 +169,14 @@ export function createPgTenantRegistry(options: PgRegistryOptions): TenantRegist
       ]);
     },
 
+    async updateMetadata(id: string, patch: JsonObject): Promise<void> {
+      // `||` shallow-merges the patch into the existing JSONB (set/overwrite keys, keep the rest).
+      await pool.query(
+        'UPDATE tf_tenants SET metadata = metadata || $2::jsonb, updated_at = now() WHERE id = $1',
+        [id, JSON.stringify(patch)],
+      );
+    },
+
     async relocate(id: string, region: string, neonProjectId: string): Promise<void> {
       await pool.query(
         'UPDATE tf_tenants SET region = $2, neon_project_id = $3, updated_at = now() WHERE id = $1',

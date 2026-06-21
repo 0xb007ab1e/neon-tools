@@ -133,3 +133,58 @@ export function prorateRefundMinor(input: ProrationInput): number {
   const refund = Math.round(chargeAmountMinor * unusedFraction);
   return Math.max(0, Math.min(chargeAmountMinor, refund));
 }
+
+/** Inputs to {@link proratePlanChangeMinor}: the two plan prices and the period being changed in. */
+export interface PlanChangeInput {
+  /** The current plan price in minor units. */
+  oldPriceMinor: number;
+  /** The new plan price in minor units. */
+  newPriceMinor: number;
+  /** Period start (ISO-8601) the plan applies to. */
+  periodStart: string;
+  /** Period end (ISO-8601). */
+  periodEnd: string;
+  /** The instant the change takes effect (ISO-8601). */
+  asOf: string;
+}
+
+/**
+ * Compute the **prorated settlement** (signed minor units) for switching plans mid-period — pure and
+ * deterministic. The tenant keeps the old plan for the elapsed fraction and the new plan for the
+ * **remaining** fraction `f = (periodEnd - asOf) / (periodEnd - periodStart)`, so the fair adjustment
+ * for the rest of the period is `round(f × (newPrice − oldPrice))`:
+ *
+ * - **positive** ⇒ an **upgrade**; the tenant owes this much for the richer plan's remaining time.
+ * - **negative** ⇒ a **downgrade**; this much is owed back (a credit/refund).
+ * - **zero** ⇒ same price, or the change lands at/after the period end (nothing left to prorate).
+ *
+ * A change at/before the period start prorates the **full** price difference (the whole period runs
+ * on the new plan). Rounding is half-up at the boundary; prices must be non-negative integers.
+ *
+ * @param input - The old/new prices (minor units) + period bounds + the as-of instant.
+ * @returns The signed minor-unit settlement (charge if &gt; 0, refund if &lt; 0, none if 0).
+ * @throws Error if a price is not a non-negative integer, or the period bounds are invalid.
+ */
+export function proratePlanChangeMinor(input: PlanChangeInput): number {
+  for (const [label, v] of [
+    ['oldPriceMinor', input.oldPriceMinor],
+    ['newPriceMinor', input.newPriceMinor],
+  ] as const) {
+    if (!Number.isInteger(v) || v < 0) {
+      throw new Error(`${label} must be a non-negative integer, got ${v}`);
+    }
+  }
+  const start = Date.parse(input.periodStart);
+  const end = Date.parse(input.periodEnd);
+  const asOf = Date.parse(input.asOf);
+  if (Number.isNaN(start) || Number.isNaN(end) || Number.isNaN(asOf)) {
+    throw new Error('plan-change period/asOf bounds must be valid ISO-8601 dates');
+  }
+  if (end <= start) {
+    throw new Error('plan-change period end must be after start');
+  }
+  const diff = input.newPriceMinor - input.oldPriceMinor;
+  if (asOf >= end) return 0; // period over → no remaining time to prorate
+  const remainingFraction = asOf <= start ? 1 : (end - asOf) / (end - start);
+  return Math.round(diff * remainingFraction);
+}

@@ -105,6 +105,11 @@ function fakeRegistry(): TenantRegistry & { seed(record: TenantRecord): void } {
       if (r) r.status = status;
       return Promise.resolve();
     },
+    updateMetadata(id, patch) {
+      const r = byId.get(id);
+      if (r) r.metadata = { ...r.metadata, ...patch };
+      return Promise.resolve();
+    },
     close: () => Promise.resolve(),
   };
 }
@@ -1808,6 +1813,167 @@ describe('createTenantForge billing receipts (notifier)', () => {
     });
     await tf.chargeInvoice(tenant.id, period);
     expect(await tf.notificationHistory()).toEqual([]);
+  });
+});
+
+describe('createTenantForge.changePlan / previewPlanChange', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  const mid = new Date('2026-06-16T00:00:00.000Z'); // half the period remains
+  type Gw = import('../../src/ports/payment-gateway.js').PaymentGateway;
+  type ChargeReq = import('../../src/ports/payment-gateway.js').ChargeRequest;
+  type RefundReq = import('../../src/ports/payment-gateway.js').RefundRequest;
+  const gateway = (charges: ChargeReq[] = [], refunds: RefundReq[] = []): Gw => ({
+    provider: 'stripe',
+    charge: (r) => {
+      charges.push(r);
+      return Promise.resolve({
+        id: 'ch_new',
+        status: 'succeeded',
+        amountMinor: r.amountMinor,
+        currency: r.currency,
+        provider: 'stripe',
+      });
+    },
+    refund: (r) => {
+      refunds.push(r);
+      return Promise.resolve({
+        id: 're_new',
+        status: 'succeeded',
+        amountMinor: r.amountMinor ?? 0,
+        currency: r.currency,
+        provider: 'stripe',
+      });
+    },
+  });
+  const seedTenant = (
+    registry: ReturnType<typeof fakeRegistry>,
+    metadata: Record<string, unknown>,
+  ) =>
+    registry.seed({
+      id: 't1',
+      slug: 't1',
+      region: 'aws-us-east-1',
+      status: 'active',
+      neonProjectId: 'proj-t1',
+      metadata: metadata as JsonObject,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+  it('previewPlanChange quotes the prorated delta without mutating or moving money', async () => {
+    const registry = fakeRegistry();
+    seedTenant(registry, { priceUsd: 10 });
+    const charges: ChargeReq[] = [];
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      paymentGateway: gateway(charges),
+    });
+    const preview = await tf.previewPlanChange('t1', 20, { period, asOf: mid });
+    expect(preview).toMatchObject({ tenantId: 't1', oldPriceUsd: 10, newPriceUsd: 20 });
+    expect(preview.proratedDeltaMinor).toBe(500); // half of (2000-1000)
+    expect(charges).toHaveLength(0); // no money
+    expect((await registry.getById('t1'))?.metadata['priceUsd']).toBe(10); // no mutation
+  });
+
+  it('changePlan updates the price; an upgrade with settle charges the prorated delta', async () => {
+    const registry = fakeRegistry();
+    seedTenant(registry, { priceUsd: 10, billingCustomerRef: 'cus_1' });
+    const auditLog = createInMemoryAuditLogStore();
+    const charges: ChargeReq[] = [];
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      paymentGateway: gateway(charges),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const report = await tf.changePlan('t1', 20, { period, asOf: mid, settle: true });
+    expect(report.settlement).toBe('charged');
+    expect(report.proratedDeltaMinor).toBe(500);
+    expect(charges[0]?.amountMinor).toBe(500);
+    expect(charges[0]?.idempotencyKey).toContain(':plan-change:');
+    expect((await registry.getById('t1'))?.metadata['priceUsd']).toBe(20); // price updated
+    expect((await tf.planChangeHistory())[0]?.context?.settlement).toBe('charged');
+  });
+
+  it('a downgrade with settle refunds the credit against the latest charge (capped)', async () => {
+    const registry = fakeRegistry();
+    seedTenant(registry, { priceUsd: 20, billingCustomerRef: 'cus_1' });
+    const auditLog = createInMemoryAuditLogStore();
+    // A prior charge of 1000 the credit can be refunded against (the credit is 500, within it).
+    await auditLog.append({
+      event: 'tenant.charged',
+      at: '2026-06-10T00:00:00.000Z',
+      outcome: 'ok',
+      tenantId: 't1',
+      context: { chargeId: 'ch_old', amountMinor: 1000, currency: 'usd', status: 'succeeded' },
+    });
+    const refunds: RefundReq[] = [];
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      paymentGateway: gateway([], refunds),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const report = await tf.changePlan('t1', 10, { period, asOf: mid, settle: true });
+    expect(report.settlement).toBe('refunded');
+    expect(report.proratedDeltaMinor).toBe(-500);
+    expect(refunds[0]?.chargeId).toBe('ch_old');
+    expect(refunds[0]?.amountMinor).toBe(500);
+  });
+
+  it('updates the price but skips settlement when there is no billing customer ref', async () => {
+    const registry = fakeRegistry();
+    seedTenant(registry, { priceUsd: 10 }); // no billingCustomerRef
+    const charges: ChargeReq[] = [];
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      paymentGateway: gateway(charges),
+    });
+    const report = await tf.changePlan('t1', 20, { period, asOf: mid, settle: true });
+    expect(report.settlement).toBe('skipped');
+    expect(charges).toHaveLength(0);
+    expect((await registry.getById('t1'))?.metadata['priceUsd']).toBe(20); // price still updated
+  });
+
+  it('without settle, changePlan updates the price and moves no money (settlement none)', async () => {
+    const registry = fakeRegistry();
+    seedTenant(registry, { priceUsd: 10, billingCustomerRef: 'cus_1' });
+    const charges: ChargeReq[] = [];
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      paymentGateway: gateway(charges),
+    });
+    const report = await tf.changePlan('t1', 20, { period, asOf: mid });
+    expect(report.settlement).toBe('none');
+    expect(charges).toHaveLength(0);
+    expect((await registry.getById('t1'))?.metadata['priceUsd']).toBe(20);
+  });
+
+  it('rejects a negative price', async () => {
+    const registry = fakeRegistry();
+    seedTenant(registry, { priceUsd: 10 });
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    await expect(tf.previewPlanChange('t1', -5)).rejects.toThrow(/non-negative/);
   });
 });
 

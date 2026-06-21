@@ -56,8 +56,10 @@ export {
   assertRefundAmount,
   refundIdempotencyKey,
   prorateRefundMinor,
+  proratePlanChangeMinor,
   type ChargeAmount,
   type ProrationInput,
+  type PlanChangeInput,
 } from './billing.js';
 export {
   renderReceipt,

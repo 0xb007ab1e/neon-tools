@@ -455,6 +455,36 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Plan-change PREVIEW (read-only quote — prorated delta for switching to ?price). Applying a plan
+  // change (and settling money) is a library/CLI op (gated), not HTTP.
+  app.get('/v1/tenants/:id/plan/preview', requirePermission('tenant:read'), async (c) => {
+    const price = Number(c.req.query('price'));
+    if (!Number.isFinite(price) || price < 0) {
+      return problem(c, 400, 'Bad Request', 'price (USD, >= 0) is required');
+    }
+    const period = invoicePeriod(c, now);
+    if (period === null) return problem(c, 400, 'Bad Request', 'from/to must be ISO-8601 dates');
+    try {
+      return c.json(await tf.previewPlanChange(c.req.param('id'), price, { period }));
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // Recent plan-change events (read-only). Applying a change is a CLI op (mutation + optional money).
+  app.get('/v1/billing/plan-changes', requirePermission('tenant:read'), async (c) => {
+    const limitParam = c.req.query('limit');
+    const limit = limitParam === undefined ? undefined : Number(limitParam);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      return problem(c, 400, 'Bad Request', 'limit must be a positive integer');
+    }
+    try {
+      return c.json({ planChanges: await tf.planChangeHistory(limit) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // Fleet reconcile PLAN (read-only preview — which tenants are behind + what they'd receive).
   // Execution needs the migration SQL catalog, so it stays a library/CLI operation, not HTTP.
   app.get('/v1/fleet/reconcile', requirePermission('tenant:read'), async (c) => {

@@ -14,6 +14,7 @@ import {
   fetchBillingRuns,
   fetchRefunds,
   fetchNotifications,
+  fetchPlanChanges,
   fetchSession,
   login,
   logout,
@@ -30,6 +31,7 @@ import {
   type BillingRunEntry,
   type RefundEntry,
   type NotificationEntry,
+  type PlanChangeEntry,
   type Session,
 } from './api';
 
@@ -386,6 +388,7 @@ function BillingPanel(): React.JSX.Element {
   const runs = usePanelData<BillingRunEntry[]>(fetchBillingRuns);
   const refunds = usePanelData<RefundEntry[]>(fetchRefunds);
   const notifications = usePanelData<NotificationEntry[]>(fetchNotifications);
+  const planChanges = usePanelData<PlanChangeEntry[]>(fetchPlanChanges);
   return (
     <Panel id="billing-h" title="Billing (recent charges)" error={error} loading={data === null}>
       {data !== null && (
@@ -462,6 +465,31 @@ function BillingPanel(): React.JSX.Element {
                     <td>{r.context?.retried ?? '—'}</td>
                     <td>{r.context?.suspended ?? '—'}</td>
                     <td>{r.outcome}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {planChanges.data !== null && planChanges.data.length > 0 && (
+            <table>
+              <caption>Recent plan changes</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">From → To</th>
+                  <th scope="col">Settlement</th>
+                </tr>
+              </thead>
+              <tbody>
+                {planChanges.data.map((p) => (
+                  <tr key={`${p.at}-${p.tenantId ?? ''}`}>
+                    <td>{p.at}</td>
+                    <td>{p.tenantId ?? '—'}</td>
+                    <td>
+                      ${p.context?.oldPriceUsd ?? '—'} → ${p.context?.newPriceUsd ?? '—'}
+                    </td>
+                    <td>{p.context?.settlement ?? p.outcome}</td>
                   </tr>
                 ))}
               </tbody>
