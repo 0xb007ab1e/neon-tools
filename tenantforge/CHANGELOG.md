@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-06-21
+
+Adds proactive usage alerts: warn tenants approaching their plan's included allowance before
+overage billing hits. Additive/backward-compatible (MINOR) — off until thresholds are configured.
+Consumes Neon's metering and layers the operator's plan-allowance policy on top (not a Neon feature).
+
 ### Added
 
 - **Usage alerts (approaching plan allowance)** — `checkUsageAlerts(period, { notify? })` (CLI
