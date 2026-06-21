@@ -148,6 +148,26 @@ export interface DunningReport {
   skipped: { tenantId: string; reason: string }[];
 }
 
+/** Options for a {@link TenantForge.billingRun}. */
+export interface BillingRunOptions {
+  /** Skip the dunning sweep (charge-only run). Defaults to false (charge then dun). */
+  skipDunning?: boolean;
+  /** Dunning policy for the sweep; defaults to {@link DEFAULT_DUNNING_SCHEDULE}. */
+  dunningSchedule?: DunningSchedule;
+}
+
+/** The combined result of a scheduled billing run: the fleet charge plus the dunning sweep. */
+export interface BillingRunReport {
+  /** When the run completed (ISO-8601 UTC). */
+  generatedAt: string;
+  /** The billing period the run charged/dunned. */
+  period: { from: string; to: string };
+  /** The fleet-charge phase result. */
+  charge: FleetChargeReport;
+  /** The dunning-sweep phase result; absent when `skipDunning` was set. */
+  dunning?: DunningReport;
+}
+
 export type { ChargeRequest, ChargeResult, PaymentGateway } from '../ports/payment-gateway.js';
 export type { PaymentEvent, PaymentWebhookVerifier } from '../ports/payment-webhook.js';
 export type { DunningSchedule, DunningDecision, DunningState } from '../core/dunning.js';
@@ -713,6 +733,29 @@ export interface TenantForge {
   dunningHistory(limit?: number): Promise<TenantEvent[]>;
 
   /**
+   * Run a complete **scheduled billing run** for the period: charge the fleet (each charge
+   * idempotent), then run a dunning sweep so a charge that fails this run starts its retry clock.
+   * The unattended capstone of the billing arc — wire it to a cron / K8s CronJob (like
+   * `purge-expired`). Idempotent and failure-isolated, so a scheduler double-fire is safe. Emits a
+   * roll-up `billing.run` audit event (the per-tenant charge/dunning events come from the sweeps).
+   * Requires a payment gateway.
+   *
+   * @param period - The billing period; defaults to the current month.
+   * @param opts - `skipDunning` for a charge-only run; `dunningSchedule` to override the policy.
+   * @returns The combined charge + dunning report.
+   */
+  billingRun(period?: BillingPeriod, opts?: BillingRunOptions): Promise<BillingRunReport>;
+
+  /**
+   * Recent **billing-run history** (`billing.run` roll-up events) from the persisted audit trail.
+   * Returns `[]` when no audit store is wired.
+   *
+   * @param limit - Max entries, newest-first. Defaults to 20.
+   * @returns Recent billing-run audit events.
+   */
+  billingRunHistory(limit?: number): Promise<TenantEvent[]>;
+
+  /**
    * **Ingest an inbound PSP webhook** (e.g. Stripe): verify its signature over the raw body, parse +
    * normalize it, and emit a redacted `payment.webhook` audit event (attributed to the tenant when
    * the event carries one). Requires a configured webhook verifier; throws on a bad/stale signature
@@ -976,6 +1019,122 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       tenant: active ?? { ...tenant, status: 'active' },
       connectionUri: result.connectionUri,
     };
+  };
+
+  /**
+   * Charge every active tenant with a billing customer ref for the period (failure-isolated). The
+   * shared implementation behind {@link TenantForge.chargeInvoiceFleet} and the billing run. Assumes
+   * a payment gateway is configured (callers check).
+   */
+  const chargeFleetRun = async (period: BillingPeriod): Promise<FleetChargeReport> => {
+    const active = await registry.list({ status: 'active', limit: MAX_SWEEP });
+    const charged: (ChargeResult & { tenantId: string })[] = [];
+    const skipped: { tenantId: string; reason: string }[] = [];
+    const failed: { tenantId: string; error: string }[] = [];
+    for (const tenant of active) {
+      const customerRef = billingCustomerRef(tenant.metadata);
+      if (customerRef === undefined) {
+        skipped.push({ tenantId: tenant.id, reason: 'no billingCustomerRef' });
+        continue;
+      }
+      try {
+        charged.push({
+          tenantId: tenant.id,
+          ...(await chargeTenant(tenant.id, customerRef, period)),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // A zero/no-charge invoice is an intentional skip, not a billing failure.
+        if (/no positive amount to charge/.test(message)) {
+          skipped.push({ tenantId: tenant.id, reason: 'zero invoice' });
+        } else {
+          failed.push({ tenantId: tenant.id, error: message });
+        }
+      }
+    }
+    return { generatedAt: new Date().toISOString(), charged, skipped, failed };
+  };
+
+  /**
+   * Run a dunning sweep over the active fleet (failure-isolated, idempotent). The shared
+   * implementation behind {@link TenantForge.runDunning} and the billing run. Assumes a payment
+   * gateway is configured (callers check).
+   */
+  const dunningSweepRun = async (
+    period: BillingPeriod,
+    schedule: DunningSchedule,
+  ): Promise<DunningReport> => {
+    const report: DunningReport = {
+      generatedAt: new Date().toISOString(),
+      schedule,
+      retried: [],
+      failed: [],
+      suspended: [],
+      skipped: [],
+    };
+    // No persisted trail ⇒ no failure history to act on ⇒ nothing to dun (fail closed, not silent).
+    if (auditLog === undefined) {
+      for (const tenant of await registry.list({ status: 'active', limit: MAX_SWEEP })) {
+        report.skipped.push({ tenantId: tenant.id, reason: 'no audit store' });
+      }
+      return report;
+    }
+    const active = await registry.list({ status: 'active', limit: MAX_SWEEP });
+    for (const tenant of active) {
+      const customerRef = billingCustomerRef(tenant.metadata);
+      if (customerRef === undefined) {
+        report.skipped.push({ tenantId: tenant.id, reason: 'no billingCustomerRef' });
+        continue;
+      }
+      const charges = await auditLog.query({
+        events: ['tenant.charged'],
+        tenantId: tenant.id,
+        limit: schedule.maxAttempts + 1,
+      });
+      const { consecutiveFailures, hoursSinceLastAttempt } = dunningStateFromCharges(
+        charges,
+        new Date(),
+      );
+      const decision = planDunning({ consecutiveFailures, hoursSinceLastAttempt, schedule });
+
+      if (decision.action === 'wait') {
+        report.skipped.push({
+          tenantId: tenant.id,
+          reason: consecutiveFailures === 0 ? 'no failures' : 'within backoff',
+        });
+        continue;
+      }
+      if (decision.action === 'suspend') {
+        await transition(tenant, 'suspended');
+        report.suspended.push({ tenantId: tenant.id, failures: consecutiveFailures });
+        observe('tenant.dunning', {
+          tenantId: tenant.id,
+          outcome: 'ok',
+          context: { action: 'suspend', failures: consecutiveFailures },
+        });
+        continue;
+      }
+      // retry
+      try {
+        const result = await chargeTenant(tenant.id, customerRef, period, decision.attempt);
+        report.retried.push({ tenantId: tenant.id, attempt: decision.attempt, ...result });
+        observe('tenant.dunning', {
+          tenantId: tenant.id,
+          outcome: 'ok',
+          context: { action: 'retry', attempt: decision.attempt, status: result.status },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        report.failed.push({ tenantId: tenant.id, attempt: decision.attempt, error: message });
+        observe('tenant.dunning', {
+          tenantId: tenant.id,
+          outcome: 'error',
+          context: { action: 'retry', attempt: decision.attempt },
+          error: message,
+        });
+      }
+    }
+    return report;
   };
 
   return {
@@ -1407,32 +1566,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       if (paymentGateway === undefined) {
         throw new Error('charging requires a configured payment gateway');
       }
-      const active = await registry.list({ status: 'active', limit: MAX_SWEEP });
-      const charged: (ChargeResult & { tenantId: string })[] = [];
-      const skipped: { tenantId: string; reason: string }[] = [];
-      const failed: { tenantId: string; error: string }[] = [];
-      for (const tenant of active) {
-        const customerRef = billingCustomerRef(tenant.metadata);
-        if (customerRef === undefined) {
-          skipped.push({ tenantId: tenant.id, reason: 'no billingCustomerRef' });
-          continue;
-        }
-        try {
-          charged.push({
-            tenantId: tenant.id,
-            ...(await chargeTenant(tenant.id, customerRef, period)),
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          // A zero/no-charge invoice is an intentional skip, not a billing failure.
-          if (/no positive amount to charge/.test(message)) {
-            skipped.push({ tenantId: tenant.id, reason: 'zero invoice' });
-          } else {
-            failed.push({ tenantId: tenant.id, error: message });
-          }
-        }
-      }
-      return { generatedAt: new Date().toISOString(), charged, skipped, failed };
+      return chargeFleetRun(period);
     },
 
     chargeHistory(limit = 20): Promise<TenantEvent[]> {
@@ -1448,83 +1582,56 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       if (paymentGateway === undefined) {
         throw new Error('dunning requires a configured payment gateway');
       }
-      const report: DunningReport = {
-        generatedAt: new Date().toISOString(),
-        schedule,
-        retried: [],
-        failed: [],
-        suspended: [],
-        skipped: [],
-      };
-      // No persisted trail ⇒ no failure history to act on ⇒ nothing to dun (fail closed, not silent).
-      if (auditLog === undefined) {
-        for (const tenant of await registry.list({ status: 'active', limit: MAX_SWEEP })) {
-          report.skipped.push({ tenantId: tenant.id, reason: 'no audit store' });
-        }
-        return report;
-      }
-
-      const active = await registry.list({ status: 'active', limit: MAX_SWEEP });
-      for (const tenant of active) {
-        const customerRef = billingCustomerRef(tenant.metadata);
-        if (customerRef === undefined) {
-          report.skipped.push({ tenantId: tenant.id, reason: 'no billingCustomerRef' });
-          continue;
-        }
-        const charges = await auditLog.query({
-          events: ['tenant.charged'],
-          tenantId: tenant.id,
-          limit: schedule.maxAttempts + 1,
-        });
-        const { consecutiveFailures, hoursSinceLastAttempt } = dunningStateFromCharges(
-          charges,
-          new Date(),
-        );
-        const decision = planDunning({ consecutiveFailures, hoursSinceLastAttempt, schedule });
-
-        if (decision.action === 'wait') {
-          report.skipped.push({
-            tenantId: tenant.id,
-            reason: consecutiveFailures === 0 ? 'no failures' : 'within backoff',
-          });
-          continue;
-        }
-        if (decision.action === 'suspend') {
-          await transition(tenant, 'suspended');
-          report.suspended.push({ tenantId: tenant.id, failures: consecutiveFailures });
-          observe('tenant.dunning', {
-            tenantId: tenant.id,
-            outcome: 'ok',
-            context: { action: 'suspend', failures: consecutiveFailures },
-          });
-          continue;
-        }
-        // retry
-        try {
-          const result = await chargeTenant(tenant.id, customerRef, period, decision.attempt);
-          report.retried.push({ tenantId: tenant.id, attempt: decision.attempt, ...result });
-          observe('tenant.dunning', {
-            tenantId: tenant.id,
-            outcome: 'ok',
-            context: { action: 'retry', attempt: decision.attempt, status: result.status },
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          report.failed.push({ tenantId: tenant.id, attempt: decision.attempt, error: message });
-          observe('tenant.dunning', {
-            tenantId: tenant.id,
-            outcome: 'error',
-            context: { action: 'retry', attempt: decision.attempt },
-            error: message,
-          });
-        }
-      }
-      return report;
+      return dunningSweepRun(period, schedule);
     },
 
     dunningHistory(limit = 20): Promise<TenantEvent[]> {
       if (auditLog === undefined) return Promise.resolve([]);
       return auditLog.query({ events: ['tenant.dunning'], limit });
+    },
+
+    async billingRun(
+      period: BillingPeriod = currentMonthPeriod(),
+      opts: BillingRunOptions = {},
+    ): Promise<BillingRunReport> {
+      assertPeriod(period);
+      if (paymentGateway === undefined) {
+        throw new Error('billing run requires a configured payment gateway');
+      }
+      // Charge the fleet first (each charge is idempotent — safe if the scheduler double-fires),
+      // then run dunning so a charge that just failed this run can begin its retry/escalation clock.
+      const charge = await chargeFleetRun(period);
+      const dunning = opts.skipDunning
+        ? undefined
+        : await dunningSweepRun(period, opts.dunningSchedule ?? DEFAULT_DUNNING_SCHEDULE);
+      const report: BillingRunReport = {
+        generatedAt: new Date().toISOString(),
+        period: { from: period.from.toISOString(), to: period.to.toISOString() },
+        charge,
+        ...(dunning !== undefined ? { dunning } : {}),
+      };
+      // Roll-up audit event for the run (the per-tenant tenant.charged / tenant.dunning events are
+      // emitted by the sweeps above). A failed charge OR dunning failure marks the run as `error`.
+      const hadFailure = charge.failed.length > 0 || (dunning?.failed.length ?? 0) > 0;
+      observe('billing.run', {
+        outcome: hadFailure ? 'error' : 'ok',
+        context: {
+          period: report.period,
+          charged: charge.charged.length,
+          chargeSkipped: charge.skipped.length,
+          chargeFailed: charge.failed.length,
+          retried: dunning?.retried.length ?? 0,
+          suspended: dunning?.suspended.length ?? 0,
+          dunningFailed: dunning?.failed.length ?? 0,
+          dunningRan: dunning !== undefined,
+        },
+      });
+      return report;
+    },
+
+    billingRunHistory(limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['billing.run'], limit });
     },
 
     async ingestPaymentWebhook(rawBody: string, signature: string): Promise<PaymentEvent> {

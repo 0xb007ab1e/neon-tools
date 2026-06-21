@@ -490,6 +490,21 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Recent billing-run roll-up events (read-only). The run itself charges the fleet + may suspend,
+  // so it is CLI-only + --yes gated (for a cron) — never exposed over HTTP.
+  app.get('/v1/billing/runs', requirePermission('tenant:read'), async (c) => {
+    const limitParam = c.req.query('limit');
+    const limit = limitParam === undefined ? undefined : Number(limitParam);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      return problem(c, 400, 'Bad Request', 'limit must be a positive integer');
+    }
+    try {
+      return c.json({ runs: await tf.billingRunHistory(limit) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // Recent dunning (failed-charge retry) events (read-only). The dunning *run* itself moves money
   // and may suspend tenants, so it is CLI-only + --yes gated — never exposed over HTTP.
   app.get('/v1/billing/dunning', requirePermission('tenant:read'), async (c) => {

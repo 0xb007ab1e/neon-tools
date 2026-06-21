@@ -11,6 +11,7 @@ import {
   fetchCharges,
   fetchPaymentEvents,
   fetchDunning,
+  fetchBillingRuns,
   fetchSession,
   login,
   logout,
@@ -24,6 +25,7 @@ import {
   type ChargeHistoryEntry,
   type PaymentEventEntry,
   type DunningHistoryEntry,
+  type BillingRunEntry,
   type Session,
 } from './api';
 
@@ -377,6 +379,7 @@ function BillingPanel(): React.JSX.Element {
   const { data, error } = usePanelData<ChargeHistoryEntry[]>(fetchCharges);
   const events = usePanelData<PaymentEventEntry[]>(fetchPaymentEvents);
   const dunning = usePanelData<DunningHistoryEntry[]>(fetchDunning);
+  const runs = usePanelData<BillingRunEntry[]>(fetchBillingRuns);
   return (
     <Panel id="billing-h" title="Billing (recent charges)" error={error} loading={data === null}>
       {data !== null && (
@@ -428,6 +431,31 @@ function BillingPanel(): React.JSX.Element {
                     <td>{e.context?.type ?? '—'}</td>
                     <td>{e.tenantId ?? '—'}</td>
                     <td>{e.context?.chargeId ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {runs.data !== null && runs.data.length > 0 && (
+            <table>
+              <caption>Recent billing runs</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Charged</th>
+                  <th scope="col">Retried</th>
+                  <th scope="col">Suspended</th>
+                  <th scope="col">Outcome</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.data.map((r) => (
+                  <tr key={r.at}>
+                    <td>{r.at}</td>
+                    <td>{r.context?.charged ?? '—'}</td>
+                    <td>{r.context?.retried ?? '—'}</td>
+                    <td>{r.context?.suspended ?? '—'}</td>
+                    <td>{r.outcome}</td>
                   </tr>
                 ))}
               </tbody>

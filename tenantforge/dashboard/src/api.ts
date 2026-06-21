@@ -246,3 +246,23 @@ export async function fetchDunning(): Promise<DunningHistoryEntry[]> {
   if (!res.ok) throw new Error('Could not load dunning history');
   return ((await res.json()) as { events: DunningHistoryEntry[] }).events;
 }
+
+/** One billing-run entry (a persisted `billing.run` roll-up audit event). */
+export interface BillingRunEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  context?: {
+    charged?: number;
+    chargeFailed?: number;
+    retried?: number;
+    suspended?: number;
+    dunningFailed?: number;
+  };
+}
+
+/** Load recent billing-run history (read-only; empty without an audit store). */
+export async function fetchBillingRuns(): Promise<BillingRunEntry[]> {
+  const res = await fetch(`${BASE}/billing-runs`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load billing runs');
+  return ((await res.json()) as { runs: BillingRunEntry[] }).runs;
+}

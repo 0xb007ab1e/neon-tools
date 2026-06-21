@@ -6,6 +6,22 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Scheduled billing run** — `tf.billingRun(period?, opts?)` (CLI `billing-run`, `--yes` gated) is
+  the unattended capstone of the billing arc: it **charges the fleet, then runs the dunning sweep**
+  in one pass, so billing runs from a cron / K8s CronJob (like `purge-expired`) instead of by hand.
+  Composes the existing fleet-charge + dunning logic (extracted into shared closures, no behavior
+  change to `chargeInvoiceFleet`/`runDunning`); **idempotent** (charges de-dupe on the stable
+  per-period key, dunning re-derives state from the audit trail) so a scheduler double-fire is safe,
+  and failure-isolated. `--skip-dunning` for a charge-only run; `--max-attempts`/`--min-hours` tune
+  the dunning policy. Emits a roll-up `billing.run` audit event (the per-tenant `tenant.charged` /
+  `tenant.dunning` events still come from the sweeps); `billingRunHistory()` reads them back.
+  **CLI-only and gated — never over HTTP or MCP** (`std-owasp-llm` LLM08); read-only history at
+  `GET /v1/billing/runs` + the dashboard billing panel + OpenAPI. New
+  [`docs/runbooks/billing-run.md`](./docs/runbooks/billing-run.md). Covered by facade (compose,
+  skip-dunning, gateway-required, roll-up event, defaults), HTTP, dashboard, and OpenAPI tests.
+
 ## [0.8.0] - 2026-06-21
 
 Closes the billing lifecycle and hardens the wire. **Dunning** turns a one-off failed charge into a
