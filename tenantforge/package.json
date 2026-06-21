@@ -23,6 +23,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && pnpm dashboard:build",
+    "version:check": "node scripts/check-version.mjs",
     "cli": "node --env-file-if-exists=.env --import tsx src/app/cli.ts",
     "http": "node --env-file-if-exists=.env --import tsx src/app/http.ts",
     "mcp": "node --env-file-if-exists=.env --import tsx src/app/mcp.ts",
