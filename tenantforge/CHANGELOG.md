@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-06-21
+
+Adds invoice delivery — email generated invoices to tenants (the billing arc's last mile).
+Additive/backward-compatible (MINOR) — off until a notifier is configured. Builder-side billing
+orchestration; Neon doesn't invoice the operator's tenants (not a Neon feature).
+
 ### Added
 
 - **Invoice delivery (email)** — `sendInvoice(id, period)` / `sendInvoiceFleet(period)` (CLI
