@@ -1396,6 +1396,97 @@ describe('createTenantForge.runDunning', () => {
   });
 });
 
+describe('createTenantForge.billingRun', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  const provider = {
+    getProjectConsumption: () =>
+      Promise.resolve([
+        {
+          computeTimeSeconds: 100,
+          activeTimeSeconds: 0,
+          writtenDataBytes: 0,
+          syntheticStorageBytes: 0,
+        },
+      ]),
+  };
+  type Gw = import('../../src/ports/payment-gateway.js').PaymentGateway;
+  const okGateway = (): Gw => ({
+    provider: 'stripe',
+    charge: (r) =>
+      Promise.resolve({
+        id: 'ch_1',
+        status: 'succeeded',
+        amountMinor: r.amountMinor,
+        currency: r.currency,
+        provider: 'stripe',
+      }),
+  });
+  const base = () => ({
+    registry: fakeRegistry(),
+    provisioning: fakeProvisioning(),
+    secretStore: createInMemorySecretStore(),
+    usageProvider: provider,
+    billingRates: { computeSecondUsd: 0.02 },
+    defaultRegion: 'aws-us-east-1' as const,
+  });
+
+  it('fails closed without a payment gateway', async () => {
+    const tf = createTenantForge(base());
+    await expect(tf.billingRun(period)).rejects.toThrow(/requires a configured payment gateway/);
+  });
+
+  it('charges the fleet then duns, and records a billing.run roll-up event', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const tf = createTenantForge({
+      ...base(),
+      paymentGateway: okGateway(),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+
+    const report = await tf.billingRun(period);
+
+    expect(report.charge.charged.map((c) => c.tenantId)).toEqual([tenant.id]);
+    // The charge just succeeded → dunning sees no failures → the tenant is skipped, not retried.
+    expect(report.dunning?.retried).toEqual([]);
+    expect(report.dunning?.skipped).toEqual([{ tenantId: tenant.id, reason: 'no failures' }]);
+    const runs = await tf.billingRunHistory();
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.event).toBe('billing.run');
+    expect(runs[0]?.outcome).toBe('ok');
+    expect(runs[0]?.context?.charged).toBe(1);
+    expect(runs[0]?.context?.dunningRan).toBe(true);
+  });
+
+  it('skips the dunning sweep when skipDunning is set (charge-only run)', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const tf = createTenantForge({
+      ...base(),
+      paymentGateway: okGateway(),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    await tf.provision({ slug: 'acme', metadata: { billingCustomerRef: 'cus_1' } });
+
+    const report = await tf.billingRun(period, { skipDunning: true });
+    expect(report.dunning).toBeUndefined();
+    expect(report.charge.charged).toHaveLength(1);
+    expect((await tf.billingRunHistory())[0]?.context?.dunningRan).toBe(false);
+  });
+
+  it('billingRunHistory returns [] without an audit store; defaults the period when omitted', async () => {
+    const tf = createTenantForge({ ...base(), paymentGateway: okGateway() });
+    expect(await tf.billingRunHistory()).toEqual([]);
+    const report = await tf.billingRun(); // current-month default, empty registry
+    expect(report.charge.charged).toEqual([]);
+    expect(report.dunning?.skipped).toEqual([]);
+  });
+});
+
 describe('createTenantForge.ingestPaymentWebhook', () => {
   type Verifier = import('../../src/ports/payment-webhook.js').PaymentWebhookVerifier;
   type Event = import('../../src/ports/payment-webhook.js').PaymentEvent;

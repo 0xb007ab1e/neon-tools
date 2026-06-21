@@ -41,6 +41,7 @@ const permissiveTf = (): TenantForge =>
     chargeHistory: () => Promise.resolve([]),
     paymentWebhookHistory: () => Promise.resolve([]),
     dunningHistory: () => Promise.resolve([]),
+    billingRunHistory: () => Promise.resolve([]),
   }) as unknown as TenantForge;
 
 interface OpenApiDoc {

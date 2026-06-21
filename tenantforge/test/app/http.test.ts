@@ -331,6 +331,22 @@ describe('HTTP control-plane', () => {
     expect(await ok.json()).toEqual({ events });
   });
 
+  it('serves billing-run history (tenant:read); the run itself is not over HTTP', async () => {
+    const runs = [{ event: 'billing.run', at: 'x', outcome: 'ok' }];
+    const server = app({ billingRunHistory: async () => runs as never });
+    const ok = await server.request('/v1/billing/runs', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ runs });
+    // No billing-run endpoint (it charges the fleet + suspends — CLI/gated only).
+    const post = await server.request('/v1/billing/runs', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(post.status).toBe(404);
+  });
+
   it('serves dunning history (tenant:read), 400 on a bad limit; the run is not over HTTP', async () => {
     const events = [{ event: 'tenant.dunning', at: 'x', outcome: 'ok' }];
     const server = app({ dunningHistory: async () => events as never });

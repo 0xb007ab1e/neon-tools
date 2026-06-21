@@ -819,6 +819,79 @@ const dunning = defineCommand({
   },
 });
 
+const billingRun = defineCommand({
+  meta: {
+    name: 'billing-run',
+    description:
+      'Full billing run for the period: charge the fleet, then dun failures (--yes gated; for a cron)',
+  },
+  args: {
+    from: { type: 'string', description: 'Period start (ISO-8601); default month start' },
+    to: { type: 'string', description: 'Period end (ISO-8601); default now' },
+    'skip-dunning': {
+      type: 'boolean',
+      description: 'Charge only — skip the dunning sweep',
+      default: false,
+    },
+    'max-attempts': {
+      type: 'string',
+      description: 'Dunning: consecutive failures before suspending (default 4)',
+    },
+    'min-hours': {
+      type: 'string',
+      description: 'Dunning: minimum hours between retry attempts (default 24)',
+    },
+    json: { type: 'boolean', description: 'Emit the full report as JSON', default: false },
+    yes: {
+      type: 'boolean',
+      description: 'Confirm — this charges the fleet (moves real money) and may suspend tenants.',
+      default: false,
+    },
+  },
+  async run({ args }) {
+    if (!args.yes) {
+      process.stderr.write(
+        'refusing to run billing without --yes (this charges the fleet and may suspend tenants)\n',
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const dunningSchedule =
+      args['max-attempts'] !== undefined || args['min-hours'] !== undefined
+        ? {
+            maxAttempts: args['max-attempts'] !== undefined ? Number(args['max-attempts']) : 4,
+            minHoursBetweenAttempts:
+              args['min-hours'] !== undefined ? Number(args['min-hours']) : 24,
+          }
+        : undefined;
+    await withTenantForge(async (tf) => {
+      const report = await tf.billingRun(monthPeriod(args.from, args.to), {
+        skipDunning: args['skip-dunning'],
+        ...(dunningSchedule !== undefined ? { dunningSchedule } : {}),
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      } else {
+        const c = report.charge;
+        process.stdout.write(
+          `billing run ${report.period.from}..${report.period.to}\n` +
+            `  charge: ${c.charged.length} charged, ${c.skipped.length} skipped, ${c.failed.length} failed\n`,
+        );
+        if (report.dunning) {
+          const d = report.dunning;
+          process.stdout.write(
+            `  dunning: ${d.retried.length} retried, ${d.suspended.length} suspended, ${d.failed.length} failed\n`,
+          );
+        } else {
+          process.stdout.write('  dunning: skipped\n');
+        }
+      }
+      const failed = report.charge.failed.length + (report.dunning?.failed.length ?? 0);
+      if (failed > 0) process.exitCode = 1;
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -852,6 +925,7 @@ const main = defineCommand({
     charge,
     'charge-fleet': chargeFleet,
     dunning,
+    'billing-run': billingRun,
   },
 });
 

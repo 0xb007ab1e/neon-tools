@@ -92,6 +92,13 @@ const dunning = [
     context: { action: 'retry', attempt: 2, status: 'succeeded' },
   },
 ];
+const billingRuns = [
+  {
+    at: '2026-06-20T03:00:00.000Z',
+    outcome: 'ok',
+    context: { charged: 7, chargeFailed: 0, retried: 1, suspended: 0, dunningFailed: 0 },
+  },
+];
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -125,6 +132,7 @@ beforeEach(() => {
       if (url.endsWith('/reconcile')) return Promise.resolve(json(reconcile));
       if (url.endsWith('/invoices')) return Promise.resolve(json(invoices));
       if (url.endsWith('/payment-events')) return Promise.resolve(json({ events: paymentEvents }));
+      if (url.endsWith('/billing-runs')) return Promise.resolve(json({ runs: billingRuns }));
       if (url.endsWith('/dunning')) return Promise.resolve(json({ events: dunning }));
       if (url.endsWith('/charges')) return Promise.resolve(json({ charges }));
       if (url.endsWith('/cost')) return Promise.resolve(json(cost));
@@ -184,6 +192,8 @@ describe('dashboard App', () => {
     // Dunning (failed-charge retries) render in the billing panel.
     expect(await screen.findByText('Recent dunning (failed-charge retries)')).toBeInTheDocument();
     expect(await screen.findByText('tenant-dunned')).toBeInTheDocument();
+    // Billing runs render in the billing panel.
+    expect(await screen.findByText('Recent billing runs')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);
