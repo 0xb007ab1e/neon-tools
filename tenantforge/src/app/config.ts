@@ -176,6 +176,10 @@ const EnvSchema = z
     // queryable `tf_audit_log`). `pg` enables erasure-history + recent-excerpt in the compliance
     // report and survives restarts/multi-instance. Requires migration 0006.
     TENANTFORGE_AUDIT_LOG: z.enum(['none', 'pg']).default('none'),
+    // Credit ledger (downgrade credits + applying credit to charges): `none` (off — downgrades fall
+    // back to a capped refund), `memory` (process-local; dev/single-instance), or `pg` (durable,
+    // authoritative, cross-instance — `tf_credits`, migration 0007). Recommended `pg` in production.
+    TENANTFORGE_CREDIT_LEDGER: z.enum(['none', 'memory', 'pg']).default('none'),
     // Transport-security escape hatches (default false — fail closed). `..._DB` permits a non-TLS
     // Postgres connection (no `sslmode=require`); `..._URLS` permits a non-https outbound URL
     // (Neon API / Vault / Azure Key Vault / OIDC JWKS / Stripe). Set ONLY for local development
@@ -425,6 +429,8 @@ export interface Config {
   idempotencyStore: 'memory' | 'pg';
   /** Persisted audit trail: none (stdout only) or Postgres (durable, queryable). */
   auditLog: 'none' | 'pg';
+  /** Credit ledger backend: none (off), memory (per-instance), or pg (durable, authoritative). */
+  creditLedger: 'none' | 'memory' | 'pg';
   /** Cache `getConnection` resolutions for this many ms (0 = disabled). */
   connectionCacheTtlMs: number;
   /** Dashboard session-cookie HMAC key; set ⇒ the /dashboard backend is mounted. */
@@ -500,6 +506,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rateLimitStore: parsed.TENANTFORGE_RATE_LIMIT_STORE,
     idempotencyStore: parsed.TENANTFORGE_IDEMPOTENCY_STORE,
     auditLog: parsed.TENANTFORGE_AUDIT_LOG,
+    creditLedger: parsed.TENANTFORGE_CREDIT_LEDGER,
     paymentGateway: parsed.TENANTFORGE_PAYMENT_GATEWAY,
     notifier: parsed.TENANTFORGE_NOTIFIER,
     ...(parsed.STRIPE_SECRET_KEY !== undefined

@@ -45,6 +45,8 @@ const app = () =>
         [{ event: 'tenant.notified', at: 'x', outcome: 'ok' }] as never,
       planChangeHistory: async () =>
         [{ event: 'tenant.plan_changed', at: 'x', outcome: 'ok' }] as never,
+      creditGrantHistory: async () =>
+        [{ event: 'tenant.credit_granted', at: 'x', outcome: 'ok' }] as never,
     }),
     { token: TOKEN, dashboardSecret: 'session-secret' },
   );
@@ -128,6 +130,11 @@ describe('dashboard backend', () => {
     expect(await pc.json()).toEqual({
       planChanges: [{ event: 'tenant.plan_changed', at: 'x', outcome: 'ok' }],
     });
+    const cg = await server.request('/dashboard/api/credit-grants', { headers: { cookie } });
+    expect(cg.status).toBe(200);
+    expect(await cg.json()).toEqual({
+      creditGrants: [{ event: 'tenant.credit_granted', at: 'x', outcome: 'ok' }],
+    });
     // The panels require a session.
     expect((await server.request('/dashboard/api/cost')).status).toBe(401);
     expect((await server.request('/dashboard/api/reconcile')).status).toBe(401);
@@ -140,6 +147,7 @@ describe('dashboard backend', () => {
     expect((await server.request('/dashboard/api/refunds')).status).toBe(401);
     expect((await server.request('/dashboard/api/notifications')).status).toBe(401);
     expect((await server.request('/dashboard/api/plan-changes')).status).toBe(401);
+    expect((await server.request('/dashboard/api/credit-grants')).status).toBe(401);
   });
 
   it('rejects an invalid operator token (401) and sets no cookie', async () => {

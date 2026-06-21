@@ -471,6 +471,26 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // A tenant's credit balance + ledger (read-only). Granting credit is a CLI op (gated liability).
+  app.get('/v1/tenants/:id/credit', requirePermission('tenant:read'), async (c) => {
+    const currency = c.req.query('currency') ?? 'usd';
+    const limitParam = c.req.query('limit');
+    const limit = limitParam === undefined ? undefined : Number(limitParam);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      return problem(c, 400, 'Bad Request', 'limit must be a positive integer');
+    }
+    try {
+      const id = c.req.param('id');
+      const [balanceMinor, entries] = await Promise.all([
+        tf.creditBalance(id, currency),
+        tf.creditHistory(id, limit),
+      ]);
+      return c.json({ tenantId: id, currency: currency.toLowerCase(), balanceMinor, entries });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // Recent plan-change events (read-only). Applying a change is a CLI op (mutation + optional money).
   app.get('/v1/billing/plan-changes', requirePermission('tenant:read'), async (c) => {
     const limitParam = c.req.query('limit');

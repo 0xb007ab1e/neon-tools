@@ -111,7 +111,10 @@ import type { ChargeResult, PaymentGateway, RefundResult } from '../ports/paymen
 import { createStripeGateway } from '../adapters/payment/stripe-gateway.js';
 import type { PaymentEvent, PaymentWebhookVerifier } from '../ports/payment-webhook.js';
 import type { Notifier } from '../ports/notifier.js';
+import type { CreditLedger } from '../ports/credit-ledger.js';
 import { createStripeWebhookVerifier } from '../adapters/payment/stripe-webhook.js';
+import { createInMemoryCreditLedger } from '../adapters/credit-ledger.js';
+import { createPgCreditLedger } from '../adapters/neon-pg/credit-ledger.js';
 import { createLogNotifier } from '../adapters/notify/log-notifier.js';
 import { createHttpNotifier } from '../adapters/notify/http-notifier.js';
 import type { UsageProvider } from '../ports/usage-provider.js';
@@ -239,10 +242,11 @@ export interface PlanChangePreview {
 export interface PlanChangeReport extends PlanChangePreview {
   /**
    * How the prorated delta was settled: `none` (zero delta or `settle` not requested), `charged`
-   * (upgrade), `refunded` (downgrade, against the latest charge), or `skipped` (settle requested but
-   * no billing customer ref / no prior charge to credit).
+   * (upgrade), `credited` (downgrade → uncapped credit balance, when a credit ledger is wired),
+   * `refunded` (downgrade → refund against the latest charge, capped, when no ledger), or `skipped`
+   * (settle requested but no billing customer ref / no prior charge to credit).
    */
-  settlement: 'none' | 'charged' | 'refunded' | 'skipped';
+  settlement: 'none' | 'charged' | 'credited' | 'refunded' | 'skipped';
   /** The settlement charge/refund id, when one occurred. */
   settlementId?: string;
 }
@@ -358,6 +362,12 @@ export interface TenantForgeDeps {
    * the billing operation it confirms.
    */
   notifier?: Notifier;
+  /**
+   * Credit ledger for prorated downgrade credits + applying credit to charges. When provided, a
+   * charge first draws down any available balance (so the card is charged the remainder), and a plan
+   * **downgrade** grants an uncapped credit rather than a capped refund. Absent = credit features off.
+   */
+  creditLedger?: CreditLedger;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -981,6 +991,54 @@ export interface TenantForge {
   planChangeHistory(limit?: number): Promise<TenantEvent[]>;
 
   /**
+   * **Grant credit** to a tenant's balance (an operator adjustment / goodwill / refund-as-credit).
+   * Requires a credit ledger; emits a `tenant.credit_granted` event. Adds a financial liability, so
+   * the surface is CLI-only + `--yes` gated.
+   *
+   * @param tenantId - The tenant to credit.
+   * @param amountMinor - The amount to grant (minor units, > 0).
+   * @param opts - `currency` (default `usd`) and a `reason`.
+   * @throws Error if no credit ledger is wired or the amount is not positive.
+   */
+  grantCredit(
+    tenantId: string,
+    amountMinor: number,
+    opts?: { currency?: string; reason?: string },
+  ): Promise<void>;
+
+  /**
+   * A tenant's current **credit balance** (minor units, never negative) for a currency. Returns `0`
+   * when no credit ledger is wired.
+   *
+   * @param tenantId - The tenant.
+   * @param currency - Lowercase ISO 4217 (default `usd`).
+   * @returns The balance in minor units.
+   */
+  creditBalance(tenantId: string, currency?: string): Promise<number>;
+
+  /**
+   * A tenant's recent **credit-ledger entries** (grants + consumptions), newest-first. Returns `[]`
+   * when no credit ledger is wired.
+   *
+   * @param tenantId - The tenant.
+   * @param limit - Max entries. Defaults to 20.
+   * @returns The credit entries.
+   */
+  creditHistory(
+    tenantId: string,
+    limit?: number,
+  ): Promise<import('../ports/credit-ledger.js').CreditEntry[]>;
+
+  /**
+   * Recent **credit-grant history** (`tenant.credit_granted` events) from the persisted audit trail —
+   * a fleet-wide operator view. Returns `[]` when no audit store is wired.
+   *
+   * @param limit - Max entries, newest-first. Defaults to 20.
+   * @returns Recent credit-grant audit events.
+   */
+  creditGrantHistory(limit?: number): Promise<TenantEvent[]>;
+
+  /**
    * **Ingest an inbound PSP webhook** (e.g. Stripe): verify its signature over the raw body, parse +
    * normalize it, and emit a redacted `payment.webhook` audit event (attributed to the tenant when
    * the event carries one). Requires a configured webhook verifier; throws on a bad/stale signature
@@ -1046,6 +1104,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const auditLog = deps.auditLog;
   const paymentGateway = deps.paymentGateway;
   const notifier = deps.notifier;
+  const creditLedger = deps.creditLedger;
   const paymentWebhookVerifier = deps.paymentWebhookVerifier;
 
   /** Build the backup engine on demand; fails closed if no snapshot provider was configured. */
@@ -1351,40 +1410,77 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   ): Promise<ChargeResult> => {
     const invoice = await invoiceEngine().invoice(id, period);
     const { amountMinor, currency } = invoiceChargeAmount(invoice); // throws if not positive
-    try {
-      const result = await paymentGateway!.charge({
+    // Apply any available credit first, keyed by the **period** (stable across dunning retries), so a
+    // re-charge consumes nothing more and credit is applied to a period exactly once.
+    let creditApplied = 0;
+    if (creditLedger !== undefined) {
+      const { consumedMinor } = await creditLedger.consume({
+        tenantId: id,
         amountMinor,
         currency,
-        customerRef,
-        // A dunning retry (attempt > 0) gets a distinct key so the PSP makes a fresh attempt
-        // rather than replaying the original failure.
-        idempotencyKey: chargeIdempotencyKey(invoice, attempt),
-        description: `TenantForge ${id} ${invoice.periodStart}..${invoice.periodEnd}`,
-        // Stamp the tenant id so inbound PSP webhooks correlate back to this tenant.
-        metadata: { tenant_id: id },
+        reason: 'applied to charge',
+        reference: `tenantforge:credit-applied:${id}:${invoice.periodStart}..${invoice.periodEnd}`,
       });
+      creditApplied = consumedMinor;
+    }
+    const toChargeMinor = amountMinor - creditApplied;
+    try {
+      // Fully covered by credit ⇒ no card charge (a synthetic, stable result); else charge the remainder.
+      const result: ChargeResult =
+        toChargeMinor <= 0
+          ? {
+              id: `credit:${invoice.periodStart}..${invoice.periodEnd}`,
+              status: 'succeeded',
+              amountMinor: 0,
+              currency,
+              provider: 'credit',
+            }
+          : await paymentGateway!.charge({
+              amountMinor: toChargeMinor,
+              currency,
+              customerRef,
+              // A dunning retry (attempt > 0) gets a distinct key so the PSP makes a fresh attempt.
+              idempotencyKey: chargeIdempotencyKey(invoice, attempt),
+              description: `TenantForge ${id} ${invoice.periodStart}..${invoice.periodEnd}`,
+              metadata: { tenant_id: id },
+            });
       observe('tenant.charged', {
         tenantId: id,
         outcome: 'ok',
         context: {
           provider: result.provider,
           chargeId: result.id,
-          amountMinor,
+          // The amount actually charged to the card (what a refund can reverse).
+          amountMinor: toChargeMinor > 0 ? toChargeMinor : 0,
           currency,
           status: result.status,
-          // The period this charge covered — lets refund-on-offboard prorate the unused portion.
+          // Period covered — lets refund-on-offboard prorate the unused portion.
           periodStart: invoice.periodStart,
           periodEnd: invoice.periodEnd,
+          ...(creditApplied > 0
+            ? { creditAppliedMinor: creditApplied, originalAmountMinor: amountMinor }
+            : {}),
         },
       });
-      // Best-effort receipt (never blocks/breaks the charge — sendReceipt swallows its own errors).
-      await sendReceipt('charge', { tenantId: id, amountMinor, currency, reference: result.id });
+      // Receipt only when the card was actually charged (best-effort; swallows its own errors).
+      if (toChargeMinor > 0) {
+        await sendReceipt('charge', {
+          tenantId: id,
+          amountMinor: toChargeMinor,
+          currency,
+          reference: result.id,
+        });
+      }
       return result;
     } catch (error) {
       observe('tenant.charged', {
         tenantId: id,
         outcome: 'error',
-        context: { amountMinor, currency },
+        context: {
+          amountMinor: toChargeMinor,
+          currency,
+          ...(creditApplied > 0 ? { creditAppliedMinor: creditApplied } : {}),
+        },
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -2188,40 +2284,52 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       let settlement: PlanChangeReport['settlement'] = 'none';
       let settlementId: string | undefined;
       const delta = q.proratedDeltaMinor;
+      const planRef = `tenantforge:plan-change:${id}:${q.period.from.toISOString()}..${q.period.to.toISOString()}:${Math.round(newPriceUsd * 100)}`;
       if (opts.settle === true && delta !== 0) {
-        if (paymentGateway === undefined) {
-          throw new Error('plan-change settlement requires a payment gateway');
-        }
-        const customerRef = billingCustomerRef(q.tenant.metadata);
-        if (customerRef === undefined) {
-          settlement = 'skipped';
-        } else if (delta > 0) {
-          // Upgrade → charge the prorated delta as a one-off (recorded under tenant.plan_changed).
-          const result = await paymentGateway.charge({
-            amountMinor: delta,
+        if (delta < 0 && creditLedger !== undefined) {
+          // Downgrade with a credit ledger → grant the FULL (uncapped) credit to the balance, to be
+          // drawn down on the next charge. No gateway / prior charge needed — the cap is gone.
+          await creditLedger.grant({
+            tenantId: id,
+            amountMinor: -delta,
             currency: 'usd',
-            customerRef,
-            idempotencyKey: `tenantforge:plan-change:${id}:${q.period.from.toISOString()}..${q.period.to.toISOString()}:${Math.round(newPriceUsd * 100)}`,
-            description: `TenantForge plan change ${id}`,
-            metadata: { tenant_id: id },
+            reason: 'plan downgrade proration',
+            reference: planRef,
           });
-          settlement = 'charged';
-          settlementId = result.id;
+          settlement = 'credited';
+        } else if (paymentGateway === undefined) {
+          throw new Error('plan-change settlement requires a payment gateway (or a credit ledger)');
         } else {
-          // Downgrade → refund the credit against the tenant's latest charge, capped at that charge.
-          const latest = await latestOkCharge(id);
-          if (latest === undefined) {
+          const customerRef = billingCustomerRef(q.tenant.metadata);
+          if (customerRef === undefined) {
             settlement = 'skipped';
-          } else {
-            const credit = Math.min(-delta, latest.amountMinor);
-            const result = await refundChargeImpl(latest.chargeId, {
-              amountMinor: credit,
-              currency: latest.currency,
-              tenantId: id,
-              reason: 'plan downgrade proration',
+          } else if (delta > 0) {
+            // Upgrade → charge the prorated delta as a one-off (recorded under tenant.plan_changed).
+            const result = await paymentGateway.charge({
+              amountMinor: delta,
+              currency: 'usd',
+              customerRef,
+              idempotencyKey: planRef,
+              description: `TenantForge plan change ${id}`,
+              metadata: { tenant_id: id },
             });
-            settlement = 'refunded';
+            settlement = 'charged';
             settlementId = result.id;
+          } else {
+            // Downgrade, no credit ledger → refund against the latest charge, capped at it (legacy).
+            const latest = await latestOkCharge(id);
+            if (latest === undefined) {
+              settlement = 'skipped';
+            } else {
+              const result = await refundChargeImpl(latest.chargeId, {
+                amountMinor: Math.min(-delta, latest.amountMinor),
+                currency: latest.currency,
+                tenantId: id,
+                reason: 'plan downgrade proration',
+              });
+              settlement = 'refunded';
+              settlementId = result.id;
+            }
           }
         }
       }
@@ -2250,6 +2358,45 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     planChangeHistory(limit = 20): Promise<TenantEvent[]> {
       if (auditLog === undefined) return Promise.resolve([]);
       return auditLog.query({ events: ['tenant.plan_changed'], limit });
+    },
+
+    async grantCredit(
+      tenantId: string,
+      amountMinor: number,
+      opts: { currency?: string; reason?: string } = {},
+    ): Promise<void> {
+      if (creditLedger === undefined) {
+        throw new Error('granting credit requires a configured credit ledger');
+      }
+      if (!Number.isInteger(amountMinor) || amountMinor <= 0) {
+        throw new Error(`credit amount must be a positive integer, got ${amountMinor}`);
+      }
+      const currency = (opts.currency ?? 'usd').toLowerCase();
+      const reason = opts.reason ?? 'operator credit';
+      await creditLedger.grant({ tenantId, amountMinor, currency, reason });
+      observe('tenant.credit_granted', {
+        tenantId,
+        outcome: 'ok',
+        context: { amountMinor, currency, reason },
+      });
+    },
+
+    async creditBalance(tenantId: string, currency = 'usd'): Promise<number> {
+      if (creditLedger === undefined) return 0;
+      return creditLedger.balance(tenantId, currency.toLowerCase());
+    },
+
+    creditHistory(
+      tenantId: string,
+      limit = 20,
+    ): Promise<import('../ports/credit-ledger.js').CreditEntry[]> {
+      if (creditLedger === undefined) return Promise.resolve([]);
+      return creditLedger.history(tenantId, limit);
+    },
+
+    creditGrantHistory(limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.credit_granted'], limit });
     },
 
     async ingestPaymentWebhook(rawBody: string, signature: string): Promise<PaymentEvent> {
@@ -2281,8 +2428,9 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     },
 
     async close(): Promise<void> {
-      // Release the audit store's own pool (the pg adapter owns one) before the registry.
+      // Release any pg-backed pools the adapters own (audit store, credit ledger) before the registry.
       await (auditLog as { close?: () => Promise<void> } | undefined)?.close?.();
+      await (creditLedger as { close?: () => Promise<void> } | undefined)?.close?.();
       await registry.close();
     },
   };
@@ -2359,6 +2507,16 @@ export function tenantForgeFromConfig(
     auditLog !== undefined
       ? createFanOutEventSink([baseSink, createAuditLogEventSink(auditLog)])
       : baseSink;
+  // Credit ledger: durable Postgres (authoritative) or process-local memory; absent = credit off.
+  const creditLedger =
+    config.creditLedger === 'pg'
+      ? createPgCreditLedger({
+          connectionString: config.databaseUrl,
+          allowInsecure: allowInsecureDb,
+        })
+      : config.creditLedger === 'memory'
+        ? createInMemoryCreditLedger()
+        : undefined;
   return createTenantForge({
     registry,
     provisioning,
@@ -2366,6 +2524,7 @@ export function tenantForgeFromConfig(
     migrationRunner: createPgMigrationRunner({ allowInsecure: allowInsecureDb }),
     exporter,
     eventSink,
+    ...(creditLedger !== undefined ? { creditLedger } : {}),
     ...(auditLog !== undefined ? { auditLog } : {}),
     usageProvider: createNeonUsageProvider({
       apiKey: config.neonApiKey,

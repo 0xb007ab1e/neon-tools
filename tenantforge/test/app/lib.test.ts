@@ -16,6 +16,7 @@ import type {
 } from '../../src/ports/provisioning-provider.js';
 import { createInMemorySecretStore } from '../../src/adapters/secret-store.js';
 import { createInMemoryAuditLogStore } from '../../src/adapters/audit-log-store.js';
+import { createInMemoryCreditLedger } from '../../src/adapters/credit-ledger.js';
 import { createAuditLogEventSink } from '../../src/adapters/event-sink.js';
 import { createLifecycleHandler, createTenantForge } from '../../src/app/lib.js';
 import { runWithActor } from '../../src/app/actor-context.js';
@@ -1813,6 +1814,124 @@ describe('createTenantForge billing receipts (notifier)', () => {
     });
     await tf.chargeInvoice(tenant.id, period);
     expect(await tf.notificationHistory()).toEqual([]);
+  });
+});
+
+describe('createTenantForge credit ledger', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  const provider = {
+    getProjectConsumption: () =>
+      Promise.resolve([
+        {
+          computeTimeSeconds: 100,
+          activeTimeSeconds: 0,
+          writtenDataBytes: 0,
+          syntheticStorageBytes: 0,
+        },
+      ]),
+  };
+  type Gw = import('../../src/ports/payment-gateway.js').PaymentGateway;
+  type ChargeReq = import('../../src/ports/payment-gateway.js').ChargeRequest;
+  const okGateway = (calls: ChargeReq[] = []): Gw => ({
+    provider: 'stripe',
+    charge: (r) => {
+      calls.push(r);
+      return Promise.resolve({
+        id: 'ch_1',
+        status: 'succeeded',
+        amountMinor: r.amountMinor,
+        currency: r.currency,
+        provider: 'stripe',
+      });
+    },
+    refund: () => Promise.reject(new Error('unused')),
+  });
+  const base = (extra: Record<string, unknown>) => {
+    const auditLog = createInMemoryAuditLogStore();
+    return {
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      billingRates: { computeSecondUsd: 0.02 }, // $2.00 invoice → 200 minor
+      defaultRegion: 'aws-us-east-1' as const,
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+      ...extra,
+    };
+  };
+
+  it('grantCredit raises the balance and records tenant.credit_granted; reads back', async () => {
+    const tf = createTenantForge(
+      base({ paymentGateway: okGateway(), creditLedger: createInMemoryCreditLedger() }),
+    );
+    await tf.grantCredit('t-a', 1500, { reason: 'goodwill' });
+    expect(await tf.creditBalance('t-a')).toBe(1500);
+    expect((await tf.creditHistory('t-a'))[0]?.amountMinor).toBe(1500);
+    expect((await tf.creditGrantHistory())[0]?.event).toBe('tenant.credit_granted');
+  });
+
+  it('grantCredit fails closed without a ledger, and rejects a non-positive amount', async () => {
+    const noLedger = createTenantForge(base({ paymentGateway: okGateway() }));
+    await expect(noLedger.grantCredit('t-a', 100)).rejects.toThrow(
+      /requires a configured credit ledger/,
+    );
+    expect(await noLedger.creditBalance('t-a')).toBe(0);
+    const tf = createTenantForge(
+      base({ paymentGateway: okGateway(), creditLedger: createInMemoryCreditLedger() }),
+    );
+    await expect(tf.grantCredit('t-a', 0)).rejects.toThrow(/positive integer/);
+  });
+
+  it('a charge draws down credit first and charges only the remainder', async () => {
+    const calls: ChargeReq[] = [];
+    const tf = createTenantForge(
+      base({ paymentGateway: okGateway(calls), creditLedger: createInMemoryCreditLedger() }),
+    );
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+    await tf.grantCredit(tenant.id, 50); // partial — invoice is 200
+    const result = await tf.chargeInvoice(tenant.id, period);
+    expect(result.amountMinor).toBe(150);
+    expect(calls[0]?.amountMinor).toBe(150);
+    expect(await tf.creditBalance(tenant.id)).toBe(0);
+  });
+
+  it('credit covering the whole invoice skips the card charge entirely', async () => {
+    const calls: ChargeReq[] = [];
+    const tf = createTenantForge(
+      base({ paymentGateway: okGateway(calls), creditLedger: createInMemoryCreditLedger() }),
+    );
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+    await tf.grantCredit(tenant.id, 500);
+    const result = await tf.chargeInvoice(tenant.id, period);
+    expect(result.provider).toBe('credit');
+    expect(result.amountMinor).toBe(0);
+    expect(calls).toHaveLength(0);
+    expect(await tf.creditBalance(tenant.id)).toBe(300);
+  });
+
+  it('a downgrade with a ledger grants the FULL credit (uncapped)', async () => {
+    const tf = createTenantForge(
+      base({ paymentGateway: okGateway(), creditLedger: createInMemoryCreditLedger() }),
+    );
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { priceUsd: 30, billingCustomerRef: 'cus_1' },
+    });
+    const report = await tf.changePlan(tenant.id, 10, {
+      period,
+      asOf: new Date('2026-06-16T00:00:00.000Z'),
+      settle: true,
+    });
+    expect(report.settlement).toBe('credited');
+    expect(report.proratedDeltaMinor).toBe(-1000);
+    expect(await tf.creditBalance(tenant.id)).toBe(1000);
   });
 });
 
