@@ -4,8 +4,11 @@ info:
   version: 0.4.1
   description: >
     Control plane for database-per-tenant SaaS on Neon: provision an isolated project per tenant,
-    look tenants up, and run lifecycle operations (suspend / resume / offboard). Long-running fleet
-    migrations are intentionally not exposed over HTTP — use the CLI (`tenantforge migrate-fleet`).
+    look tenants up, run lifecycle operations (suspend / resume / offboard), and read the
+    extension reports — compliance attestation, cost/margin, invoices, and the fleet reconcile plan
+    + history. Long-running, SQL-bearing fleet operations (migrate / reconcile *execution*) are
+    intentionally not exposed over HTTP — use the CLI (`tenantforge migrate-fleet` /
+    `reconcile-fleet`) or the gated dashboard action; HTTP exposes only their read-only plan/history.
     Every `/v1/*` route requires a bearer token; tenant scope is derived server-side from the
     authenticated principal (a client-supplied id is never trusted — std-owasp-api BOLA).
     Tokens are per-operator with a role: `readonly` may read (GET), `admin` may mutate — a `readonly`
@@ -22,6 +25,10 @@ security:
 tags:
   - name: tenants
     description: Tenant provisioning, lookup, and lifecycle.
+  - name: reports
+    description: Read-only extension reports — compliance, cost/margin, invoices.
+  - name: fleet
+    description: Fleet schema-version drift reconciliation (read-only plan + history over HTTP).
   - name: meta
     description: Service metadata.
 paths:
@@ -222,6 +229,129 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /v1/compliance/report:
+    get:
+      tags: [reports]
+      summary: >
+        Compliance attestation (requires `tenant:read`): physical isolation (one dedicated Neon
+        project per tenant) + data residency, plus an audit-backed erasure history when an audit
+        store is wired, with a SHA-256 integrity digest. Evidence, not a legal certification.
+      responses:
+        '200':
+          description: The compliance report + digest.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComplianceReportResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/cost/report:
+    get:
+      tags: [reports]
+      summary: >
+        Per-tenant cost vs. price (margin) over a period (requires `tenant:read`) — a read-only
+        estimate from the configured cost rates vs. `metadata.priceUsd`, not an invoice.
+      parameters:
+        - { $ref: '#/components/parameters/PeriodFrom' }
+        - { $ref: '#/components/parameters/PeriodTo' }
+      responses:
+        '200':
+          description: The cost report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CostReport' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/invoices:
+    get:
+      tags: [reports]
+      summary: >
+        Generate invoice documents for every active tenant over a period (requires `tenant:read`),
+        failure-isolated. Documents (line items + total) — not card charges.
+      parameters:
+        - { $ref: '#/components/parameters/PeriodFrom' }
+        - { $ref: '#/components/parameters/PeriodTo' }
+      responses:
+        '200':
+          description: The fleet invoice run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FleetInvoiceReport' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/tenants/{id}/invoice:
+    get:
+      tags: [reports]
+      summary: Generate an invoice document for one tenant over a period (requires `tenant:read`).
+      parameters:
+        - { $ref: '#/components/parameters/TenantId' }
+        - { $ref: '#/components/parameters/PeriodFrom' }
+        - { $ref: '#/components/parameters/PeriodTo' }
+      responses:
+        '200':
+          description: The invoice.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/fleet/reconcile:
+    get:
+      tags: [fleet]
+      summary: >
+        Preview a fleet reconcile plan (requires `tenant:read`, read-only) — which active tenants are
+        behind the target and exactly which versions each would receive. No SQL needed; execution is a
+        CLI / gated-dashboard operation, never HTTP.
+      parameters:
+        - name: target
+          in: query
+          required: false
+          description: Reconcile up to this catalog version instead of the latest.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The reconcile plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FleetReconcilePlan' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/fleet/reconcile/history:
+    get:
+      tags: [fleet]
+      summary: >
+        Recent fleet reconcile history (requires `tenant:read`) from the persisted audit trail —
+        empty unless an audit store is wired (`TENANTFORGE_AUDIT_LOG=pg`).
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max entries, newest-first (default 20).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Recent reconcile events.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
+                required: [history]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 components:
   securitySchemes:
     bearerAuth:
@@ -251,6 +381,18 @@ components:
         key with a different request body returns 422; a still-in-flight request returns 409. Keys are
         scoped per principal and expire after 24h.
       schema: { type: string, maxLength: 255 }
+    PeriodFrom:
+      name: from
+      in: query
+      required: false
+      description: Period start (ISO-8601). Defaults to the start of the current calendar month.
+      schema: { type: string, format: date-time }
+    PeriodTo:
+      name: to
+      in: query
+      required: false
+      description: Period end (ISO-8601). Defaults to now.
+      schema: { type: string, format: date-time }
   schemas:
     TenantStatus:
       type: string
@@ -308,6 +450,182 @@ components:
         location: { type: string, description: 'e.g. neon-project:<id> for the retained project.' }
         bytes: { type: integer }
       required: [location]
+    ComplianceReportResult:
+      type: object
+      properties:
+        report: { $ref: '#/components/schemas/ComplianceReport' }
+        digest:
+          type: string
+          description: SHA-256 hex digest over the canonical report JSON (integrity anchor).
+      required: [report, digest]
+    ComplianceAuditEntry:
+      type: object
+      properties:
+        at: { type: string, format: date-time }
+        event: { type: string }
+        outcome: { type: string, enum: [ok, error] }
+        actor:
+          type: object
+          properties:
+            id: { type: string }
+            role: { type: string }
+          required: [id, role]
+        tenantId: { type: string }
+      required: [at, event, outcome]
+    ComplianceReport:
+      type: object
+      description: Point-in-time isolation + residency attestation derived from the registry.
+      properties:
+        generatedAt: { type: string, format: date-time }
+        inventory:
+          type: object
+          properties:
+            total: { type: integer }
+            byStatus: { type: object, additionalProperties: { type: integer } }
+          required: [total, byStatus]
+        isolation:
+          type: object
+          properties:
+            compliant: { type: boolean }
+            missingProject: { type: array, items: { type: string } }
+            sharedProjects:
+              type: array
+              items:
+                type: object
+                properties:
+                  neonProjectId: { type: string }
+                  tenantIds: { type: array, items: { type: string } }
+                required: [neonProjectId, tenantIds]
+          required: [compliant, missingProject, sharedProjects]
+        residency:
+          type: object
+          properties:
+            compliant: { type: boolean }
+            allowedRegions: { type: array, items: { type: string } }
+            byJurisdiction: { type: object, additionalProperties: { type: integer } }
+            violations:
+              type: array
+              items:
+                type: object
+                properties:
+                  tenantId: { type: string }
+                  region: { type: string }
+                  reason: { type: string }
+                required: [tenantId, region, reason]
+          required: [compliant, allowedRegions, byJurisdiction, violations]
+        audit:
+          type: object
+          description: Present only when a persisted audit store is wired.
+          properties:
+            erasures: { type: array, items: { $ref: '#/components/schemas/ComplianceAuditEntry' } }
+            recent: { type: array, items: { $ref: '#/components/schemas/ComplianceAuditEntry' } }
+          required: [erasures, recent]
+      required: [generatedAt, inventory, isolation, residency]
+    CostReport:
+      type: object
+      description: Per-tenant cost vs. price estimate (USD). Not an invoice.
+      properties:
+        generatedAt: { type: string, format: date-time }
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              tenantId: { type: string }
+              costUsd: { type: number }
+              priceUsd: { type: [number, 'null'] }
+              marginUsd: { type: [number, 'null'] }
+              unprofitable: { type: boolean }
+            required: [tenantId, costUsd, priceUsd, marginUsd, unprofitable]
+        unmetered:
+          type: array
+          items: { type: string }
+          description: Tenants whose consumption could not be metered (excluded from totals).
+        totals:
+          type: object
+          properties:
+            tenants: { type: integer }
+            costUsd: { type: number }
+            priceUsd: { type: number }
+            marginUsd: { type: number }
+            unprofitable: { type: integer }
+            unpriced: { type: integer }
+          required: [tenants, costUsd, priceUsd, marginUsd, unprofitable, unpriced]
+      required: [generatedAt, rows, unmetered, totals]
+    InvoiceLineItem:
+      type: object
+      properties:
+        description: { type: string }
+        quantity: { type: number }
+        unit: { type: string }
+        unitPriceUsd: { type: number }
+        amountUsd: { type: number, description: 'quantity * unitPriceUsd, rounded to cents.' }
+      required: [description, quantity, unit, unitPriceUsd, amountUsd]
+    Invoice:
+      type: object
+      description: A generated invoice document for one tenant + period (an artifact, not a charge).
+      properties:
+        tenantId: { type: string }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        currency: { type: string, description: ISO 4217 code (USD for now). }
+        generatedAt: { type: string, format: date-time }
+        lineItems: { type: array, items: { $ref: '#/components/schemas/InvoiceLineItem' } }
+        totalUsd: { type: number, description: Sum of line amounts (USD, rounded to cents). }
+      required: [tenantId, periodStart, periodEnd, currency, generatedAt, lineItems, totalUsd]
+    FleetInvoiceReport:
+      type: object
+      properties:
+        generatedAt: { type: string, format: date-time }
+        invoices: { type: array, items: { $ref: '#/components/schemas/Invoice' } }
+        unmetered:
+          type: array
+          items: { type: string }
+          description: Active tenants that could not be metered (no invoice produced).
+      required: [generatedAt, invoices, unmetered]
+    FleetReconcilePlan:
+      type: object
+      description: A read-only plan to bring behind/failed tenants up to a target catalog version.
+      properties:
+        target:
+          { type: [string, 'null'], description: Target version (null when the catalog is empty). }
+        perTenant:
+          type: array
+          items:
+            type: object
+            properties:
+              tenantId: { type: string }
+              missing:
+                type: array
+                items: { type: string }
+                description: Versions to apply, in catalog order.
+            required: [tenantId, missing]
+        pendingTenants: { type: array, items: { type: string } }
+        upToDate: { type: array, items: { type: string } }
+        totalMissing: { type: integer }
+        batches:
+          type: array
+          items: { type: array, items: { type: string } }
+          description: Pending tenants split into bounded fan-out batches.
+      required: [target, perTenant, pendingTenants, upToDate, totalMissing, batches]
+    AuditEvent:
+      type: object
+      description: A persisted, redacted control-plane audit event (no secrets/PII).
+      properties:
+        event: { type: string }
+        at: { type: string, format: date-time }
+        outcome: { type: string, enum: [ok, error] }
+        actor:
+          type: object
+          properties:
+            id: { type: string }
+            role: { type: string }
+          required: [id, role]
+        tenantId: { type: string }
+        durationMs: { type: integer }
+        context: { type: object, additionalProperties: true }
+        error: { type: string }
+      required: [event, at, outcome]
     Problem:
       type: object
       description: RFC 9457 problem detail.
