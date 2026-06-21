@@ -6,6 +6,11 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-06-21
+
+Makes receipts deliver real email: production SES + SMTP notifier adapters, zero new dependencies.
+Additive/backward-compatible (MINOR); hand-wired via `createTenantForge({ notifier })`.
+
 ### Added
 
 - **Real email notifiers (SES + SMTP)** — two production `Notifier` adapters complementing the
