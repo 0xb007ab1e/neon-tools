@@ -894,6 +894,17 @@ export interface TenantForge {
   tenantRefunds(tenantId: string, limit?: number): Promise<TenantEvent[]>;
 
   /**
+   * A tenant's **own** receipt history (`tenant.notified` events scoped to it) for the portal.
+   * Returns `[]` without an audit store. Tenant-filtered in the store; the recipient address was
+   * never recorded, so these entries are safe to show the tenant.
+   *
+   * @param tenantId - The tenant's own id (server-derived).
+   * @param limit - Max entries, newest-first. Defaults to 20.
+   * @returns The tenant's receipt-notification events.
+   */
+  tenantNotifications(tenantId: string, limit?: number): Promise<TenantEvent[]>;
+
+  /**
    * **Ingest an inbound PSP webhook** (e.g. Stripe): verify its signature over the raw body, parse +
    * normalize it, and emit a redacted `payment.webhook` audit event (attributed to the tenant when
    * the event carries one). Requires a configured webhook verifier; throws on a bad/stale signature
@@ -2016,6 +2027,11 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     tenantRefunds(tenantId: string, limit = 20): Promise<TenantEvent[]> {
       if (auditLog === undefined) return Promise.resolve([]);
       return auditLog.query({ events: ['tenant.refunded'], tenantId, limit });
+    },
+
+    tenantNotifications(tenantId: string, limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.notified'], tenantId, limit });
     },
 
     async ingestPaymentWebhook(rawBody: string, signature: string): Promise<PaymentEvent> {

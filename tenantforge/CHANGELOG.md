@@ -6,6 +6,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Tenant-facing receipts in the portal** — the self-serve portal account page now shows the
+  tenant's **own receipt history** (charge/refund confirmations), alongside usage / charges /
+  refunds. New tenant-scoped facade read `tenantNotifications(tenantId, limit?)` (store-filtered by
+  tenant, like `tenantCharges`/`tenantRefunds`); the recipient address was never recorded, so the
+  entries are safe to show. Rendered as an accessible table + a `GET /portal/api/receipts` JSON
+  endpoint — both **scoped to the session tenant** (no tenant id from request input). Covered by the
+  facade cross-tenant isolation test (a tenant's receipts never leak to another) and the portal
+  tests (receipts render + the scoped JSON endpoint).
+
 ## [0.16.0] - 2026-06-21
 
 Makes receipts deliver real email: production SES + SMTP notifier adapters, zero new dependencies.

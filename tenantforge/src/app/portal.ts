@@ -168,12 +168,32 @@ function usageTable(usage: TenantUsage): string {
 </table>`;
 }
 
+/** A read-only table of receipt notifications (`tenant.notified` events), or a note when empty. */
+function receiptsTable(events: TenantEvent[]): string {
+  if (events.length === 0) return '<p>No receipts yet.</p>';
+  const rows = events
+    .map((e) => {
+      const ctx = e.context ?? {};
+      const kind = typeof ctx['kind'] === 'string' ? ctx['kind'] : '—';
+      const reference = typeof ctx['reference'] === 'string' ? ctx['reference'] : '—';
+      const status = typeof ctx['status'] === 'string' ? ctx['status'] : e.outcome;
+      return `<tr><td>${esc(e.at)}</td><td>${esc(kind)}</td><td>${esc(reference)}</td><td>${esc(status)}</td></tr>`;
+    })
+    .join('');
+  return `<table>
+<caption>Recent receipts</caption>
+<thead><tr><th scope="col">When</th><th scope="col">Kind</th><th scope="col">Reference</th><th scope="col">Status</th></tr></thead>
+<tbody>${rows}</tbody>
+</table>`;
+}
+
 /** The signed-in dashboard page for a tenant. */
 function dashboardPage(
   summary: TenantSummary,
   usage: TenantUsage | null,
   charges: TenantEvent[],
   refunds: TenantEvent[],
+  receipts: TenantEvent[],
 ): string {
   return page(
     `${summary.slug} — TenantForge portal`,
@@ -192,6 +212,7 @@ ${summary.planPriceUsd !== undefined ? `<dt>Plan</dt><dd>$${esc(summary.planPric
 ${usage !== null ? usageTable(usage) : ''}
 ${eventsTable('Recent charges', charges)}
 ${eventsTable('Recent refunds', refunds)}
+${receiptsTable(receipts)}
 </main>`,
   );
 }
@@ -262,12 +283,13 @@ export function createPortal(options: PortalOptions): Hono {
     }
     // Usage is best-effort: if metering isn't configured (no usage provider) or the upstream is
     // down, the account page still renders — usage is just omitted, not a 500.
-    const [charges, refunds, usage] = await Promise.all([
+    const [charges, refunds, receipts, usage] = await Promise.all([
       options.tf.tenantCharges(tenantId),
       options.tf.tenantRefunds(tenantId),
+      options.tf.tenantNotifications(tenantId),
       options.tf.usage(tenantId, currentMonth()).catch(() => null),
     ]);
-    return c.html(dashboardPage(summary, usage, charges, refunds));
+    return c.html(dashboardPage(summary, usage, charges, refunds, receipts));
   });
 
   /** Guard a JSON endpoint on a valid session; returns the tenant id or sends 401. */
@@ -298,6 +320,12 @@ export function createPortal(options: PortalOptions): Hono {
     const tenantId = requireTenant(c);
     if (tenantId === null) return c.json({ error: 'not authenticated' });
     return c.json({ refunds: await options.tf.tenantRefunds(tenantId) });
+  });
+
+  app.get('/api/receipts', async (c) => {
+    const tenantId = requireTenant(c);
+    if (tenantId === null) return c.json({ error: 'not authenticated' });
+    return c.json({ receipts: await options.tf.tenantNotifications(tenantId) });
   });
 
   app.get('/api/usage', async (c) => {
