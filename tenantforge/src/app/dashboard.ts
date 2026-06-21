@@ -292,6 +292,14 @@ export function createDashboard(options: DashboardOptions): Hono {
     return c.json({ events: await options.tf.queryAudit({ limit: 50 }) });
   });
 
+  // Audit anomalies over the recent window (read-only; error spikes + per-actor/tenant clusters).
+  app.get('/api/audit-anomalies', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'tenant:read')) return c.json({ error: 'forbidden' }, 403);
+    return c.json({ anomalies: await options.tf.scanAuditAnomalies() });
+  });
+
   // Whether reconcile can be EXECUTED from the dashboard (a SQL catalog is wired) and whether this
   // principal may (tenant:provision). The SPA uses this to decide whether to show the Run button.
   app.get('/api/reconcile/capabilities', (c) => {

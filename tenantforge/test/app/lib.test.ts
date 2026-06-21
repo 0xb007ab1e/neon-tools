@@ -2006,6 +2006,40 @@ describe('createTenantForge.queryAudit', () => {
     expect(recent).toHaveLength(2); // the 06-02 and 06-03 events
     await expect(tf.queryAudit({ limit: 0 })).rejects.toThrow(/positive integer/);
   });
+
+  it('scanAuditAnomalies detects error clusters (and is [] without a store)', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    for (let i = 0; i < 4; i++) {
+      await auditLog.append({
+        event: 'tenant.charged',
+        at: `2026-06-0${i + 1}T00:00:00.000Z`,
+        outcome: 'error',
+        tenantId: 'flaky',
+        actor: { id: 'op', role: 'admin' },
+      });
+    }
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const findings = await tf.scanAuditAnomalies({
+      thresholds: { errorSpike: 99, perActorErrors: 4, perTenantErrors: 4 },
+    });
+    expect(findings.map((f) => f.kind)).toEqual(['actor-errors', 'tenant-errors']);
+    expect(findings[1]?.subject).toBe('flaky');
+
+    const noStore = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    expect(await noStore.scanAuditAnomalies()).toEqual([]);
+  });
 });
 
 describe('createTenantForge.sendInvoice', () => {

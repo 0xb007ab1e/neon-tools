@@ -419,3 +419,18 @@ export async function fetchAudit(): Promise<AuditEventEntry[]> {
   if (!res.ok) throw new Error('Could not load audit trail');
   return ((await res.json()) as { events: AuditEventEntry[] }).events;
 }
+
+/** One detected audit anomaly. */
+export interface AuditAnomalyEntry {
+  kind: 'error-spike' | 'actor-errors' | 'tenant-errors';
+  subject?: string;
+  count: number;
+  events: string[];
+}
+
+/** Load audit anomalies over the recent window (read-only; empty without an audit store). */
+export async function fetchAuditAnomalies(): Promise<AuditAnomalyEntry[]> {
+  const res = await fetch(`${BASE}/audit-anomalies`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load audit anomalies');
+  return ((await res.json()) as { anomalies: AuditAnomalyEntry[] }).anomalies;
+}

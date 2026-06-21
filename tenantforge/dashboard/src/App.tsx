@@ -20,6 +20,7 @@ import {
   fetchPlans,
   fetchInvoicesSent,
   fetchAudit,
+  fetchAuditAnomalies,
   fetchSession,
   login,
   logout,
@@ -42,6 +43,7 @@ import {
   type PlanEntry,
   type InvoiceSentEntry,
   type AuditEventEntry,
+  type AuditAnomalyEntry,
   type Session,
 } from './api';
 
@@ -665,6 +667,7 @@ function BillingPanel(): React.JSX.Element {
 
 function AuditPanel(): React.JSX.Element {
   const { data, error } = usePanelData<AuditEventEntry[]>(fetchAudit);
+  const anomalies = usePanelData<AuditAnomalyEntry[]>(fetchAuditAnomalies);
   return (
     <Panel id="audit-h" title="Audit log (recent)" error={error} loading={data === null}>
       {data !== null && (
@@ -673,6 +676,29 @@ function AuditPanel(): React.JSX.Element {
             {data.length} recent control-plane event(s) — who-did-what-when. Filter the full trail
             via the CLI (`audit`) or `GET /v1/audit`.
           </p>
+          {anomalies.data !== null && anomalies.data.length > 0 && (
+            <table>
+              <caption>Detected anomalies (error spikes / per-actor / per-tenant clusters)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Kind</th>
+                  <th scope="col">Subject</th>
+                  <th scope="col">Errors</th>
+                  <th scope="col">Events</th>
+                </tr>
+              </thead>
+              <tbody>
+                {anomalies.data.map((a, i) => (
+                  <tr key={`${a.kind}-${a.subject ?? ''}-${i}`}>
+                    <td>{a.kind}</td>
+                    <td>{a.subject ?? '—'}</td>
+                    <td>{a.count}</td>
+                    <td>{a.events.join(', ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
           {data.length > 0 && (
             <table>
               <caption>Recent audit events (newest first)</caption>

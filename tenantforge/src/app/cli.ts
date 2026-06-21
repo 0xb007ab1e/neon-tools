@@ -630,6 +630,52 @@ const audit = defineCommand({
   },
 });
 
+const auditScan = defineCommand({
+  meta: {
+    name: 'audit-scan',
+    description:
+      'Scan the recent audit trail for anomalies (error spikes, per-actor/tenant clusters)',
+  },
+  args: {
+    since: { type: 'string', description: 'Only examine events at/after this ISO-8601 instant' },
+    limit: { type: 'string', description: 'Recent-event window to scan (default 500)' },
+    'error-spike': { type: 'string', description: 'Total-error threshold (default 10)' },
+    'per-actor': { type: 'string', description: 'Per-actor error threshold (default 5)' },
+    'per-tenant': { type: 'string', description: 'Per-tenant error threshold (default 5)' },
+    json: { type: 'boolean', description: 'Emit findings as JSON', default: false },
+  },
+  async run({ args }) {
+    const thresholds = {
+      ...(args['error-spike'] !== undefined ? { errorSpike: Number(args['error-spike']) } : {}),
+      ...(args['per-actor'] !== undefined ? { perActorErrors: Number(args['per-actor']) } : {}),
+      ...(args['per-tenant'] !== undefined ? { perTenantErrors: Number(args['per-tenant']) } : {}),
+    };
+    await withTenantForge(async (tf) => {
+      const findings = await tf.scanAuditAnomalies({
+        ...(args.since !== undefined ? { since: args.since } : {}),
+        ...(args.limit !== undefined ? { limit: Number(args.limit) } : {}),
+        thresholds,
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
+        return;
+      }
+      if (findings.length === 0) {
+        process.stdout.write('no audit anomalies\n');
+        return;
+      }
+      for (const f of findings) {
+        process.stdout.write(
+          `${f.kind}${f.subject !== undefined ? ` ${f.subject}` : ''}: ${f.count} error(s) ` +
+            `[${f.events.join(', ')}]\n`,
+        );
+      }
+      // Non-zero exit so a cron / CI security gate can alert on findings.
+      process.exitCode = 1;
+    });
+  },
+});
+
 const complianceReport = defineCommand({
   meta: {
     name: 'compliance-report',
@@ -1322,6 +1368,7 @@ const main = defineCommand({
     'check-quotas': checkQuotas,
     'compliance-report': complianceReport,
     audit,
+    'audit-scan': auditScan,
     'cost-report': costReport,
     invoice,
     'invoice-fleet': invoiceFleet,

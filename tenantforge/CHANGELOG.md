@@ -6,6 +6,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Audit anomaly detection** — `scanAuditAnomalies({ since?, limit?, thresholds? })` (CLI
+  `audit-scan`, HTTP `GET /v1/audit/anomalies`, dashboard "Audit log" panel) reads a recent window
+  of the control-plane trail and flags an overall **error spike** plus **per-actor** and
+  **per-tenant** error clusters. Pure core `detectAuditAnomalies` (deterministic, fixed finding
+  order, 100%); thresholds default to 10 / 5 / 5 and are overridable. Read-only; `audit-scan` exits
+  non-zero on findings (cron/CI security gate). Control-plane **detection** for std-mitre-attack /
+  topic-logging-observability — Neon monitors the database, not the operator's control-plane
+  operations (not a Neon feature). Returns `[]` without an audit store.
+
 ## [0.23.0] - 2026-06-21
 
 Adds a filterable audit explorer over the control-plane trail (compliance forensics). First
