@@ -55,6 +55,41 @@ function parseHttpCredentials(raw: string | undefined): HttpCredential[] | undef
 }
 
 /**
+ * Parse the `TENANTFORGE_PORTAL_CREDENTIALS` env (`tenantId:token` entries, comma-separated). The
+ * token may contain colons — only the first colon splits the entry.
+ *
+ * @param raw - The raw env value (may be undefined/empty).
+ * @returns The parsed tenant credentials, or undefined when unset.
+ * @throws Error on a malformed entry, empty token, or duplicate tenant id.
+ */
+function parseTenantCredentials(
+  raw: string | undefined,
+): { tenantId: string; token: string }[] | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const seen = new Set<string>();
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map((entry) => {
+      const colon = entry.indexOf(':');
+      if (colon <= 0) {
+        throw new Error('TENANTFORGE_PORTAL_CREDENTIALS: malformed entry (want tenantId:token)');
+      }
+      const tenantId = entry.slice(0, colon);
+      const token = entry.slice(colon + 1);
+      if (token === '') {
+        throw new Error(`TENANTFORGE_PORTAL_CREDENTIALS: empty token for "${tenantId}"`);
+      }
+      if (seen.has(tenantId)) {
+        throw new Error(`TENANTFORGE_PORTAL_CREDENTIALS: duplicate tenant "${tenantId}"`);
+      }
+      seen.add(tenantId);
+      return { tenantId, token };
+    });
+}
+
+/**
  * Environment schema. Validated at startup so the process fails fast on misconfiguration
  * (12-Factor config). Secrets are read from the environment, never committed (workflow-secrets).
  */
@@ -162,6 +197,12 @@ const EnvSchema = z
     // Path to the built SPA (`dashboard/dist`); when set, the dashboard also serves the front-end,
     // so a production deploy needs no separate static web server. Unset = JSON API only.
     TENANTFORGE_DASHBOARD_DIST: z.string().min(1).optional(),
+    // Customer-facing self-serve portal: when set (with PORTAL_CREDENTIALS), mount the tenant portal
+    // at /portal. The value is the HMAC key that signs portal session cookies (a secret).
+    TENANTFORGE_PORTAL_SECRET: z.string().min(1).optional(),
+    // Portal credentials: comma-separated `tenantId:token` pairs (the token is a secret). Each token
+    // authenticates as exactly its tenant; the portal shows only that tenant's data.
+    TENANTFORGE_PORTAL_CREDENTIALS: z.string().min(1).optional(),
     // Directory of ordered migration `.sql` files (the catalog). When set, the dashboard can EXECUTE
     // a fleet reconcile (tenant:provision-gated) — the server loads the SQL from here. Unset =
     // reconcile is preview-only in the browser (execution stays a CLI op).
@@ -353,6 +394,10 @@ export interface Config {
   dashboardDist?: string;
   /** Directory of ordered migration `.sql` files; set ⇒ the dashboard can execute a reconcile. */
   migrationsDir?: string;
+  /** Portal session-cookie HMAC key; set (with `portalCredentials`) ⇒ the /portal is mounted. */
+  portalSecret?: string;
+  /** Static portal credentials (`tenantId` → token); set ⇒ the token tenant-authenticator is wired. */
+  portalCredentials?: { tenantId: string; token: string }[];
   /** Unit cost rates (USD) for the cost/margin report; absent ⇒ zero cost. */
   costRates?: CostRates;
   /** Per-unit billing (sell) rates (USD) for invoice generation; absent ⇒ usage not billed. */
@@ -421,6 +466,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(parsed.TENANTFORGE_DASHBOARD_DIST !== undefined
       ? { dashboardDist: parsed.TENANTFORGE_DASHBOARD_DIST }
       : {}),
+    ...(parsed.TENANTFORGE_PORTAL_SECRET !== undefined
+      ? { portalSecret: parsed.TENANTFORGE_PORTAL_SECRET }
+      : {}),
   };
 
   if (parsed.TENANTFORGE_COST_RATES !== undefined) {
@@ -460,6 +508,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const httpCredentials = parseHttpCredentials(parsed.TENANTFORGE_HTTP_CREDENTIALS);
   if (httpCredentials !== undefined) {
     config.httpCredentials = httpCredentials;
+  }
+  const portalCredentials = parseTenantCredentials(parsed.TENANTFORGE_PORTAL_CREDENTIALS);
+  if (portalCredentials !== undefined) {
+    config.portalCredentials = portalCredentials;
   }
   if (parsed.TENANTFORGE_SECRET_KEY !== undefined) {
     config.secretKey = parsed.TENANTFORGE_SECRET_KEY;

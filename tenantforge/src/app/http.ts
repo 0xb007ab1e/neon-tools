@@ -10,6 +10,7 @@ import { createFanOutEventSink, createJsonEventSink } from '../adapters/event-si
 import type { EventSink } from '../ports/event-sink.js';
 import { loadConfig } from './config.js';
 import { createHttpServer } from './http-server.js';
+import { createTokenTenantAuthenticator } from '../adapters/auth/tenant-token-authenticator.js';
 import { tenantForgeFromConfig } from './lib.js';
 
 /** Read an ordered migration catalog from a directory of `*.sql` files (sorted by filename). */
@@ -99,6 +100,13 @@ function main(): void {
       : {}),
     // Mount the inbound PSP webhook endpoint when a verifier is configured (signing secret set).
     ...(config.paymentWebhookSecret !== undefined ? { paymentWebhooks: true } : {}),
+    // Mount the customer-facing self-serve portal when a session key + tenant credentials are set.
+    ...(config.portalSecret !== undefined && config.portalCredentials !== undefined
+      ? {
+          portalSecret: config.portalSecret,
+          tenantAuthenticator: createTokenTenantAuthenticator(config.portalCredentials),
+        }
+      : {}),
     metrics: () => metrics.render(),
   });
 

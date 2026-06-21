@@ -17,6 +17,8 @@ import { createTokenAuthenticator } from '../adapters/auth/token-authenticator.j
 import type { TenantForge } from './lib.js';
 import { runWithActor } from './actor-context.js';
 import { createDashboard } from './dashboard.js';
+import { createPortal } from './portal.js';
+import type { TenantAuthenticator } from '../ports/tenant-authenticator.js';
 
 // Re-export the auth types so existing importers (config) keep their import path.
 export type { HttpRole, HttpCredential, Principal, Authenticator } from '../ports/authenticator.js';
@@ -49,6 +51,10 @@ export interface HttpServerOptions {
   dashboardStaticRoot?: string;
   /** Migration SQL catalog; when set, the dashboard can EXECUTE a reconcile (tenant:provision-gated). */
   dashboardReconcileCatalog?: readonly import('../adapters/fleet-orchestrator.js').FleetMigrationSpec[];
+  /** When set (with a tenant authenticator), mount the customer-facing **self-serve portal** at `/portal`. */
+  portalSecret?: string;
+  /** Resolves a portal token to a tenant; required to mount the portal. */
+  tenantAuthenticator?: TenantAuthenticator;
   /** Injectable clock (ms) for rate limiting — defaults to `Date.now`. */
   now?: () => number;
   /**
@@ -190,6 +196,20 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
         ...(options.dashboardReconcileCatalog !== undefined
           ? { reconcileCatalog: options.dashboardReconcileCatalog }
           : {}),
+      }),
+    );
+  }
+
+  // Tenant self-serve portal (customer-facing, its own cookie session) — mounted only when a portal
+  // session key + a tenant authenticator are both configured.
+  if (options.portalSecret !== undefined && options.tenantAuthenticator !== undefined) {
+    app.route(
+      '/portal',
+      createPortal({
+        tf,
+        authenticator: options.tenantAuthenticator,
+        sessionSecret: options.portalSecret,
+        now: () => now(),
       }),
     );
   }

@@ -1704,6 +1704,104 @@ describe('createTenantForge.refundCharge', () => {
   });
 });
 
+describe('createTenantForge portal reads (tenant-scoped)', () => {
+  function seedTenant(
+    registry: ReturnType<typeof fakeRegistry>,
+    id: string,
+    metadata: Record<string, unknown>,
+  ) {
+    registry.seed({
+      id,
+      slug: id,
+      region: 'aws-us-east-1',
+      status: 'active',
+      neonProjectId: `proj-${id}`,
+      metadata: metadata as JsonObject,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date(0),
+    });
+  }
+  const setup = () => {
+    const registry = fakeRegistry();
+    const auditLog = createInMemoryAuditLogStore();
+    seedTenant(registry, 't-a', {
+      billingCustomerRef: 'cus_a',
+      priceUsd: 9,
+      internalFlag: 'secret',
+    });
+    seedTenant(registry, 't-b', { billingCustomerRef: 'cus_b' });
+    const charged = (tenantId: string, chargeId: string) =>
+      auditLog.append({
+        event: 'tenant.charged',
+        at: '2026-06-20T00:00:00.000Z',
+        outcome: 'ok',
+        tenantId,
+        context: { chargeId, amountMinor: 900, currency: 'usd', status: 'succeeded' },
+      });
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    return { tf, auditLog, charged };
+  };
+
+  it('tenantSummary returns a safe projection — no raw metadata or internal infra id', async () => {
+    const { tf } = setup();
+    const summary = await tf.tenantSummary('t-a');
+    expect(summary).toEqual({
+      id: 't-a',
+      slug: 't-a',
+      region: 'aws-us-east-1',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      planPriceUsd: 9,
+    });
+    expect(summary as unknown as Record<string, unknown>).not.toHaveProperty('metadata');
+    expect(summary as unknown as Record<string, unknown>).not.toHaveProperty('neonProjectId');
+    expect(JSON.stringify(summary)).not.toContain('cus_a');
+    expect(JSON.stringify(summary)).not.toContain('internalFlag');
+    expect(await tf.tenantSummary('missing')).toBeNull();
+  });
+
+  it('tenantCharges / tenantRefunds are strictly tenant-scoped (no cross-tenant leakage)', async () => {
+    const { tf, auditLog, charged } = setup();
+    await charged('t-a', 'ch_a');
+    await charged('t-b', 'ch_b');
+    await auditLog.append({
+      event: 'tenant.refunded',
+      at: '2026-06-21T00:00:00.000Z',
+      outcome: 'ok',
+      tenantId: 't-a',
+      context: { refundId: 're_a', chargeId: 'ch_a' },
+    });
+
+    const aCharges = await tf.tenantCharges('t-a');
+    expect(aCharges).toHaveLength(1);
+    expect(aCharges[0]?.context?.chargeId).toBe('ch_a');
+    expect(aCharges.every((e) => e.tenantId === 't-a')).toBe(true);
+    expect(JSON.stringify(aCharges)).not.toContain('ch_b');
+
+    expect((await tf.tenantRefunds('t-a')).every((e) => e.tenantId === 't-a')).toBe(true);
+    expect((await tf.tenantCharges('t-b')).map((e) => e.context?.chargeId)).toEqual(['ch_b']);
+    expect(await tf.tenantRefunds('t-b')).toEqual([]);
+  });
+
+  it('tenant history is empty without an audit store', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    expect(await tf.tenantCharges('t-a')).toEqual([]);
+    expect(await tf.tenantRefunds('t-a')).toEqual([]);
+  });
+});
+
 describe('createTenantForge.ingestPaymentWebhook', () => {
   type Verifier = import('../../src/ports/payment-webhook.js').PaymentWebhookVerifier;
   type Event = import('../../src/ports/payment-webhook.js').PaymentEvent;
