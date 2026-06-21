@@ -4,7 +4,7 @@ import type { Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { TenantForge, TenantSummary } from './lib.js';
 import type { TenantAuthenticator } from '../ports/tenant-authenticator.js';
-import type { TenantEvent } from '../core/index.js';
+import type { TenantEvent, TenantUsage } from '../core/index.js';
 
 /** Portal session cookie name (scoped to the portal path). */
 const COOKIE = 'tf_portal';
@@ -132,9 +132,46 @@ function eventsTable(caption: string, events: TenantEvent[]): string {
 </table>`;
 }
 
+/** Humanize a byte count to a readable binary unit (display only). */
+function humanBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 1024) return `${Math.round(bytes)} B`;
+  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+  let value = bytes / 1024;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value.toFixed(1)} ${units[i]}`;
+}
+
+/** Humanize a duration in seconds to a readable h/m/s string (display only). */
+function humanSeconds(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+/** The tenant's metered usage for the current period (never exposes the internal Neon project id). */
+function usageTable(usage: TenantUsage): string {
+  const c = usage.consumption;
+  return `<table>
+<caption>Usage this period (${esc(usage.period.from)} – ${esc(usage.period.to)})</caption>
+<thead><tr><th scope="col">Metric</th><th scope="col">Amount</th></tr></thead>
+<tbody>
+<tr><td>Compute time</td><td>${esc(humanSeconds(c.computeTimeSeconds))}</td></tr>
+<tr><td>Active time</td><td>${esc(humanSeconds(c.activeTimeSeconds))}</td></tr>
+<tr><td>Data written</td><td>${esc(humanBytes(c.writtenDataBytes))}</td></tr>
+<tr><td>Storage (peak)</td><td>${esc(humanBytes(c.syntheticStorageBytes))}</td></tr>
+</tbody>
+</table>`;
+}
+
 /** The signed-in dashboard page for a tenant. */
 function dashboardPage(
   summary: TenantSummary,
+  usage: TenantUsage | null,
   charges: TenantEvent[],
   refunds: TenantEvent[],
 ): string {
@@ -152,6 +189,7 @@ function dashboardPage(
 <dt>Member since</dt><dd>${esc(summary.createdAt)}</dd>
 ${summary.planPriceUsd !== undefined ? `<dt>Plan</dt><dd>$${esc(summary.planPriceUsd)} / period</dd>` : ''}
 </dl>
+${usage !== null ? usageTable(usage) : ''}
 ${eventsTable('Recent charges', charges)}
 ${eventsTable('Recent refunds', refunds)}
 </main>`,
@@ -222,11 +260,14 @@ export function createPortal(options: PortalOptions): Hono {
       deleteCookie(c, COOKIE, { path: '/portal' });
       return c.html(loginPage('Your session has expired.'), 401);
     }
-    const [charges, refunds] = await Promise.all([
+    // Usage is best-effort: if metering isn't configured (no usage provider) or the upstream is
+    // down, the account page still renders — usage is just omitted, not a 500.
+    const [charges, refunds, usage] = await Promise.all([
       options.tf.tenantCharges(tenantId),
       options.tf.tenantRefunds(tenantId),
+      options.tf.usage(tenantId, currentMonth()).catch(() => null),
     ]);
-    return c.html(dashboardPage(summary, charges, refunds));
+    return c.html(dashboardPage(summary, usage, charges, refunds));
   });
 
   /** Guard a JSON endpoint on a valid session; returns the tenant id or sends 401. */
@@ -262,7 +303,13 @@ export function createPortal(options: PortalOptions): Hono {
   app.get('/api/usage', async (c) => {
     const tenantId = requireTenant(c);
     if (tenantId === null) return c.json({ error: 'not authenticated' });
-    return c.json(await options.tf.usage(tenantId, currentMonth()));
+    const usage = await options.tf.usage(tenantId, currentMonth());
+    // Project away the internal Neon project id — the tenant sees only its period + consumption.
+    return c.json({
+      tenantId: usage.tenantId,
+      period: usage.period,
+      consumption: usage.consumption,
+    });
   });
 
   return app;

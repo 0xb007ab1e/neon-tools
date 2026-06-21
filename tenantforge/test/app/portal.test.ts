@@ -99,6 +99,9 @@ describe('createPortal', () => {
     expect(html).toContain('<caption>Recent charges</caption>'); // accessible table
     expect(html).toContain('900 usd');
     expect(html).toContain('$9 / period');
+    // Usage section renders (humanized), and the internal Neon project id is never exposed.
+    expect(html).toContain('Usage this period');
+    expect(html).not.toContain('proj'); // neonProjectId is not leaked to the tenant
   });
 
   it('JSON endpoints are scoped to the session tenant; 401 without a session', async () => {
@@ -116,6 +119,11 @@ describe('createPortal', () => {
     expect(
       ((await charges.json()) as { charges: TenantEvent[] }).charges[0]?.context?.chargeId,
     ).toBe('ch_a');
+    const usage = await app.request('/api/usage', { headers: { cookie } });
+    expect(usage.status).toBe(200);
+    const usageBody = (await usage.json()) as Record<string, unknown>;
+    expect(usageBody).toMatchObject({ tenantId: 't-a' });
+    expect(usageBody).not.toHaveProperty('neonProjectId'); // infra id projected away
   });
 
   it('there is no way to ask for another tenant — the portal never reads a tenant id from the request', async () => {
