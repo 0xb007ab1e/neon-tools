@@ -18,8 +18,11 @@ const json = (value: unknown) => text(JSON.stringify(value, null, 2));
  * connecting to live infrastructure.
  *
  * Agent-safety hardening vs. the HTTP API (std-owasp-llm): `tf_provision` does **not** return the
- * connection secret into the model context (LLM06 sensitive-information disclosure), and the
- * irreversible `tf_offboard` requires an explicit `confirm` flag (LLM08 excessive agency).
+ * connection secret into the model context (LLM06 sensitive-information disclosure). Irreversible /
+ * SQL-bearing operations are kept off the agent surface (LLM08 excessive agency): purge is not
+ * exposed at all, and fleet reconcile is exposed **read-only** (`tf_reconcile_plan` /
+ * `tf_reconcile_history`) — execution stays on the CLI / gated dashboard. The extension reports
+ * (compliance / cost / invoices) are read-only and carry no secrets.
  *
  * @param tf - The TenantForge application service the tools delegate to.
  * @returns A configured (not-yet-connected) MCP server.
@@ -137,6 +140,102 @@ export function createMcpServer(tf: TenantForge): McpServer {
         const outcome = await tf.offboard(id);
         return json({ tenant: outcome.tenant, archive: outcome.archive });
       }),
+  );
+
+  // --- Read-only extension reports (no mutation, no secrets) ---
+
+  /** Resolve optional ISO from/to into a period (default: current calendar month → now); null on a bad date. */
+  const period = (from?: string, to?: string): { from: Date; to: Date } | null => {
+    const end = to !== undefined ? new Date(to) : new Date();
+    const start =
+      from !== undefined ? new Date(from) : new Date(end.getFullYear(), end.getMonth(), 1);
+    return Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())
+      ? null
+      : { from: start, to: end };
+  };
+
+  server.registerTool(
+    'tf_compliance_report',
+    {
+      description:
+        'Compliance attestation (read-only): physical isolation + data residency, plus erasure ' +
+        'history when a persisted audit store is wired, with a SHA-256 integrity digest. Evidence, ' +
+        'not a legal certification.',
+      inputSchema: {},
+    },
+    async () => asMcp(async () => json(await tf.complianceReport())),
+  );
+
+  server.registerTool(
+    'tf_cost_report',
+    {
+      description:
+        'Per-tenant cost vs. price (margin) over a period (read-only estimate, not an invoice). ' +
+        'from/to are ISO-8601; default is the current calendar month.',
+      inputSchema: { from: z.string().optional(), to: z.string().optional() },
+    },
+    async ({ from, to }) => {
+      const p = period(from, to);
+      return p === null
+        ? text('invalid from/to date (use ISO-8601)')
+        : json(await tf.costReport(p));
+    },
+  );
+
+  server.registerTool(
+    'tf_invoice',
+    {
+      description:
+        'Generate an invoice document for one tenant over a period (read-only artifact, not a ' +
+        'charge). from/to are ISO-8601; default is the current calendar month.',
+      inputSchema: { id: z.string(), from: z.string().optional(), to: z.string().optional() },
+    },
+    async ({ id, from, to }) => {
+      const p = period(from, to);
+      return p === null
+        ? text('invalid from/to date (use ISO-8601)')
+        : json(await tf.invoice(id, p));
+    },
+  );
+
+  server.registerTool(
+    'tf_invoices',
+    {
+      description:
+        'Generate invoice documents for every active tenant over a period (read-only, ' +
+        'failure-isolated). from/to are ISO-8601; default is the current calendar month.',
+      inputSchema: { from: z.string().optional(), to: z.string().optional() },
+    },
+    async ({ from, to }) => {
+      const p = period(from, to);
+      return p === null
+        ? text('invalid from/to date (use ISO-8601)')
+        : json(await tf.invoiceFleet(p));
+    },
+  );
+
+  server.registerTool(
+    'tf_reconcile_plan',
+    {
+      description:
+        'Preview a fleet reconcile plan (read-only): which active tenants are behind the target and ' +
+        'the versions each would receive. Optional `target` version (default latest). EXECUTION is ' +
+        'intentionally not exposed to agents — run it via the CLI / gated dashboard.',
+      inputSchema: { target: z.string().optional() },
+    },
+    async ({ target }) =>
+      json(await tf.reconcilePlan(target !== undefined ? { targetVersion: target } : undefined)),
+  );
+
+  server.registerTool(
+    'tf_reconcile_history',
+    {
+      description:
+        'Recent fleet reconcile history from the persisted audit trail (read-only). Empty unless an ' +
+        'audit store is wired. `limit` caps the newest-first results (default 20).',
+      inputSchema: { limit: z.number().int().min(1).max(1000).optional() },
+    },
+    async ({ limit }) => json({ history: await tf.reconcileHistory(limit) }),
   );
 
   return server;
