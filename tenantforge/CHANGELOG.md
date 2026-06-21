@@ -6,6 +6,11 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-06-21
+
+Completes the tenant portal's read surface — a tenant can now see its metered usage for the period,
+not just its account and billing history. Additive/backward-compatible (MINOR).
+
 ### Added
 
 - **Portal usage display** — the tenant portal account page now shows **this period's metered usage**
