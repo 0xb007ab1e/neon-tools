@@ -556,6 +556,50 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/audit:
+    get:
+      tags: [reports]
+      summary: >
+        Query the control-plane audit trail (requires `tenant:read`) — the operator-attributed,
+        append-only who-did-what-when event stream (NIST AU / SOC2 / OWASP A09), newest-first and
+        bounded. Read-only; events are already redacted. Empty unless an audit store is wired.
+      parameters:
+        - name: event
+          in: query
+          required: false
+          description: Event name to filter by; repeatable (`?event=a&event=b`). Omitted = any.
+          schema: { type: array, items: { type: string } }
+        - name: tenant
+          in: query
+          required: false
+          description: Restrict to one tenant id.
+          schema: { type: string }
+        - name: since
+          in: query
+          required: false
+          description: Only events at/after this ISO-8601 instant.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          description: Max rows, newest-first (default 50, capped).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Matching audit events, most-recent first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
+                required: [events]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/billing/invoices-sent:
     get:
       tags: [billing]

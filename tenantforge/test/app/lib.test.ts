@@ -1944,6 +1944,70 @@ describe('createTenantForge.checkUsageAlerts', () => {
   });
 });
 
+describe('createTenantForge.queryAudit', () => {
+  const seeded = async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    await auditLog.append({
+      event: 'tenant.charged',
+      at: '2026-06-01T00:00:00.000Z',
+      outcome: 'ok',
+      tenantId: 't1',
+    });
+    await auditLog.append({
+      event: 'tenant.transition',
+      at: '2026-06-02T00:00:00.000Z',
+      outcome: 'ok',
+      tenantId: 't2',
+    });
+    await auditLog.append({
+      event: 'tenant.charged',
+      at: '2026-06-03T00:00:00.000Z',
+      outcome: 'error',
+      tenantId: 't1',
+    });
+    return createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+  };
+
+  it('returns [] when no audit store is wired', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    expect(await tf.queryAudit()).toEqual([]);
+  });
+
+  it('queries newest-first and filters by event name + tenant', async () => {
+    const tf = await seeded();
+    const all = await tf.queryAudit();
+    expect(all.map((e) => e.event)).toEqual([
+      'tenant.charged',
+      'tenant.transition',
+      'tenant.charged',
+    ]);
+    const charged = await tf.queryAudit({ events: ['tenant.charged'] });
+    expect(charged).toHaveLength(2);
+    expect(charged.every((e) => e.event === 'tenant.charged')).toBe(true);
+    const t2 = await tf.queryAudit({ tenantId: 't2' });
+    expect(t2.map((e) => e.tenantId)).toEqual(['t2']);
+  });
+
+  it('respects a since lower bound and rejects a bad limit', async () => {
+    const tf = await seeded();
+    const recent = await tf.queryAudit({ since: '2026-06-02T00:00:00.000Z' });
+    expect(recent).toHaveLength(2); // the 06-02 and 06-03 events
+    await expect(tf.queryAudit({ limit: 0 })).rejects.toThrow(/positive integer/);
+  });
+});
+
 describe('createTenantForge.sendInvoice', () => {
   const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
   type Notifier = import('../../src/ports/notifier.js').Notifier;

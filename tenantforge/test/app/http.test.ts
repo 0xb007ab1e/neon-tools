@@ -381,6 +381,28 @@ describe('HTTP control-plane', () => {
     expect(post.status).toBe(404);
   });
 
+  it('queries the audit trail (tenant:read), passing filters, and 400s on a bad limit', async () => {
+    const events = [{ event: 'tenant.charged', at: 'x', outcome: 'ok', tenantId: 't1' }];
+    let captured: unknown;
+    const server = app({
+      queryAudit: async (q) => {
+        captured = q;
+        if ((q?.limit ?? 50) < 1) throw new Error('audit query: limit must be a positive integer');
+        return events as never;
+      },
+    });
+    const ok = await server.request('/v1/audit?event=tenant.charged&tenant=t1&limit=10', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ events });
+    expect(captured).toEqual({ events: ['tenant.charged'], tenantId: 't1', limit: 10 });
+    const bad = await server.request('/v1/audit?limit=0', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it('serves invoice-delivery history (tenant:read); sending is not over HTTP', async () => {
     const invoicesSent = [{ event: 'tenant.invoiced', at: 'x', outcome: 'ok' }];
     const server = app({ invoiceDeliveryHistory: async () => invoicesSent as never });

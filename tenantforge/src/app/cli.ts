@@ -591,6 +591,45 @@ const checkQuotas = defineCommand({
   },
 });
 
+const audit = defineCommand({
+  meta: {
+    name: 'audit',
+    description: 'Query the control-plane audit trail (filter by event/tenant/since; newest-first)',
+  },
+  args: {
+    events: { type: 'string', description: 'Comma-separated event names (e.g. tenant.charged)' },
+    tenant: { type: 'string', description: 'Restrict to one tenant id' },
+    since: { type: 'string', description: 'Only events at/after this ISO-8601 instant' },
+    limit: { type: 'string', description: 'Max rows, newest-first (default 50)' },
+    json: { type: 'boolean', description: 'Emit the events as JSON', default: false },
+  },
+  async run({ args }) {
+    const query = {
+      ...(args.events !== undefined ? { events: args.events.split(',') } : {}),
+      ...(args.tenant !== undefined ? { tenantId: args.tenant } : {}),
+      ...(args.since !== undefined ? { since: args.since } : {}),
+      ...(args.limit !== undefined ? { limit: Number(args.limit) } : {}),
+    };
+    await withTenantForge(async (tf) => {
+      const events = await tf.queryAudit(query);
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(events, null, 2)}\n`);
+        return;
+      }
+      if (events.length === 0) {
+        process.stdout.write('no audit events\n');
+        return;
+      }
+      for (const e of events) {
+        const actor = e.actor !== undefined ? `${e.actor.id}` : '-';
+        process.stdout.write(
+          `${e.at}  ${e.event}  ${e.outcome}  tenant=${e.tenantId ?? '-'}  actor=${actor}\n`,
+        );
+      }
+    });
+  },
+});
+
 const complianceReport = defineCommand({
   meta: {
     name: 'compliance-report',
@@ -1282,6 +1321,7 @@ const main = defineCommand({
     'archive-fleet': archiveFleet,
     'check-quotas': checkQuotas,
     'compliance-report': complianceReport,
+    audit,
     'cost-report': costReport,
     invoice,
     'invoice-fleet': invoiceFleet,

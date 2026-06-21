@@ -403,3 +403,19 @@ export async function fetchInvoicesSent(): Promise<InvoiceSentEntry[]> {
   if (!res.ok) throw new Error('Could not load invoice deliveries');
   return ((await res.json()) as { invoicesSent: InvoiceSentEntry[] }).invoicesSent;
 }
+
+/** One audit-trail event (who-did-what-when; already redacted). */
+export interface AuditEventEntry {
+  at: string;
+  event: string;
+  outcome: 'ok' | 'error';
+  tenantId?: string;
+  actor?: { id: string; role: string };
+}
+
+/** Load the recent control-plane audit trail (read-only; empty without an audit store). */
+export async function fetchAudit(): Promise<AuditEventEntry[]> {
+  const res = await fetch(`${BASE}/audit`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load audit trail');
+  return ((await res.json()) as { events: AuditEventEntry[] }).events;
+}
