@@ -1078,6 +1078,7 @@ describe('createTenantForge.chargeInvoice', () => {
         provider: 'stripe',
       });
     },
+    refund: () => Promise.reject(new Error('refund not used in this test')),
   });
   const base = () => ({
     registry: fakeRegistry(),
@@ -1155,6 +1156,7 @@ describe('createTenantForge.chargeInvoice', () => {
               provider: 'stripe',
             });
       },
+      refund: () => Promise.reject(new Error('refund not used in this test')),
     };
     const tf = createTenantForge({
       registry,
@@ -1249,7 +1251,11 @@ describe('createTenantForge.runDunning', () => {
   it('skips every active tenant when no audit store is wired (no failure history to act on)', async () => {
     const registry = fakeRegistry();
     seedTenant(registry, 't1', { billingCustomerRef: 'cus_1' });
-    const gw: Gw = { provider: 'stripe', charge: () => Promise.reject(new Error('unused')) };
+    const gw: Gw = {
+      provider: 'stripe',
+      charge: () => Promise.reject(new Error('unused')),
+      refund: () => Promise.reject(new Error('refund not used in this test')),
+    };
     const tf = createTenantForge({
       registry,
       provisioning: fakeProvisioning(),
@@ -1302,6 +1308,7 @@ describe('createTenantForge.runDunning', () => {
           provider: 'stripe',
         });
       },
+      refund: () => Promise.reject(new Error('refund not used in this test')),
     };
     const tf = createTenantForge({
       registry,
@@ -1357,6 +1364,7 @@ describe('createTenantForge.runDunning', () => {
     const gw: Gw = {
       provider: 'stripe',
       charge: () => Promise.reject(new Error('card declined again')),
+      refund: () => Promise.reject(new Error('refund not used in this test')),
     };
     const tf = createTenantForge({
       registry,
@@ -1386,7 +1394,11 @@ describe('createTenantForge.runDunning', () => {
       usageProvider: provider,
       billingRates: { computeSecondUsd: 0.02 },
       defaultRegion: 'aws-us-east-1',
-      paymentGateway: { provider: 'stripe', charge: () => Promise.reject(new Error('unused')) },
+      paymentGateway: {
+        provider: 'stripe',
+        charge: () => Promise.reject(new Error('unused')),
+        refund: () => Promise.reject(new Error('refund not used in this test')),
+      },
     });
     expect(await noStore.dunningHistory()).toEqual([]);
     // No args → current-month period + DEFAULT_DUNNING_SCHEDULE; empty registry → empty report.
@@ -1420,6 +1432,7 @@ describe('createTenantForge.billingRun', () => {
         currency: r.currency,
         provider: 'stripe',
       }),
+    refund: () => Promise.reject(new Error('refund not used in this test')),
   });
   const base = () => ({
     registry: fakeRegistry(),
@@ -1484,6 +1497,141 @@ describe('createTenantForge.billingRun', () => {
     const report = await tf.billingRun(); // current-month default, empty registry
     expect(report.charge.charged).toEqual([]);
     expect(report.dunning?.skipped).toEqual([]);
+  });
+});
+
+describe('createTenantForge.refundCharge', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  const provider = {
+    getProjectConsumption: () =>
+      Promise.resolve([
+        {
+          computeTimeSeconds: 100,
+          activeTimeSeconds: 0,
+          writtenDataBytes: 0,
+          syntheticStorageBytes: 0,
+        },
+      ]),
+  };
+  type Gw = import('../../src/ports/payment-gateway.js').PaymentGateway;
+  type RefundReq = import('../../src/ports/payment-gateway.js').RefundRequest;
+  /** A gateway that charges (returns a fixed id) and records refund calls. */
+  const gateway = (refundCalls: RefundReq[] = [], chargeId = 'ch_1'): Gw => ({
+    provider: 'stripe',
+    charge: (r) =>
+      Promise.resolve({
+        id: chargeId,
+        status: 'succeeded',
+        amountMinor: r.amountMinor,
+        currency: r.currency,
+        provider: 'stripe',
+      }),
+    refund: (r) => {
+      refundCalls.push(r);
+      return Promise.resolve({
+        id: 're_1',
+        status: 'succeeded',
+        amountMinor: r.amountMinor ?? 0,
+        currency: r.currency,
+        provider: 'stripe',
+      });
+    },
+  });
+  const base = () => ({
+    registry: fakeRegistry(),
+    provisioning: fakeProvisioning(),
+    secretStore: createInMemorySecretStore(),
+    usageProvider: provider,
+    billingRates: { computeSecondUsd: 0.02 }, // $2.00 invoice → 200 minor units
+    defaultRegion: 'aws-us-east-1' as const,
+  });
+
+  it('fails closed without a payment gateway', async () => {
+    const tf = createTenantForge(base());
+    await expect(tf.refundCharge('ch_x', { currency: 'usd' })).rejects.toThrow(
+      /refunds require a configured payment gateway/,
+    );
+  });
+
+  it('derives currency/amount/tenant from the audit trail and records a tenant.refunded event', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const refundCalls: RefundReq[] = [];
+    const tf = createTenantForge({
+      ...base(),
+      paymentGateway: gateway(refundCalls, 'ch_acme'),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+    await tf.chargeInvoice(tenant.id, period); // records tenant.charged with chargeId ch_acme
+
+    const result = await tf.refundCharge('ch_acme', { reason: 'goodwill' });
+    expect(result.status).toBe('succeeded');
+    // Full refund: no amount sent; currency + tenant correlation derived from the charge event.
+    expect(refundCalls[0]?.amountMinor).toBeUndefined();
+    expect(refundCalls[0]?.currency).toBe('usd');
+    expect(refundCalls[0]?.metadata?.tenant_id).toBe(tenant.id);
+    expect(refundCalls[0]?.idempotencyKey).toBe('tenantforge:refund:ch_acme:full');
+
+    const history = await tf.refundHistory();
+    expect(history).toHaveLength(1);
+    expect(history[0]?.event).toBe('tenant.refunded');
+    expect(history[0]?.tenantId).toBe(tenant.id);
+    expect(history[0]?.context?.reason).toBe('goodwill');
+  });
+
+  it('bounds a partial refund by the original charge amount (fail closed)', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const tf = createTenantForge({
+      ...base(),
+      paymentGateway: gateway([], 'ch_acme'),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+    await tf.chargeInvoice(tenant.id, period); // $2.00 = 200 minor units
+    await expect(tf.refundCharge('ch_acme', { amountMinor: 999 })).rejects.toThrow(
+      /exceeds the original charge/,
+    );
+  });
+
+  it('requires an explicit currency when the charge is not in the audit trail', async () => {
+    const refundCalls: RefundReq[] = [];
+    const tf = createTenantForge({ ...base(), paymentGateway: gateway(refundCalls) });
+    await expect(tf.refundCharge('ch_unknown')).rejects.toThrow(/requires a currency/);
+    // With an explicit currency it proceeds (partial refund key is amount-scoped).
+    const result = await tf.refundCharge('ch_unknown', { currency: 'usd', amountMinor: 500 });
+    expect(result.amountMinor).toBe(500);
+    expect(refundCalls[0]?.idempotencyKey).toBe('tenantforge:refund:ch_unknown:500');
+  });
+
+  it('records an error event and rethrows when the gateway refund fails', async () => {
+    const auditLog = createInMemoryAuditLogStore();
+    const failing: Gw = {
+      provider: 'stripe',
+      charge: () => Promise.reject(new Error('unused')),
+      refund: () => Promise.reject(new Error('already refunded')),
+    };
+    const tf = createTenantForge({
+      ...base(),
+      paymentGateway: failing,
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+    });
+    await expect(tf.refundCharge('ch_x', { currency: 'usd' })).rejects.toThrow(/already refunded/);
+    const history = await tf.refundHistory();
+    expect(history[0]?.outcome).toBe('error');
+  });
+
+  it('refundHistory returns [] without an audit store', async () => {
+    const tf = createTenantForge({ ...base(), paymentGateway: gateway() });
+    expect(await tf.refundHistory()).toEqual([]);
   });
 });
 

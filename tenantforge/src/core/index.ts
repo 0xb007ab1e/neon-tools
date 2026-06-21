@@ -50,7 +50,13 @@ export {
   type InvoiceLineItem,
   type InvoiceOptions,
 } from './invoice.js';
-export { invoiceChargeAmount, chargeIdempotencyKey, type ChargeAmount } from './billing.js';
+export {
+  invoiceChargeAmount,
+  chargeIdempotencyKey,
+  assertRefundAmount,
+  refundIdempotencyKey,
+  type ChargeAmount,
+} from './billing.js';
 export {
   planDunning,
   dunningStateFromCharges,

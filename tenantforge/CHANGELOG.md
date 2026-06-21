@@ -6,6 +6,24 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Refunds / credits** — `tf.refundCharge(chargeId, opts?)` (CLI `refund`, `--yes` gated) reverses a
+  charge **fully or partially** through the `PaymentGateway` port, which gains a **`refund()`** method
+  (Stripe adapter implements it via `POST /v1/refunds`; the free-text reason rides in metadata since
+  Stripe's `reason` is a fixed enum). The facade looks the charge up in the `tenant.charged` audit
+  trail to recover currency / original amount / tenant (full refund resolves correctly; a partial is
+  bounded — `assertRefundAmount` rejects refunding more than was charged); pass `currency` explicitly
+  for a pre-audit charge. **Idempotent** on `refundIdempotencyKey(chargeId, amount?)`
+  (`tenantforge:refund:{chargeId}:{full|amount}`) so a retry never double-refunds; emits a redacted
+  `tenant.refunded` event (refund id, amount, status — no card data); `refundHistory()` reads them
+  back. **CLI-only and gated — never over HTTP or MCP** (`std-owasp-llm` LLM08); read-only history at
+  `GET /v1/billing/refunds` + the dashboard billing panel + OpenAPI. The `billing-run` runbook's
+  abort path now points at `refund` instead of an out-of-band PSP step. Pure core (`assertRefundAmount`
+  / `refundIdempotencyKey`) at 100%; covered by the Stripe adapter (full / partial / pending /
+  failed / non-2xx), facade (audit-derived, partial bound, explicit-currency, idempotency, error
+  path, history), HTTP, dashboard, and OpenAPI tests.
+
 ## [0.9.0] - 2026-06-21
 
 Makes billing **operate unattended**. The charge → dunning loop, manual until now, is wrapped into a

@@ -10,6 +10,8 @@ import {
   redactSecrets,
   invoiceChargeAmount,
   chargeIdempotencyKey,
+  assertRefundAmount,
+  refundIdempotencyKey,
   planDunning,
   dunningStateFromCharges,
   type DunningSchedule,
@@ -100,7 +102,7 @@ import type { ExportResult, TenantExporter } from '../ports/tenant-exporter.js';
 import type { SecretStore } from '../ports/secret-store.js';
 import type { EventSink } from '../ports/event-sink.js';
 import type { AuditLogStore } from '../ports/audit-log-store.js';
-import type { ChargeResult, PaymentGateway } from '../ports/payment-gateway.js';
+import type { ChargeResult, PaymentGateway, RefundResult } from '../ports/payment-gateway.js';
 import { createStripeGateway } from '../adapters/payment/stripe-gateway.js';
 import type { PaymentEvent, PaymentWebhookVerifier } from '../ports/payment-webhook.js';
 import { createStripeWebhookVerifier } from '../adapters/payment/stripe-webhook.js';
@@ -168,7 +170,25 @@ export interface BillingRunReport {
   dunning?: DunningReport;
 }
 
-export type { ChargeRequest, ChargeResult, PaymentGateway } from '../ports/payment-gateway.js';
+/** Options for a {@link TenantForge.refundCharge}. */
+export interface RefundOptions {
+  /** Partial-refund amount in minor units; omit for a full refund of the original charge. */
+  amountMinor?: number;
+  /** Human reason for the refund (no secrets/PII), attached at the PSP + recorded in the audit event. */
+  reason?: string;
+  /** Currency override (lowercase ISO 4217); required only when the charge isn't in the audit trail. */
+  currency?: string;
+  /** Tenant id for attribution; defaults to the one on the matching `tenant.charged` audit event. */
+  tenantId?: string;
+}
+
+export type {
+  ChargeRequest,
+  ChargeResult,
+  PaymentGateway,
+  RefundRequest,
+  RefundResult,
+} from '../ports/payment-gateway.js';
 export type { PaymentEvent, PaymentWebhookVerifier } from '../ports/payment-webhook.js';
 export type { DunningSchedule, DunningDecision, DunningState } from '../core/dunning.js';
 export type {
@@ -756,6 +776,29 @@ export interface TenantForge {
   billingRunHistory(limit?: number): Promise<TenantEvent[]>;
 
   /**
+   * **Refund (or credit) a prior charge**, fully or partially, via the configured gateway. Looks the
+   * charge up in the persisted audit trail to recover the tenant / currency / original amount (so a
+   * full refund resolves to the right currency and a partial refund is bounded); pass `currency`
+   * explicitly when the charge predates the audit store. Idempotent on a per-charge+amount key so a
+   * retried refund never double-refunds. Emits a redacted `tenant.refunded` audit event (refund id,
+   * amount, status — no card data). Requires a payment gateway; throws on a PSP error.
+   *
+   * @param chargeId - The PSP charge id to refund (from charge history).
+   * @param opts - `amountMinor` for a partial refund; `reason`; `currency`/`tenantId` overrides.
+   * @returns The refund result (no card data).
+   */
+  refundCharge(chargeId: string, opts?: RefundOptions): Promise<RefundResult>;
+
+  /**
+   * Recent **refund history** (`tenant.refunded` events) from the persisted audit trail. Returns `[]`
+   * when no audit store is wired.
+   *
+   * @param limit - Max entries, newest-first. Defaults to 20.
+   * @returns Recent refund audit events.
+   */
+  refundHistory(limit?: number): Promise<TenantEvent[]>;
+
+  /**
    * **Ingest an inbound PSP webhook** (e.g. Stripe): verify its signature over the raw body, parse +
    * normalize it, and emit a redacted `payment.webhook` audit event (attributed to the tenant when
    * the event carries one). Requires a configured webhook verifier; throws on a bad/stale signature
@@ -912,6 +955,28 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const billingCustomerRef = (metadata: JsonObject): string | undefined => {
     const v = metadata['billingCustomerRef'];
     return typeof v === 'string' && v.length > 0 ? v : undefined;
+  };
+
+  /**
+   * Look up a prior charge in the persisted audit trail by its PSP charge id, to recover the
+   * tenant / currency / original amount for a refund. Returns `undefined` when no audit store is
+   * wired or no matching `tenant.charged` event exists (the caller then needs an explicit currency).
+   */
+  const findChargeInAudit = async (
+    chargeId: string,
+  ): Promise<{ tenantId?: string; currency?: string; amountMinor?: number } | undefined> => {
+    if (auditLog === undefined) return undefined;
+    const events = await auditLog.query({ events: ['tenant.charged'], limit: MAX_SWEEP });
+    const match = events.find((e) => e.context?.['chargeId'] === chargeId);
+    if (match === undefined) return undefined;
+    const ctx = match.context ?? {};
+    const currency = typeof ctx['currency'] === 'string' ? ctx['currency'] : undefined;
+    const amountMinor = typeof ctx['amountMinor'] === 'number' ? ctx['amountMinor'] : undefined;
+    return {
+      ...(match.tenantId !== undefined ? { tenantId: match.tenantId } : {}),
+      ...(currency !== undefined ? { currency } : {}),
+      ...(amountMinor !== undefined ? { amountMinor } : {}),
+    };
   };
 
   /**
@@ -1632,6 +1697,62 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     billingRunHistory(limit = 20): Promise<TenantEvent[]> {
       if (auditLog === undefined) return Promise.resolve([]);
       return auditLog.query({ events: ['billing.run'], limit });
+    },
+
+    async refundCharge(chargeId: string, opts: RefundOptions = {}): Promise<RefundResult> {
+      if (paymentGateway === undefined) {
+        throw new Error('refunds require a configured payment gateway');
+      }
+      const original = await findChargeInAudit(chargeId);
+      const currency = opts.currency ?? original?.currency;
+      if (currency === undefined) {
+        throw new Error(
+          `refund requires a currency (charge ${chargeId} not found in the audit trail — pass currency)`,
+        );
+      }
+      // Bound a partial refund by the original amount when we know it (can't refund more than charged).
+      assertRefundAmount(opts.amountMinor, original?.amountMinor);
+      const tenantId = opts.tenantId ?? original?.tenantId;
+      try {
+        const result = await paymentGateway.refund({
+          chargeId,
+          ...(opts.amountMinor !== undefined ? { amountMinor: opts.amountMinor } : {}),
+          currency,
+          idempotencyKey: refundIdempotencyKey(chargeId, opts.amountMinor),
+          ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+          ...(tenantId !== undefined ? { metadata: { tenant_id: tenantId } } : {}),
+        });
+        observe('tenant.refunded', {
+          ...(tenantId !== undefined ? { tenantId } : {}),
+          outcome: 'ok',
+          context: {
+            provider: result.provider,
+            refundId: result.id,
+            chargeId,
+            amountMinor: result.amountMinor,
+            currency: result.currency,
+            status: result.status,
+            ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+          },
+        });
+        return result;
+      } catch (error) {
+        observe('tenant.refunded', {
+          ...(tenantId !== undefined ? { tenantId } : {}),
+          outcome: 'error',
+          context: {
+            chargeId,
+            ...(opts.amountMinor !== undefined ? { amountMinor: opts.amountMinor } : {}),
+          },
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    },
+
+    refundHistory(limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.refunded'], limit });
     },
 
     async ingestPaymentWebhook(rawBody: string, signature: string): Promise<PaymentEvent> {

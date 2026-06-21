@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { invoiceChargeAmount, chargeIdempotencyKey } from '../../src/core/billing.js';
+import {
+  invoiceChargeAmount,
+  chargeIdempotencyKey,
+  assertRefundAmount,
+  refundIdempotencyKey,
+} from '../../src/core/billing.js';
 import type { Invoice } from '../../src/core/invoice.js';
 
 const invoice = (over: Partial<Invoice> = {}): Invoice => ({
@@ -61,5 +66,39 @@ describe('chargeIdempotencyKey', () => {
     expect(retry1).toBe(`${base}:retry-1`);
     expect(retry2).toBe(`${base}:retry-2`);
     expect(new Set([base, retry1, retry2]).size).toBe(3); // all distinct — no PSP replay
+  });
+});
+
+describe('assertRefundAmount', () => {
+  it('accepts a full refund (undefined amount)', () => {
+    expect(() => assertRefundAmount(undefined)).not.toThrow();
+    expect(() => assertRefundAmount(undefined, 1000)).not.toThrow();
+  });
+
+  it('accepts a positive partial amount within the original charge', () => {
+    expect(() => assertRefundAmount(500, 1000)).not.toThrow();
+    expect(() => assertRefundAmount(1000, 1000)).not.toThrow(); // exactly the original
+    expect(() => assertRefundAmount(500)).not.toThrow(); // original unknown → only positivity checked
+  });
+
+  it('rejects a non-positive or non-integer amount (fail closed)', () => {
+    expect(() => assertRefundAmount(0)).toThrow(/positive integer/);
+    expect(() => assertRefundAmount(-5)).toThrow(/positive integer/);
+    expect(() => assertRefundAmount(12.5)).toThrow(/positive integer/);
+  });
+
+  it('rejects refunding more than the original charge', () => {
+    expect(() => assertRefundAmount(1500, 1000)).toThrow(/exceeds the original charge/);
+  });
+});
+
+describe('refundIdempotencyKey', () => {
+  it('is deterministic; full and partial (and different partials) get distinct keys', () => {
+    const full = refundIdempotencyKey('ch_1');
+    expect(refundIdempotencyKey('ch_1')).toBe(full); // stable
+    expect(full).toBe('tenantforge:refund:ch_1:full');
+    const partial = refundIdempotencyKey('ch_1', 500);
+    expect(partial).toBe('tenantforge:refund:ch_1:500');
+    expect(new Set([full, partial, refundIdempotencyKey('ch_1', 600)]).size).toBe(3);
   });
 });

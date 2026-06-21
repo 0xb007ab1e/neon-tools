@@ -490,6 +490,21 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Recent refund events (read-only). Issuing a refund returns real money, so it is CLI-only +
+  // --yes gated — never exposed over HTTP.
+  app.get('/v1/billing/refunds', requirePermission('tenant:read'), async (c) => {
+    const limitParam = c.req.query('limit');
+    const limit = limitParam === undefined ? undefined : Number(limitParam);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      return problem(c, 400, 'Bad Request', 'limit must be a positive integer');
+    }
+    try {
+      return c.json({ refunds: await tf.refundHistory(limit) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // Recent billing-run roll-up events (read-only). The run itself charges the fleet + may suspend,
   // so it is CLI-only + --yes gated (for a cron) — never exposed over HTTP.
   app.get('/v1/billing/runs', requirePermission('tenant:read'), async (c) => {

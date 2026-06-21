@@ -228,6 +228,14 @@ export function createDashboard(options: DashboardOptions): Hono {
     return c.json({ runs: await options.tf.billingRunHistory() });
   });
 
+  // Recent refund history (read-only; issuing a refund returns real money, so it is CLI/gated).
+  app.get('/api/refunds', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'tenant:read')) return c.json({ error: 'forbidden' }, 403);
+    return c.json({ refunds: await options.tf.refundHistory() });
+  });
+
   // Whether reconcile can be EXECUTED from the dashboard (a SQL catalog is wired) and whether this
   // principal may (tenant:provision). The SPA uses this to decide whether to show the Run button.
   app.get('/api/reconcile/capabilities', (c) => {
