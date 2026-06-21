@@ -6,6 +6,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-21
+
+Brings the 0.4.x extension features to the **agent (MCP) surface**, completing
+library/CLI/HTTP/MCP parity across compliance, cost/margin, invoices, and fleet reconcile. Additive
+and backward-compatible (MINOR); read-only and secret-free on the agent surface, with reconcile
+execution deliberately kept off it (LLM08).
+
 ### Added
 
 - **MCP parity for the extension reports** — the agent surface gains read-only tools for the 0.4.0
@@ -583,6 +590,7 @@ and real-world validation.
 - Alternate adapters — other message brokers (SQS/NATS/Pub-Sub), Vault/cloud secret stores, and
   `pg_dump`→object-store exporters — are deferred to their own branches behind the existing ports.
 
+[0.5.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.5.0
 [0.4.1]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.4.1
 [0.4.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.4.0
 [0.3.0]: https://github.com/0xb007ab1e/neon-tools/releases/tag/tenantforge-v0.3.0
