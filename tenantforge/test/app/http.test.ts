@@ -331,6 +331,26 @@ describe('HTTP control-plane', () => {
     expect(await ok.json()).toEqual({ events });
   });
 
+  it('serves dunning history (tenant:read), 400 on a bad limit; the run is not over HTTP', async () => {
+    const events = [{ event: 'tenant.dunning', at: 'x', outcome: 'ok' }];
+    const server = app({ dunningHistory: async () => events as never });
+    const ok = await server.request('/v1/billing/dunning', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ events });
+    const bad = await server.request('/v1/billing/dunning?limit=0', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(bad.status).toBe(400);
+    // No dunning-run endpoint (it moves money + suspends — CLI/gated only).
+    const post = await server.request('/v1/billing/dunning', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(post.status).toBe(404);
+  });
+
   it('ingests a signature-verified PSP webhook (no bearer), 400 on a bad signature', async () => {
     const seen: { raw: string; sig: string }[] = [];
     const server = createHttpServer(

@@ -52,4 +52,14 @@ describe('chargeIdempotencyKey', () => {
   it('propagates the zero-amount guard', () => {
     expect(() => chargeIdempotencyKey(invoice({ totalUsd: 0 }))).toThrow(/no positive amount/);
   });
+
+  it('attempt 0 (or omitted) keeps the stable base key; a retry attempt yields a distinct key', () => {
+    const base = chargeIdempotencyKey(invoice());
+    expect(chargeIdempotencyKey(invoice(), 0)).toBe(base); // explicit 0 == omitted
+    const retry1 = chargeIdempotencyKey(invoice(), 1);
+    const retry2 = chargeIdempotencyKey(invoice(), 2);
+    expect(retry1).toBe(`${base}:retry-1`);
+    expect(retry2).toBe(`${base}:retry-2`);
+    expect(new Set([base, retry1, retry2]).size).toBe(3); // all distinct — no PSP replay
+  });
 });

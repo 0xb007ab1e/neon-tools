@@ -52,6 +52,14 @@ export {
 } from './invoice.js';
 export { invoiceChargeAmount, chargeIdempotencyKey, type ChargeAmount } from './billing.js';
 export {
+  planDunning,
+  dunningStateFromCharges,
+  type DunningSchedule,
+  type DunningInput,
+  type DunningDecision,
+  type DunningState,
+} from './dunning.js';
+export {
   can,
   permissionsFor,
   isRole,

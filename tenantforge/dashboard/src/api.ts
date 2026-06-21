@@ -226,3 +226,23 @@ export async function fetchPaymentEvents(): Promise<PaymentEventEntry[]> {
   if (!res.ok) throw new Error('Could not load payment events');
   return ((await res.json()) as { events: PaymentEventEntry[] }).events;
 }
+
+/** One dunning-history entry (a persisted `tenant.dunning` audit event). */
+export interface DunningHistoryEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  tenantId?: string;
+  context?: {
+    action?: string;
+    attempt?: number;
+    failures?: number;
+    status?: string;
+  };
+}
+
+/** Load recent dunning history (read-only; empty without an audit store). */
+export async function fetchDunning(): Promise<DunningHistoryEntry[]> {
+  const res = await fetch(`${BASE}/dunning`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load dunning history');
+  return ((await res.json()) as { events: DunningHistoryEntry[] }).events;
+}

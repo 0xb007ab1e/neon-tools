@@ -754,6 +754,67 @@ const chargeFleet = defineCommand({
   },
 });
 
+const dunning = defineCommand({
+  meta: {
+    name: 'dunning',
+    description:
+      'Retry failed charges / suspend the exhausted across the fleet (dunning run; --yes gated)',
+  },
+  args: {
+    from: { type: 'string', description: 'Period start (ISO-8601); default month start' },
+    to: { type: 'string', description: 'Period end (ISO-8601); default now' },
+    'max-attempts': {
+      type: 'string',
+      description: 'Consecutive failures before suspending (default 4)',
+    },
+    'min-hours': {
+      type: 'string',
+      description: 'Minimum hours between retry attempts (default 24)',
+    },
+    json: { type: 'boolean', description: 'Emit the full report as JSON', default: false },
+    yes: {
+      type: 'boolean',
+      description: 'Confirm — this retries charges (moves real money) and may suspend tenants.',
+      default: false,
+    },
+  },
+  async run({ args }) {
+    if (!args.yes) {
+      process.stderr.write(
+        'refusing to run dunning without --yes (this retries charges and may suspend tenants)\n',
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const schedule =
+      args['max-attempts'] !== undefined || args['min-hours'] !== undefined
+        ? {
+            maxAttempts: args['max-attempts'] !== undefined ? Number(args['max-attempts']) : 4,
+            minHoursBetweenAttempts:
+              args['min-hours'] !== undefined ? Number(args['min-hours']) : 24,
+          }
+        : undefined;
+    await withTenantForge(async (tf) => {
+      const report = await tf.runDunning(monthPeriod(args.from, args.to), schedule);
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      } else {
+        process.stdout.write(
+          `dunning run: ${report.retried.length} retried, ${report.suspended.length} suspended, ` +
+            `${report.failed.length} failed, ${report.skipped.length} skipped\n`,
+        );
+        for (const s of report.suspended) {
+          process.stdout.write(`  SUSPENDED ${s.tenantId} (${s.failures} failures)\n`);
+        }
+        for (const f of report.failed) {
+          process.stdout.write(`  FAILED ${f.tenantId} (attempt ${f.attempt}): ${f.error}\n`);
+        }
+      }
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -786,6 +847,7 @@ const main = defineCommand({
     'invoice-fleet': invoiceFleet,
     charge,
     'charge-fleet': chargeFleet,
+    dunning,
   },
 });
 

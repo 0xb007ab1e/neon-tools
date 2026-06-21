@@ -38,6 +38,7 @@ const app = () =>
       chargeHistory: async () => [{ event: 'tenant.charged', at: 'x', outcome: 'ok' }] as never,
       paymentWebhookHistory: async () =>
         [{ event: 'payment.webhook', at: 'x', outcome: 'ok' }] as never,
+      dunningHistory: async () => [{ event: 'tenant.dunning', at: 'x', outcome: 'ok' }] as never,
     }),
     { token: TOKEN, dashboardSecret: 'session-secret' },
   );
@@ -96,6 +97,11 @@ describe('dashboard backend', () => {
     expect(await pe.json()).toEqual({
       events: [{ event: 'payment.webhook', at: 'x', outcome: 'ok' }],
     });
+    const dn = await server.request('/dashboard/api/dunning', { headers: { cookie } });
+    expect(dn.status).toBe(200);
+    expect(await dn.json()).toEqual({
+      events: [{ event: 'tenant.dunning', at: 'x', outcome: 'ok' }],
+    });
     // The panels require a session.
     expect((await server.request('/dashboard/api/cost')).status).toBe(401);
     expect((await server.request('/dashboard/api/reconcile')).status).toBe(401);
@@ -103,6 +109,7 @@ describe('dashboard backend', () => {
     expect((await server.request('/dashboard/api/invoices')).status).toBe(401);
     expect((await server.request('/dashboard/api/charges')).status).toBe(401);
     expect((await server.request('/dashboard/api/payment-events')).status).toBe(401);
+    expect((await server.request('/dashboard/api/dunning')).status).toBe(401);
   });
 
   it('rejects an invalid operator token (401) and sets no cookie', async () => {
