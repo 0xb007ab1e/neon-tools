@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-21
+
+Completes the money flow with its reverse: charges can now be **refunded** (fully or partially)
+through the same swappable gateway port — the safety complement to unattended billing. Additive/
+backward-compatible (MINOR); the operation is opt-in, CLI-only, and `--yes` gated.
+
 ### Added
 
 - **Refunds / credits** — `tf.refundCharge(chargeId, opts?)` (CLI `refund`, `--yes` gated) reverses a
