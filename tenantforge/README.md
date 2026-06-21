@@ -5,7 +5,7 @@
 > the whole fleet, and handle suspend / offboard / residency — so you get hard data isolation and a
 > clean compliance story without building tenant provisioning, routing, and lifecycle yourself.
 
-**Status:** `stable` (v0.3.0) — feature-complete and hardened. Implemented: the pure core
+**Status:** `stable` (v0.4.0) — feature-complete and hardened. Implemented: the pure core
 (slug/region validation, the tenant-lifecycle state machine, the fleet-migration planner) at 100%
 test coverage; the Neon-API provisioning and Postgres registry / encrypted secret-store adapters; the
 full lifecycle (`provision` / `suspend` / `resume` / `offboard` / `purge`, plus the scheduled
