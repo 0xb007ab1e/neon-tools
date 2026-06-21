@@ -28,12 +28,25 @@ const chargesByTenant: Record<string, TenantEvent[]> = {
   ],
 };
 
+const receiptsByTenant: Record<string, TenantEvent[]> = {
+  't-a': [
+    {
+      event: 'tenant.notified',
+      at: '2026-06-20T06:00:00.000Z',
+      outcome: 'ok',
+      tenantId: 't-a',
+      context: { provider: 'log', kind: 'charge', reference: 'ch_a', status: 'queued' },
+    },
+  ],
+};
+
 /** A fake TenantForge exposing only the tenant-scoped reads the portal uses. */
 const fakeTf = (): TenantForge =>
   ({
     tenantSummary: (id: string) => Promise.resolve(summaries[id] ?? null),
     tenantCharges: (id: string) => Promise.resolve(chargesByTenant[id] ?? []),
     tenantRefunds: () => Promise.resolve([]),
+    tenantNotifications: (id: string) => Promise.resolve(receiptsByTenant[id] ?? []),
     usage: (id: string) =>
       Promise.resolve({
         tenantId: id,
@@ -102,6 +115,9 @@ describe('createPortal', () => {
     // Usage section renders (humanized), and the internal Neon project id is never exposed.
     expect(html).toContain('Usage this period');
     expect(html).not.toContain('proj'); // neonProjectId is not leaked to the tenant
+    // Receipts render (the tenant's own notification history).
+    expect(html).toContain('<caption>Recent receipts</caption>');
+    expect(html).toContain('ch_a');
   });
 
   it('JSON endpoints are scoped to the session tenant; 401 without a session', async () => {
@@ -109,6 +125,7 @@ describe('createPortal', () => {
     expect((await app.request('/api/me')).status).toBe(401);
     expect((await app.request('/api/charges')).status).toBe(401);
     expect((await app.request('/api/refunds')).status).toBe(401);
+    expect((await app.request('/api/receipts')).status).toBe(401);
     expect((await app.request('/api/usage')).status).toBe(401);
 
     const cookie = await login(app, 'tok-a');
@@ -118,6 +135,11 @@ describe('createPortal', () => {
     const charges = await app.request('/api/charges', { headers: { cookie } });
     expect(
       ((await charges.json()) as { charges: TenantEvent[] }).charges[0]?.context?.chargeId,
+    ).toBe('ch_a');
+    const receipts = await app.request('/api/receipts', { headers: { cookie } });
+    expect(receipts.status).toBe(200);
+    expect(
+      ((await receipts.json()) as { receipts: TenantEvent[] }).receipts[0]?.context?.reference,
     ).toBe('ch_a');
     const usage = await app.request('/api/usage', { headers: { cookie } });
     expect(usage.status).toBe(200);

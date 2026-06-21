@@ -1892,9 +1892,22 @@ describe('createTenantForge portal reads (tenant-scoped)', () => {
     expect(aCharges.every((e) => e.tenantId === 't-a')).toBe(true);
     expect(JSON.stringify(aCharges)).not.toContain('ch_b');
 
+    await auditLog.append({
+      event: 'tenant.notified',
+      at: '2026-06-22T00:00:00.000Z',
+      outcome: 'ok',
+      tenantId: 't-a',
+      context: { kind: 'charge', reference: 'ch_a', status: 'queued' },
+    });
+
     expect((await tf.tenantRefunds('t-a')).every((e) => e.tenantId === 't-a')).toBe(true);
     expect((await tf.tenantCharges('t-b')).map((e) => e.context?.chargeId)).toEqual(['ch_b']);
     expect(await tf.tenantRefunds('t-b')).toEqual([]);
+    // Receipts are tenant-scoped too — tenant A's receipt never leaks to B.
+    expect((await tf.tenantNotifications('t-a')).map((e) => e.context?.reference)).toEqual([
+      'ch_a',
+    ]);
+    expect(await tf.tenantNotifications('t-b')).toEqual([]);
   });
 
   it('tenant history is empty without an audit store', async () => {
@@ -1906,6 +1919,7 @@ describe('createTenantForge portal reads (tenant-scoped)', () => {
     });
     expect(await tf.tenantCharges('t-a')).toEqual([]);
     expect(await tf.tenantRefunds('t-a')).toEqual([]);
+    expect(await tf.tenantNotifications('t-a')).toEqual([]);
   });
 });
 
