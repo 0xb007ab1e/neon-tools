@@ -13,6 +13,7 @@ import {
   fetchDunning,
   fetchBillingRuns,
   fetchRefunds,
+  fetchNotifications,
   fetchSession,
   login,
   logout,
@@ -28,6 +29,7 @@ import {
   type DunningHistoryEntry,
   type BillingRunEntry,
   type RefundEntry,
+  type NotificationEntry,
   type Session,
 } from './api';
 
@@ -383,6 +385,7 @@ function BillingPanel(): React.JSX.Element {
   const dunning = usePanelData<DunningHistoryEntry[]>(fetchDunning);
   const runs = usePanelData<BillingRunEntry[]>(fetchBillingRuns);
   const refunds = usePanelData<RefundEntry[]>(fetchRefunds);
+  const notifications = usePanelData<NotificationEntry[]>(fetchNotifications);
   return (
     <Panel id="billing-h" title="Billing (recent charges)" error={error} loading={data === null}>
       {data !== null && (
@@ -459,6 +462,29 @@ function BillingPanel(): React.JSX.Element {
                     <td>{r.context?.retried ?? '—'}</td>
                     <td>{r.context?.suspended ?? '—'}</td>
                     <td>{r.outcome}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {notifications.data !== null && notifications.data.length > 0 && (
+            <table>
+              <caption>Recent receipts (notifications)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Kind</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {notifications.data.map((n) => (
+                  <tr key={`${n.at}-${n.context?.reference ?? ''}`}>
+                    <td>{n.at}</td>
+                    <td>{n.tenantId ?? '—'}</td>
+                    <td>{n.context?.kind ?? '—'}</td>
+                    <td>{n.context?.status ?? n.outcome}</td>
                   </tr>
                 ))}
               </tbody>

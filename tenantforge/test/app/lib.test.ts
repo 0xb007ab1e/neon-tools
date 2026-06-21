@@ -1704,6 +1704,113 @@ describe('createTenantForge.refundCharge', () => {
   });
 });
 
+describe('createTenantForge billing receipts (notifier)', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  const provider = {
+    getProjectConsumption: () =>
+      Promise.resolve([
+        {
+          computeTimeSeconds: 100,
+          activeTimeSeconds: 0,
+          writtenDataBytes: 0,
+          syntheticStorageBytes: 0,
+        },
+      ]),
+  };
+  type Gw = import('../../src/ports/payment-gateway.js').PaymentGateway;
+  type Notifier = import('../../src/ports/notifier.js').Notifier;
+  type Notification = import('../../src/ports/notifier.js').Notification;
+  const okGateway = (): Gw => ({
+    provider: 'stripe',
+    charge: (r) =>
+      Promise.resolve({
+        id: 'ch_x',
+        status: 'succeeded',
+        amountMinor: r.amountMinor,
+        currency: r.currency,
+        provider: 'stripe',
+      }),
+    refund: () => Promise.reject(new Error('unused')),
+  });
+  /** A recording notifier; `fail` makes notify throw. */
+  const fakeNotifier = (calls: Notification[] = [], fail = false): Notifier => ({
+    provider: 'log',
+    notify: (n) => {
+      calls.push(n);
+      if (fail) return Promise.reject(new Error('relay down'));
+      return Promise.resolve({ id: n.idempotencyKey, provider: 'log', status: 'queued' });
+    },
+  });
+  const deps = (notifier?: Notifier) => {
+    const auditLog = createInMemoryAuditLogStore();
+    return {
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      billingRates: { computeSecondUsd: 0.02 },
+      defaultRegion: 'aws-us-east-1' as const,
+      paymentGateway: okGateway(),
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+      ...(notifier !== undefined ? { notifier } : {}),
+    };
+  };
+
+  it('sends a charge receipt to billingEmail and records tenant.notified (no recipient in the audit)', async () => {
+    const calls: Notification[] = [];
+    const tf = createTenantForge(deps(fakeNotifier(calls)));
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1', billingEmail: 'billing@acme.example' },
+    });
+    await tf.chargeInvoice(tenant.id, period);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.to).toBe('billing@acme.example');
+    expect(calls[0]?.subject).toContain('2.00 USD');
+    expect(calls[0]?.idempotencyKey).toBe('tenantforge:receipt:charge:ch_x');
+    const history = await tf.notificationHistory();
+    expect(history).toHaveLength(1);
+    expect(history[0]?.event).toBe('tenant.notified');
+    expect(history[0]?.context?.kind).toBe('charge');
+    expect(JSON.stringify(history[0])).not.toContain('billing@acme.example'); // PII not recorded
+  });
+
+  it('sends no receipt when the tenant has no billingEmail', async () => {
+    const calls: Notification[] = [];
+    const tf = createTenantForge(deps(fakeNotifier(calls)));
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1' },
+    });
+    await tf.chargeInvoice(tenant.id, period);
+    expect(calls).toHaveLength(0);
+    expect(await tf.notificationHistory()).toEqual([]);
+  });
+
+  it('is best-effort: a notifier failure does not break the charge (records an error event)', async () => {
+    const tf = createTenantForge(deps(fakeNotifier([], true)));
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1', billingEmail: 'billing@acme.example' },
+    });
+    const result = await tf.chargeInvoice(tenant.id, period); // must still succeed
+    expect(result.status).toBe('succeeded');
+    expect((await tf.notificationHistory())[0]?.outcome).toBe('error');
+  });
+
+  it('sends nothing when no notifier is configured', async () => {
+    const tf = createTenantForge(deps()); // no notifier
+    const { tenant } = await tf.provision({
+      slug: 'acme',
+      metadata: { billingCustomerRef: 'cus_1', billingEmail: 'billing@acme.example' },
+    });
+    await tf.chargeInvoice(tenant.id, period);
+    expect(await tf.notificationHistory()).toEqual([]);
+  });
+});
+
 describe('createTenantForge portal reads (tenant-scoped)', () => {
   function seedTenant(
     registry: ReturnType<typeof fakeRegistry>,

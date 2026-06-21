@@ -235,6 +235,13 @@ const EnvSchema = z
     // paymentGateway=stripe), the inbound webhook endpoint (POST /webhooks/payment) is mounted and
     // verifies signatures with it. A secret; never committed/logged.
     TENANTFORGE_PAYMENT_WEBHOOK_SECRET: z.string().min(1).optional(),
+    // Billing receipts (optional): `none` (default — no receipts), `log` (record an auditable
+    // receipt trail, no external send), or `http` (POST each receipt to a relay — requires
+    // NOTIFIER_URL). A successful charge/refund best-effort emails the tenant's metadata.billingEmail.
+    TENANTFORGE_NOTIFIER: z.enum(['none', 'log', 'http']).default('none'),
+    // Relay endpoint for TENANTFORGE_NOTIFIER=http (must be https); optional HMAC signing secret.
+    TENANTFORGE_NOTIFIER_URL: z.string().url().optional(),
+    TENANTFORGE_NOTIFIER_SECRET: z.string().min(1).optional(),
     // Outbound lifecycle webhook (optional): HMAC-signed POST of each event to an external endpoint.
     TENANTFORGE_WEBHOOK_URL: z.string().url().optional(),
     TENANTFORGE_WEBHOOK_SECRET: z.string().min(1).optional(),
@@ -327,6 +334,14 @@ const EnvSchema = z
           });
         }
       }
+    }
+    // The HTTP notifier needs a relay URL.
+    if (env.TENANTFORGE_NOTIFIER === 'http' && env.TENANTFORGE_NOTIFIER_URL === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TENANTFORGE_NOTIFIER_URL'],
+        message: 'TENANTFORGE_NOTIFIER_URL is required when TENANTFORGE_NOTIFIER=http',
+      });
     }
     // The pg-dump exporter needs a destination directory until S3/GCS object stores land.
     if (env.TENANTFORGE_EXPORTER === 'pg-dump' && env.TENANTFORGE_EXPORT_DIR === undefined) {
@@ -449,6 +464,10 @@ export interface Config {
   paymentWebhookSecret?: string;
   /** Outbound lifecycle webhook (set only when both URL + secret are configured). */
   webhook?: { url: string; secret: string; eventTypes?: string[] };
+  /** Billing-receipt notifier: none (off), log (audit-only), or http (POST to a relay). */
+  notifier: 'none' | 'log' | 'http';
+  /** HTTP notifier relay URL + optional signing secret (when notifier=http). */
+  notifierHttp?: { url: string; secret?: string };
   /** Port for the HTTP entrypoint. */
   port: number;
 }
@@ -482,6 +501,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     idempotencyStore: parsed.TENANTFORGE_IDEMPOTENCY_STORE,
     auditLog: parsed.TENANTFORGE_AUDIT_LOG,
     paymentGateway: parsed.TENANTFORGE_PAYMENT_GATEWAY,
+    notifier: parsed.TENANTFORGE_NOTIFIER,
     ...(parsed.STRIPE_SECRET_KEY !== undefined
       ? { stripeSecretKey: parsed.STRIPE_SECRET_KEY }
       : {}),
@@ -550,6 +570,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const portalCredentials = parseTenantCredentials(parsed.TENANTFORGE_PORTAL_CREDENTIALS);
   if (portalCredentials !== undefined) {
     config.portalCredentials = portalCredentials;
+  }
+  if (parsed.TENANTFORGE_NOTIFIER === 'http') {
+    // superRefine guarantees the URL is present for this mode.
+    config.notifierHttp = {
+      url: parsed.TENANTFORGE_NOTIFIER_URL!,
+      ...(parsed.TENANTFORGE_NOTIFIER_SECRET !== undefined
+        ? { secret: parsed.TENANTFORGE_NOTIFIER_SECRET }
+        : {}),
+    };
   }
   if (parsed.TENANTFORGE_PORTAL_AUTH_MODE === 'oidc') {
     // superRefine guarantees issuer/audience/jwks are present for this mode.

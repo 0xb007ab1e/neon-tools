@@ -510,6 +510,21 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Recent billing-receipt notifications (read-only). Receipts are an automatic best-effort
+  // side-effect of charge/refund; the recipient address is never recorded.
+  app.get('/v1/billing/notifications', requirePermission('tenant:read'), async (c) => {
+    const limitParam = c.req.query('limit');
+    const limit = limitParam === undefined ? undefined : Number(limitParam);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      return problem(c, 400, 'Bad Request', 'limit must be a positive integer');
+    }
+    try {
+      return c.json({ notifications: await tf.notificationHistory(limit) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // Recent refund events (read-only). Issuing a refund returns real money, so it is CLI-only +
   // --yes gated — never exposed over HTTP.
   app.get('/v1/billing/refunds', requirePermission('tenant:read'), async (c) => {
