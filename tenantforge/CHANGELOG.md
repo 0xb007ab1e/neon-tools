@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-21
+
+Makes the tenant portal production-ready: tenants can authenticate against a customer IdP via OIDC,
+not just a static token map. Additive/backward-compatible (MINOR); the default portal auth mode is
+unchanged (`token`).
+
 ### Added
 
 - **OIDC tenant auth for the portal** — a second `TenantAuthenticator` adapter
