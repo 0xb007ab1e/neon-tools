@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "id": "tenantforge",
   "name": "TenantForge",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "status": "stable",
   "summary": "Control plane for database-per-tenant SaaS on Neon: provision an isolated project per customer, route connections, orchestrate fleet-wide migrations, and manage tenant lifecycle (suspend/offboard/residency).",
   "category": "infra",
