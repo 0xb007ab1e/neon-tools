@@ -358,6 +358,28 @@ export async function fetchPlanChanges(): Promise<PlanChangeEntry[]> {
   return ((await res.json()) as { planChanges: PlanChangeEntry[] }).planChanges;
 }
 
+/** A retention report (mirrors the server's RetentionReport). */
+export interface RetentionReport {
+  generatedAt: string;
+  retentionDays: number;
+  eligible: number;
+  pending: number;
+  tenants: {
+    tenantId: string;
+    slug: string;
+    archivedAt: string;
+    purgeEligibleAt: string;
+    eligible: boolean;
+  }[];
+}
+
+/** Load the retention report (read-only; archived tenants scheduled for purge). */
+export async function fetchRetention(): Promise<RetentionReport> {
+  const res = await fetch(`${BASE}/retention`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load the retention report');
+  return (await res.json()) as RetentionReport;
+}
+
 /** One data-export entry (a persisted `tenant.exported` audit event). */
 export interface ExportEntry {
   at: string;

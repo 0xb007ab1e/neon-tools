@@ -53,6 +53,14 @@ const permissiveTf = (): TenantForge =>
     scanAuditAnomalies: () => Promise.resolve([]),
     scanCostAnomalies: () => Promise.resolve([]),
     exportHistory: () => Promise.resolve([]),
+    retentionReport: () =>
+      Promise.resolve({
+        generatedAt: 'x',
+        retentionDays: 30,
+        eligible: 0,
+        pending: 0,
+        tenants: [],
+      }),
     listPlans: () => [],
     listSignupTokens: () => Promise.resolve([]),
     previewPlanChange: (id: string, newPriceUsd: number) =>

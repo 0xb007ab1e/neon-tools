@@ -108,6 +108,12 @@ export {
 } from './authz.js';
 export { assertRoutable, type RoutableTenant } from './routing.js';
 export { retentionCutoff, isPurgeable, type RetainableTenant } from './retention.js';
+export {
+  buildRetentionReport,
+  type RetentionReport,
+  type RetainedTenant,
+  type RetentionReportOptions,
+} from './retention-report.js';
 export { redactSecrets, type TenantEvent } from './observability.js';
 export {
   normalizeAuditQuery,

@@ -55,6 +55,13 @@ const app = () =>
       invoiceDeliveryHistory: async () =>
         [{ event: 'tenant.invoiced', at: 'x', outcome: 'ok' }] as never,
       exportHistory: async () => [{ event: 'tenant.exported', at: 'x', outcome: 'ok' }] as never,
+      retentionReport: async () => ({
+        generatedAt: 'x',
+        retentionDays: 30,
+        eligible: 0,
+        pending: 0,
+        tenants: [],
+      }),
       queryAudit: async () => [{ event: 'tenant.transition', at: 'x', outcome: 'ok' }] as never,
       scanAuditAnomalies: async () =>
         [{ kind: 'error-spike', count: 12, events: ['tenant.charged'] }] as never,
@@ -168,6 +175,15 @@ describe('dashboard backend', () => {
     expect(await ex.json()).toEqual({
       exports: [{ event: 'tenant.exported', at: 'x', outcome: 'ok' }],
     });
+    const rt = await server.request('/dashboard/api/retention', { headers: { cookie } });
+    expect(rt.status).toBe(200);
+    expect(await rt.json()).toEqual({
+      generatedAt: 'x',
+      retentionDays: 30,
+      eligible: 0,
+      pending: 0,
+      tenants: [],
+    });
     const is = await server.request('/dashboard/api/invoices-sent', { headers: { cookie } });
     expect(is.status).toBe(200);
     expect(await is.json()).toEqual({
@@ -207,6 +223,7 @@ describe('dashboard backend', () => {
     expect((await server.request('/dashboard/api/plans')).status).toBe(401);
     expect((await server.request('/dashboard/api/signup-tokens')).status).toBe(401);
     expect((await server.request('/dashboard/api/exports')).status).toBe(401);
+    expect((await server.request('/dashboard/api/retention')).status).toBe(401);
     expect((await server.request('/dashboard/api/invoices-sent')).status).toBe(401);
     expect((await server.request('/dashboard/api/audit')).status).toBe(401);
     expect((await server.request('/dashboard/api/audit-anomalies')).status).toBe(401);

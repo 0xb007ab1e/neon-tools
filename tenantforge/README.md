@@ -232,6 +232,8 @@ from Neon's consumption API via the `UsageProvider` port (no usage data stored i
 
 **Data export (portability / DSAR):** `tf.exportTenantData(id)` (CLI `export-tenant`) exports a tenant's data to durable storage via the configured `TenantExporter` and returns a reference (object-store `location` + size) — the GDPR **Art. 20 data-portability** / data-subject-request path. Unlike offboard/erase it **changes no state and deletes nothing**: the tenant stays active and gets a copy. Records a `tenant.exported` audit event (the artifact reference, never the data). Reads tenant data, so it's **CLI/library only** (never HTTP/MCP); read-only history at `GET /v1/exports` + the dashboard "Data exports" panel. Requires an exporter (`TENANTFORGE_EXPORTER`). Builder-side — Neon doesn't map customers to data or handle DSARs.
 
+**Retention report:** `tf.retentionReport({ retentionDays?, now? })` (CLI `retention-report`, HTTP `GET /v1/retention`, dashboard "Retention" panel) is the read-only preview of the purge pipeline — which archived (`offboarding`) tenants are scheduled for deletion and when, given the retention window (`TENANTFORGE_RETENTION_DAYS`). The pure core `buildRetentionReport` computes per-tenant `purgeEligibleAt` + eligibility (reusing `isPurgeable`, so it matches `purge-expired` exactly; 100%), sorted eligible-first. Read-only everywhere (purging is the gated CLI/library sweep). Builder-side — the operator's data-retention policy is not a Neon concept.
+
 **Compliance report:** `tf.complianceReport()` (CLI `compliance-report`, HTTP `GET
 /v1/compliance/report`) emits a registry-derived **isolation + residency attestation** with a
 SHA-256 integrity digest — flags shared/missing tenant projects and out-of-allow-list regions; CLI

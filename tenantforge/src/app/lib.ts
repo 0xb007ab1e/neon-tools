@@ -24,6 +24,8 @@ import {
   type DunningSchedule,
   type TenantEvent,
   retentionCutoff,
+  buildRetentionReport,
+  type RetentionReport,
   selectRegion,
   normalizeAuditQuery,
   detectAuditAnomalies,
@@ -307,6 +309,11 @@ export interface TenantForgeDeps {
    * all known regions allowed.
    */
   allowedRegions?: readonly string[];
+  /**
+   * Default retention window (days) for {@link TenantForge.purgeExpired} / {@link
+   * TenantForge.retentionReport} when the caller doesn't pass one. Absent ⇒ 30 days.
+   */
+  retentionDays?: number;
   /**
    * Dedicated store for per-tenant connection secrets (keyed by tenant id). The connection URI is
    * stored here on provision and deleted on offboard — never persisted in the registry (master §5).
@@ -703,6 +710,17 @@ export interface TenantForge {
    * @returns Per-tenant sweep report (scanned / purged / failed).
    */
   purgeExpired(options?: PurgeSweepOptions): Promise<PurgeSweepReport>;
+
+  /**
+   * **Retention report** (read-only) — which archived (`offboarding`) tenants are scheduled for
+   * purge and when, given the retention window. The read-only preview of what {@link
+   * TenantForge.purgeExpired} would eventually delete; eligibility matches the sweep exactly. The
+   * operator's data-retention policy — not a Neon concept.
+   *
+   * @param options - Optional `retentionDays` (defaults to the configured window) and `now`.
+   * @returns The retention report (eligible / pending counts + per-tenant rows).
+   */
+  retentionReport(options?: { retentionDays?: number; now?: Date }): Promise<RetentionReport>;
 
   /**
    * Erase a tenant under a right-to-erasure request (GDPR Art. 17 / CCPA — ErasureEngine #17): an
@@ -2358,7 +2376,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     },
 
     async purgeExpired(options: PurgeSweepOptions = {}): Promise<PurgeSweepReport> {
-      const retentionDays = options.retentionDays ?? DEFAULT_RETENTION_DAYS;
+      const retentionDays = options.retentionDays ?? deps.retentionDays ?? DEFAULT_RETENTION_DAYS;
       const cutoff = retentionCutoff(options.now ?? new Date(), retentionDays);
       const offboarding = await registry.list({ status: 'offboarding', limit: MAX_SWEEP });
       const expired = offboarding.filter((t) => isPurgeable(t, cutoff));
@@ -2381,6 +2399,14 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         context: { scanned: offboarding.length, purged: purged.length, failed: failed.length },
       });
       return { scanned: offboarding.length, purged, failed };
+    },
+
+    async retentionReport(
+      options: { retentionDays?: number; now?: Date } = {},
+    ): Promise<RetentionReport> {
+      const retentionDays = options.retentionDays ?? deps.retentionDays ?? DEFAULT_RETENTION_DAYS;
+      const offboarding = await registry.list({ status: 'offboarding', limit: MAX_SWEEP });
+      return buildRetentionReport(offboarding, { now: options.now ?? new Date(), retentionDays });
     },
 
     async getConnection(id: string): Promise<TenantConnection> {
@@ -3236,6 +3262,7 @@ export function tenantForgeFromConfig(
     }),
     defaultRegion: config.defaultRegion,
     allowedRegions: config.allowedRegions,
+    retentionDays: config.retentionDays,
     connectionCacheTtlMs: config.connectionCacheTtlMs,
     // pg_dump → pg_restore mover so re-homing works out of the box (needs pg_dump/pg_restore on PATH).
     dataMover: createPgDataMover({

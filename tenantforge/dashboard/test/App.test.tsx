@@ -49,6 +49,21 @@ const reconcile = {
   upToDate: [],
   totalMissing: 2,
 };
+const retention = {
+  generatedAt: '2026-06-30T00:00:00.000Z',
+  retentionDays: 30,
+  eligible: 1,
+  pending: 0,
+  tenants: [
+    {
+      tenantId: 'tenant-archived',
+      slug: 'archived',
+      archivedAt: '2026-05-01T00:00:00.000Z',
+      purgeEligibleAt: '2026-05-31T00:00:00.000Z',
+      eligible: true,
+    },
+  ],
+};
 const dataExports = [
   {
     at: '2026-06-20T12:00:00.000Z',
@@ -256,6 +271,7 @@ beforeEach(() => {
         return Promise.resolve(json({ target: '0003', reconciled: ['t1', 't2'], partial: [] }));
       if (url.endsWith('/reconcile')) return Promise.resolve(json(reconcile));
       if (url.endsWith('/exports')) return Promise.resolve(json({ exports: dataExports }));
+      if (url.endsWith('/retention')) return Promise.resolve(json(retention));
       if (url.endsWith('/invoices')) return Promise.resolve(json(invoices));
       if (url.endsWith('/payment-events')) return Promise.resolve(json({ events: paymentEvents }));
       if (url.endsWith('/billing-runs')) return Promise.resolve(json({ runs: billingRuns }));
@@ -320,6 +336,11 @@ describe('dashboard App', () => {
       await screen.findByRole('heading', { name: 'Data exports (portability / DSAR)' }),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-exported')).toBeInTheDocument();
+    // Retention (scheduled purges) renders in the fleet section.
+    expect(
+      await screen.findByRole('heading', { name: 'Retention (scheduled purges)' }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('tenant-archived')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);
