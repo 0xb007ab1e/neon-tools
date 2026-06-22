@@ -104,7 +104,12 @@ function fakeRegistry(): TenantRegistry & { seed(record: TenantRecord): void } {
     },
     setStatus(id, status) {
       const r = byId.get(id);
-      if (r) r.status = status;
+      // Bump updatedAt like the production registry — retention/purge key off the last status change
+      // (so an offboarded tenant's retention window starts now, not at the epoch seed time).
+      if (r) {
+        r.status = status;
+        r.updatedAt = new Date();
+      }
       return Promise.resolve();
     },
     updateMetadata(id, patch) {
@@ -516,7 +521,36 @@ describe('createTenantForge lifecycle', () => {
     const outcome = await tf.offboard(tenant.id);
     expect(outcome.tenant.status).toBe('offboarding');
     expect(outcome.archive).toBeNull();
-    expect((await tf.resume(tenant.id)).status).toBe('active'); // reversible
+    expect((await tf.restore(tenant.id)).status).toBe('active'); // reversible via restore
+    // resume is for suspended tenants only — it refuses to un-offboard (restore is the gated path).
+    await tf.offboard(tenant.id);
+    await expect(tf.resume(tenant.id)).rejects.toThrow(/cannot resume an offboarding tenant/);
+  });
+
+  it('restore refuses a tenant past its retention window (fail closed)', async () => {
+    // A zero-day retention window means an offboarded tenant is immediately purge-eligible, so
+    // restore must refuse it (deterministic — no clock manipulation needed).
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+      retentionDays: 0,
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await tf.offboard(tenant.id);
+    await expect(tf.restore(tenant.id)).rejects.toThrow(/retention window/);
+  });
+
+  it('restore refuses a tenant that is not offboarding', async () => {
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      defaultRegion: 'aws-us-east-1',
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await expect(tf.restore(tenant.id)).rejects.toThrow(/requires an offboarding tenant/);
   });
 
   it('purge irreversibly deletes the offboarded project and shreds the secret', async () => {

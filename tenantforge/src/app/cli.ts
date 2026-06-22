@@ -253,6 +253,20 @@ const resume = defineCommand({
   },
 });
 
+const restore = defineCommand({
+  meta: {
+    name: 'restore',
+    description: 'Restore an offboarded tenant to active (within its retention window)',
+  },
+  args: { id: { type: 'positional', description: 'Tenant id (UUID)', required: true } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const tenant = await tf.restore(args.id);
+      process.stdout.write(`${formatTenant(tenant)}\n`);
+    });
+  },
+});
+
 const offboard = defineCommand({
   meta: {
     name: 'offboard',
@@ -1525,6 +1539,7 @@ const main = defineCommand({
     usage,
     suspend,
     resume,
+    restore,
     offboard,
     'export-tenant': exportTenant,
     enqueue,

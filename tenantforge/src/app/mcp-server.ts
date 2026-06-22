@@ -137,7 +137,7 @@ export function createMcpServer(tf: TenantForge): McpServer {
     {
       description:
         'Offboard a tenant: archive it — retain the Neon project (scaled to zero), stop serving. ' +
-        'REVERSIBLE via tf_resume until purged. The irreversible hard-delete (purge) is intentionally ' +
+        'REVERSIBLE via tf_restore until purged. The irreversible hard-delete (purge) is intentionally ' +
         'not exposed to agents; run it via the CLI/HTTP control plane.',
       inputSchema: { id: z.string() },
     },
@@ -146,6 +146,18 @@ export function createMcpServer(tf: TenantForge): McpServer {
         const outcome = await tf.offboard(id);
         return json({ tenant: outcome.tenant, archive: outcome.archive });
       }),
+  );
+
+  server.registerTool(
+    'tf_restore',
+    {
+      description:
+        'Restore an offboarded tenant back to active (un-archive), if still within its retention ' +
+        'window. The inverse of tf_offboard; the tenant becomes routable again. Refused once the ' +
+        'tenant is past retention (eligible for purge).',
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) => asMcp(async () => json({ tenant: await tf.restore(id) })),
   );
 
   // --- Read-only extension reports (no mutation, no secrets) ---

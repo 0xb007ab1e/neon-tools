@@ -42,7 +42,7 @@ describe.skipIf(!ready)('lifecycle smoke (live Neon)', () => {
     await tf.close();
   });
 
-  it('runs provision → suspend → resume → offboard → resume → purge with the documented states', async () => {
+  it('runs provision → suspend → resume → offboard → restore → purge with the documented states', async () => {
     await tf.migrate();
 
     // deploy.md smoke: provision → active + project id + a connection secret issued.
@@ -66,8 +66,8 @@ describe.skipIf(!ready)('lifecycle smoke (live Neon)', () => {
     const offboarded = await tf.offboard(tenant.id);
     expect(offboarded.tenant.status).toBe('offboarding');
 
-    // backup-restore.md: "resume = restore" — un-archive back to active within the retention window.
-    expect((await tf.resume(tenant.id)).status).toBe('active');
+    // backup-restore.md: restore — un-archive back to active within the retention window.
+    expect((await tf.restore(tenant.id)).status).toBe('active');
 
     // offboard again, then purge → irreversible delete (project + secret gone).
     await tf.offboard(tenant.id);

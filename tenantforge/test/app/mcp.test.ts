@@ -54,6 +54,7 @@ describe('MCP server', () => {
       'tf_provision',
       'tf_reconcile_history',
       'tf_reconcile_plan',
+      'tf_restore',
       'tf_resume',
       'tf_retention',
       'tf_signup_tokens',
@@ -180,6 +181,15 @@ describe('MCP server', () => {
     const out = body(result);
     expect(out).toContain('"status": "offboarding"');
     expect(out).toContain('neon-project:proj-1');
+    await client.close();
+  });
+
+  it('tf_restore un-archives and returns the restored (active) tenant', async () => {
+    const client = await connect(
+      fakeTf({ restore: async () => ({ ...tenant, status: 'active' }) }),
+    );
+    const result = await client.callTool({ name: 'tf_restore', arguments: { id: 't1' } });
+    expect(body(result)).toContain('"status": "active"');
     await client.close();
   });
 

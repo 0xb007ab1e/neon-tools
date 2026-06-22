@@ -651,8 +651,9 @@ export interface TenantForge {
   suspend(id: string): Promise<TenantRecord>;
 
   /**
-   * Resume a tenant back to active — from `suspended`, or restoring an `offboarding` (archived)
-   * tenant during its retention window (the Neon project and connection secret were retained).
+   * Resume a **suspended** tenant back to active. Reactivating an *offboarded* tenant is gated by
+   * the retention policy — use {@link TenantForge.restore} for that (this rejects an `offboarding`
+   * tenant so the gate can't be bypassed).
    *
    * @param id - The tenant id.
    * @returns The updated record.
@@ -660,8 +661,21 @@ export interface TenantForge {
   resume(id: string): Promise<TenantRecord>;
 
   /**
+   * Restore an **offboarded** tenant back to active (un-archive), provided it is still **within its
+   * retention window** — past the window it is eligible for purge and restore is refused (fail
+   * closed). The inverse of {@link TenantForge.offboard}: the Neon project and connection secret were
+   * retained, so this is just the reverse status transition (no re-provisioning). Lets an operator
+   * recover from an accidental/premature offboard.
+   *
+   * @param id - The tenant id.
+   * @returns The updated record (`active`).
+   * @throws If the tenant is not `offboarding`, or is past its retention window.
+   */
+  restore(id: string): Promise<TenantRecord>;
+
+  /**
    * Offboard a tenant: stop serving and **archive** it — the Neon project is retained (scaled to
-   * zero ≈ $0 idle) for the retention window, not deleted. **Reversible** via {@link TenantForge.resume}
+   * zero ≈ $0 idle) for the retention window, not deleted. **Reversible** via {@link TenantForge.restore}
    * until {@link TenantForge.purge}. This honors export-then-delete by keeping the data recoverable
    * during retention (`@rules/workflow-data-lifecycle.md`).
    *
@@ -2259,6 +2273,29 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
 
     async resume(id: string): Promise<TenantRecord> {
       const tenant = await requireTenant(id);
+      // `resume` reactivates a *suspended* tenant. Reactivating an *offboarded* one is policy-gated
+      // (retention window) — route it through `restore` so the gate can't be bypassed here
+      // (complete mediation; master §2).
+      if (tenant.status === 'offboarding') {
+        throw new Error('cannot resume an offboarding tenant; use restore (retention-gated)');
+      }
+      return transition(tenant, 'active');
+    },
+
+    async restore(id: string): Promise<TenantRecord> {
+      const tenant = await requireTenant(id);
+      // Restore is the inverse of offboard: only an offboarding tenant can be restored.
+      if (tenant.status !== 'offboarding') {
+        throw new Error(`restore requires an offboarding tenant (status: ${tenant.status})`);
+      }
+      // Fail closed once the retention window has elapsed: the tenant is eligible for purge, so its
+      // archive may be gone and policy forbids revival — past the window, restore is refused.
+      const retentionDays = deps.retentionDays ?? DEFAULT_RETENTION_DAYS;
+      if (isPurgeable(tenant, retentionCutoff(new Date(), retentionDays))) {
+        throw new Error('tenant is past its retention window (eligible for purge); cannot restore');
+      }
+      // The Neon project was RETAINED at offboard (scaled to zero), so reviving is just the inverse
+      // status transition — no re-provisioning, and the connection secret is intact.
       return transition(tenant, 'active');
     },
 
