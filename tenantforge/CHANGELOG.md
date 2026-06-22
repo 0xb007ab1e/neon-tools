@@ -6,6 +6,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- **Supply-chain release integrity** (std-supplychain / workflow-cicd). CI gains a **supply-chain**
+  job that generates a **CycloneDX SBOM** and runs a **Trivy** filesystem vuln + misconfig scan
+  (merge-blocking on fixable HIGH/CRITICAL). A new tag-triggered **release** workflow
+  (`tenantforge-v*`) builds the artifact once, attests **non-falsifiable SLSA build provenance**
+  (keyless via OIDC — no stored keys), and publishes a GitHub Release with the tarball + SBOM
+  (verify with `gh attestation verify`). All third-party actions pinned by commit SHA. (A hardened,
+  scanned + signed container image is deferred — it needs a registry + deploy-target decision.)
+
 ## [0.29.0] - 2026-06-21
 
 Adds a read-only retention report (purge-eligibility preview) and wires the configured retention
