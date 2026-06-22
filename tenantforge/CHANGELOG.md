@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-06-21
+
+Adds FinOps cost/margin anomaly detection over the cost report. Additive/backward-compatible
+(MINOR) — read-only; requires a usage provider. Builder-side (operator prices/margins); not a Neon
+feature.
+
 ### Added
 
 - **Cost anomaly detection (FinOps)** — `scanCostAnomalies(period, thresholds?)` (CLI `cost-scan`,
