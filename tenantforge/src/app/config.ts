@@ -180,6 +180,10 @@ const EnvSchema = z
     // back to a capped refund), `memory` (process-local; dev/single-instance), or `pg` (durable,
     // authoritative, cross-instance — `tf_credits`, migration 0007). Recommended `pg` in production.
     TENANTFORGE_CREDIT_LEDGER: z.enum(['none', 'memory', 'pg']).default('none'),
+    // Signup/invite token store (self-serve onboarding): `none` (off), `memory` (process-local;
+    // dev/single-instance), or `pg` (durable — tf_signup_tokens, migration 0008). Enables
+    // issue/redeem/list signup tokens. Only the token hash is stored.
+    TENANTFORGE_SIGNUP_TOKEN_STORE: z.enum(['none', 'memory', 'pg']).default('none'),
     // Transport-security escape hatches (default false — fail closed). `..._DB` permits a non-TLS
     // Postgres connection (no `sslmode=require`); `..._URLS` permits a non-https outbound URL
     // (Neon API / Vault / Azure Key Vault / OIDC JWKS / Stripe). Set ONLY for local development
@@ -485,6 +489,8 @@ export interface Config {
   usageAlertThresholds: number[];
   /** The operator's plan catalog (named tiers); absent ⇒ no catalog (assignPlan fails closed). */
   plans?: PlanDefinition[];
+  /** Signup/invite token store backend: none (off), memory, or pg (durable). */
+  signupTokenStore: 'none' | 'memory' | 'pg';
   /** Payment gateway for charging invoices: none (charging disabled) or stripe. */
   paymentGateway: 'none' | 'stripe';
   /** Stripe secret key; present ⇒ the Stripe gateway is wired (required when paymentGateway=stripe). */
@@ -532,6 +538,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     idempotencyStore: parsed.TENANTFORGE_IDEMPOTENCY_STORE,
     auditLog: parsed.TENANTFORGE_AUDIT_LOG,
     creditLedger: parsed.TENANTFORGE_CREDIT_LEDGER,
+    signupTokenStore: parsed.TENANTFORGE_SIGNUP_TOKEN_STORE,
     usageAlertThresholds: parsed.TENANTFORGE_USAGE_ALERT_THRESHOLDS,
     paymentGateway: parsed.TENANTFORGE_PAYMENT_GATEWAY,
     notifier: parsed.TENANTFORGE_NOTIFIER,

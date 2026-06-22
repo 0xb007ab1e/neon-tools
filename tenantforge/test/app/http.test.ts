@@ -423,6 +423,16 @@ describe('HTTP control-plane', () => {
     expect(await ok.json()).toEqual({ invoicesSent });
   });
 
+  it('serves signup-token status (tenant:read); issue/redeem are not over HTTP', async () => {
+    const signupTokens = [{ slug: 'acme', status: 'pending', expiresAt: 'x', createdAt: 'y' }];
+    const server = app({ listSignupTokens: async () => signupTokens as never });
+    const ok = await server.request('/v1/signup-tokens', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ signupTokens });
+  });
+
   it('serves the plan catalog (tenant:read); assigning is not over HTTP', async () => {
     const catalog = [{ id: 'pro', name: 'Pro', priceUsd: 49 }];
     const server = app({ listPlans: () => catalog });

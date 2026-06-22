@@ -449,6 +449,16 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     return c.json({ plans: tf.listPlans() });
   });
 
+  // Signup-token listing (read-only; status only — never the token). Issuing/redeeming provisions
+  // resources, so those are CLI/library only, never over HTTP/MCP.
+  app.get('/v1/signup-tokens', requirePermission('tenant:read'), async (c) => {
+    try {
+      return c.json({ signupTokens: await tf.listSignupTokens() });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // Recent usage-alert history (read-only; persisted `tenant.usage_alert` events). The live sweep
   // (which emits events + optionally notifies tenants) is a library/CLI op, not a side-effecting GET.
   app.get('/v1/usage-alerts', requirePermission('tenant:read'), async (c) => {

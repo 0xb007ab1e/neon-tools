@@ -285,6 +285,28 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/signup-tokens:
+    get:
+      tags: [reports]
+      summary: >
+        List recent signup/invite tokens (requires `tenant:read`) — status only, never the token or
+        its hash. Read-only; issuing/redeeming a token provisions resources and is a CLI/library op
+        (never over HTTP/MCP). Empty unless a signup-token store is wired.
+      responses:
+        '200':
+          description: Recent signup-token summaries (redacted).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signupTokens:
+                    type: array
+                    items: { type: object }
+                required: [signupTokens]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/plans:
     get:
       tags: [reports]

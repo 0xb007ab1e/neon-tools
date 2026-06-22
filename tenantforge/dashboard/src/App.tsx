@@ -21,6 +21,7 @@ import {
   fetchInvoicesSent,
   fetchAudit,
   fetchAuditAnomalies,
+  fetchSignupTokens,
   fetchSession,
   login,
   logout,
@@ -44,6 +45,7 @@ import {
   type InvoiceSentEntry,
   type AuditEventEntry,
   type AuditAnomalyEntry,
+  type SignupTokenEntry,
   type Session,
 } from './api';
 
@@ -151,6 +153,7 @@ function DashboardView(props: {
         <ReconcilePanel />
         <CostPanel />
         <PlansPanel />
+        <SignupTokensPanel />
         <InvoicesPanel />
         <BillingPanel />
         <AuditPanel />
@@ -719,6 +722,45 @@ function AuditPanel(): React.JSX.Element {
                     <td>{e.outcome}</td>
                     <td>{e.tenantId ?? '—'}</td>
                     <td>{e.actor !== undefined ? `${e.actor.id} (${e.actor.role})` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function SignupTokensPanel(): React.JSX.Element {
+  const { data, error } = usePanelData<SignupTokenEntry[]>(fetchSignupTokens);
+  return (
+    <Panel id="signup-h" title="Signup tokens" error={error} loading={data === null}>
+      {data !== null && (
+        <div>
+          <p>
+            {data.length} token(s). Issuing/redeeming runs via the CLI (`signup-issue` /
+            `signup-redeem`); the raw token is shown only once and never stored.
+          </p>
+          {data.length > 0 && (
+            <table>
+              <caption>Recent signup tokens (status only)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Slug</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Expires</th>
+                  <th scope="col">Tenant</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((t, i) => (
+                  <tr key={`${t.slug}-${t.createdAt}-${i}`}>
+                    <th scope="row">{t.slug}</th>
+                    <td>{t.status}</td>
+                    <td>{t.expiresAt}</td>
+                    <td>{t.redeemedTenantId ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

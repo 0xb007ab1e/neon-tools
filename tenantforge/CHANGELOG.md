@@ -6,6 +6,20 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Signup / onboarding tokens** — `issueSignupToken({ slug, region?, planId?, ttlSeconds? })` (CLI
+  `signup-issue`) mints a one-time, expiring invite token; `redeemSignupToken(token)` (CLI
+  `signup-redeem`) validates and provisions the tenant — the self-serve "signup" lifecycle stage
+  Neon leaves to the builder. New `SignupTokenStore` port with in-memory + pg adapters
+  (`tf_signup_tokens`, **migration 0008**); only the token's **SHA-256 hash** is stored, the raw
+  token is returned once and never persisted/logged, redemption is single-use and fails closed on
+  unknown/expired/already-redeemed (pure core `assertRedeemable` / `signupTokenStatus`, 100%).
+  `TENANTFORGE_SIGNUP_TOKEN_STORE=none|memory|pg`. Issue/redeem provision resources ⇒ **CLI/library
+  only** (never HTTP/MCP); `listSignupTokens` / `GET /v1/signup-tokens` / dashboard "Signup tokens"
+  panel show status only (never the token), read-only. Not a Neon feature — Neon provisions
+  projects, not customer signups.
+
 ## [0.24.0] - 2026-06-21
 
 Adds control-plane anomaly detection over the audit trail (error spikes + per-actor/tenant

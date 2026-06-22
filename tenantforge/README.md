@@ -228,6 +228,8 @@ non-blocking — it never delays or breaks a control-plane operation.
 (compute/active seconds, bytes written, peak storage) over a period for billing — pulled on demand
 from Neon's consumption API via the `UsageProvider` port (no usage data stored in the control plane).
 
+**Signup / onboarding tokens:** `tf.issueSignupToken({ slug, region?, planId?, ttlSeconds? })` (CLI `signup-issue`) mints a one-time, expiring **invite token** scoped to a desired tenant; `tf.redeemSignupToken(token)` (CLI `signup-redeem`) validates it and **provisions** that tenant — the self-serve "signup" lifecycle stage Neon leaves to the builder (it provisions projects, not customers). Call `redeemSignupToken` from your own authenticated signup handler. Only the token's **SHA-256 hash** is stored (`tf_signup_tokens`, migration 0008) — the raw token is returned **once** and never persisted or logged (treat it like a credential); redemption is **single-use** and fails closed on an unknown/expired/already-redeemed token. The pure core `assertRedeemable` / `signupTokenStatus` decide redeemability (100%). Enable with `TENANTFORGE_SIGNUP_TOKEN_STORE=memory|pg`. Issuing/redeeming provision resources, so they're **CLI/library only** (never HTTP/MCP); `GET /v1/signup-tokens` + the dashboard "Signup tokens" panel show **status only** (never the token), read-only.
+
 **Compliance report:** `tf.complianceReport()` (CLI `compliance-report`, HTTP `GET
 /v1/compliance/report`) emits a registry-derived **isolation + residency attestation** with a
 SHA-256 integrity digest — flags shared/missing tenant projects and out-of-allow-list regions; CLI
