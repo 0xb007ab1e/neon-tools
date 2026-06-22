@@ -6,6 +6,10 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.38.1] - 2026-06-22
+
+Documentation-only patch — adds the architecture decision records.
+
 ### Documentation
 
 - **Architecture Decision Records** — added `docs/adr/` (an indexed Nygard ADR log) capturing the
