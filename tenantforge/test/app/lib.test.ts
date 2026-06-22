@@ -18,6 +18,8 @@ import { createInMemorySecretStore } from '../../src/adapters/secret-store.js';
 import { createInMemoryAuditLogStore } from '../../src/adapters/audit-log-store.js';
 import { createInMemoryCreditLedger } from '../../src/adapters/credit-ledger.js';
 import { createInMemorySignupTokenStore } from '../../src/adapters/signup-token-store.js';
+import { createInMemoryWebhookSubscriptionStore } from '../../src/adapters/webhook-subscription-store.js';
+import { webhookSecretKey } from '../../src/core/index.js';
 import { createAuditLogEventSink } from '../../src/adapters/event-sink.js';
 import { createLifecycleHandler, createTenantForge } from '../../src/app/lib.js';
 import { runWithActor } from '../../src/app/actor-context.js';
@@ -3072,5 +3074,67 @@ describe('createTenantForge.complianceReport', () => {
     expect(digest).toMatch(/^[0-9a-f]{64}$/); // sha256 hex
     const ev = events.find((e) => e.event === 'compliance.report_generated');
     expect(ev?.outcome).toBe('error'); // a violation → error outcome
+  });
+});
+
+describe('createTenantForge webhook subscriptions', () => {
+  const make = () => {
+    const secretStore = createInMemorySecretStore();
+    const webhookSubscriptionStore = createInMemoryWebhookSubscriptionStore();
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore,
+      webhookSubscriptionStore,
+      defaultRegion: 'aws-us-east-1',
+    });
+    return { tf, secretStore, webhookSubscriptionStore };
+  };
+
+  it('creates a subscription, stores the secret out-of-band, and returns it once', async () => {
+    const { tf, secretStore } = make();
+    const created = await tf.createWebhookSubscription({
+      url: 'https://hook.test/events',
+      eventTypes: ['tenant.provisioned'],
+    });
+    expect(created.url).toBe('https://hook.test/events');
+    expect(created.secret).toMatch(/.+/);
+    expect(created.eventTypes).toEqual(['tenant.provisioned']);
+    // The signing secret is persisted in the SecretStore (not the subscription record).
+    expect(await secretStore.get(webhookSecretKey(created.id))).toBe(created.secret);
+    // The list view never carries the secret.
+    const list = await tf.listWebhookSubscriptions();
+    expect(list).toHaveLength(1);
+    expect(JSON.stringify(list)).not.toContain(created.secret);
+  });
+
+  it('rejects a non-https subscription URL (SSRF, fail closed)', async () => {
+    const { tf } = make();
+    await expect(tf.createWebhookSubscription({ url: 'http://hook.test/x' })).rejects.toThrow(
+      /must use TLS/,
+    );
+  });
+
+  it('deletes a subscription and crypto-shreds its signing secret', async () => {
+    const { tf, secretStore } = make();
+    const created = await tf.createWebhookSubscription({ url: 'https://hook.test/x' });
+    expect(await tf.deleteWebhookSubscription(created.id)).toBe(true);
+    expect(await secretStore.get(webhookSecretKey(created.id))).toBeNull(); // shredded
+    expect(await tf.listWebhookSubscriptions()).toEqual([]);
+    expect(await tf.deleteWebhookSubscription(created.id)).toBe(false); // already gone
+  });
+
+  it('fails closed / no-ops without a subscription store', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    await expect(tf.createWebhookSubscription({ url: 'https://hook.test/x' })).rejects.toThrow(
+      /subscription store/,
+    );
+    expect(await tf.listWebhookSubscriptions()).toEqual([]);
+    expect(await tf.deleteWebhookSubscription('nope')).toBe(false);
   });
 });

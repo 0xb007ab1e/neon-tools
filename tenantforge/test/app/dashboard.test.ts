@@ -32,6 +32,10 @@ const app = () =>
       complianceReport: async () => report as never,
       operatorDigest: async () =>
         ({ severity: 'ok', headline: 'ok: all clear', categories: [] }) as never,
+      listWebhookSubscriptions: async () =>
+        [
+          { id: 's1', url: 'https://hook.test/x', eventTypes: [], active: true, createdAt: 'x' },
+        ] as never,
       fleetStatus: async () => drift,
       costReport: async () => cost,
       reconcilePlan: async () => reconcile,
@@ -109,6 +113,23 @@ describe('dashboard backend', () => {
 
   it('rejects unauthenticated operator-digest panel data (401)', async () => {
     const res = await app().request('/dashboard/api/operator-digest');
+    expect(res.status).toBe(401);
+  });
+
+  it('serves the webhook-subscriptions panel data (never the secret) to a session', async () => {
+    const server = app();
+    const cookie = cookieOf(await login(server, TOKEN));
+    const res = await server.request('/dashboard/api/webhook-subscriptions', {
+      headers: { cookie },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('https://hook.test/x');
+    expect(body).not.toContain('secret');
+  });
+
+  it('rejects unauthenticated webhook-subscriptions panel data (401)', async () => {
+    const res = await app().request('/dashboard/api/webhook-subscriptions');
     expect(res.status).toBe(401);
   });
 

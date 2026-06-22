@@ -190,6 +190,76 @@ const signupList = defineCommand({
   },
 });
 
+const webhookAdd = defineCommand({
+  meta: {
+    name: 'webhook-add',
+    description: 'Create a webhook subscription (prints the signing secret ONCE)',
+  },
+  args: {
+    url: { type: 'positional', description: 'https endpoint to receive events', required: true },
+    events: {
+      type: 'string',
+      description: 'Comma-separated event-name filter (default: all events)',
+    },
+  },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const eventTypes = args.events
+        ? args.events
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)
+        : undefined;
+      const sub = await tf.createWebhookSubscription({
+        url: args.url,
+        ...(eventTypes ? { eventTypes } : {}),
+      });
+      process.stdout.write(
+        `subscription ${sub.id} → ${sub.url} ` +
+          `(events: ${sub.eventTypes.length > 0 ? sub.eventTypes.join(',') : 'all'})\n`,
+      );
+      // The signing secret is shown ONCE — store it in the receiver to verify our signatures.
+      process.stdout.write(`signing secret (shown once):\n${sub.secret}\n`);
+    });
+  },
+});
+
+const webhookList = defineCommand({
+  meta: { name: 'webhook-list', description: 'List webhook subscriptions (never the secret)' },
+  args: { json: { type: 'boolean', description: 'Emit as JSON', default: false } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const subs = await tf.listWebhookSubscriptions();
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(subs, null, 2)}\n`);
+        return;
+      }
+      if (subs.length === 0) {
+        process.stdout.write('no webhook subscriptions\n');
+        return;
+      }
+      for (const s of subs) {
+        process.stdout.write(
+          `${s.id}  ${s.active ? 'active' : 'inactive'}  ${s.url}  ` +
+            `events=${s.eventTypes.length > 0 ? s.eventTypes.join(',') : 'all'}\n`,
+        );
+      }
+    });
+  },
+});
+
+const webhookRemove = defineCommand({
+  meta: { name: 'webhook-rm', description: 'Delete a webhook subscription' },
+  args: { id: { type: 'positional', description: 'Subscription id', required: true } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const removed = await tf.deleteWebhookSubscription(args.id);
+      process.stdout.write(removed ? `deleted ${args.id}\n` : `no subscription ${args.id}\n`);
+      if (!removed) process.exitCode = 1;
+    });
+  },
+});
+
 const list = defineCommand({
   meta: { name: 'list', description: 'List tenants (most recent first)' },
   args: {
@@ -1601,6 +1671,9 @@ const main = defineCommand({
     'signup-issue': signupIssue,
     'signup-redeem': signupRedeem,
     'signup-list': signupList,
+    'webhook-add': webhookAdd,
+    'webhook-list': webhookList,
+    'webhook-rm': webhookRemove,
     list,
     get,
     usage,

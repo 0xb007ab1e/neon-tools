@@ -10,17 +10,27 @@ export const PERMISSIONS = [
   'tenant:suspend', // suspend + resume (reversible lifecycle)
   'tenant:offboard', // archive (reversible until purge)
   'tenant:purge', // IRREVERSIBLE hard-delete
+  'webhooks:read', // list webhook subscriptions (no secret)
+  'webhooks:manage', // create / delete webhook subscriptions (secret-bearing)
 ] as const;
 /** A control-plane permission. */
 export type Permission = (typeof PERMISSIONS)[number];
 
 /**
  * Default permission set per role. `admin` keeps every capability (backward-compatible); `operator`
- * can run the full reversible lifecycle but **not** the irreversible purge; `readonly` may only read.
+ * can run the full reversible lifecycle (incl. managing webhook integrations) but **not** the
+ * irreversible purge; `readonly` may only read.
  */
 const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   admin: PERMISSIONS,
-  operator: ['tenant:read', 'tenant:provision', 'tenant:suspend', 'tenant:offboard'],
+  operator: [
+    'tenant:read',
+    'tenant:provision',
+    'tenant:suspend',
+    'tenant:offboard',
+    'webhooks:read',
+    'webhooks:manage',
+  ],
   readonly: ['tenant:read'],
 };
 

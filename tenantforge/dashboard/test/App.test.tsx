@@ -285,6 +285,20 @@ beforeEach(() => {
         return Promise.resolve(json({ id: 'op', role: 'admin' }));
       }
       if (url.endsWith('/operator-digest')) return Promise.resolve(json(operatorDigest));
+      if (url.endsWith('/webhook-subscriptions'))
+        return Promise.resolve(
+          json({
+            subscriptions: [
+              {
+                id: 's1',
+                url: 'https://hook.test/x',
+                eventTypes: [],
+                active: true,
+                createdAt: 'x',
+              },
+            ],
+          }),
+        );
       if (url.endsWith('/compliance'))
         return Promise.resolve(json({ report, digest: 'abc123def456' }));
       if (url.endsWith('/drift')) return Promise.resolve(json(drift));
@@ -347,6 +361,11 @@ describe('dashboard App', () => {
     expect(
       await screen.findByText('critical: 3 issues across cost, audit, drift'),
     ).toBeInTheDocument();
+    // The Health section also shows the webhook subscriptions panel.
+    expect(
+      await screen.findByRole('heading', { name: 'Webhook subscriptions' }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('https://hook.test/x')).toBeInTheDocument();
     expect((await axe(container)).violations).toEqual([]);
 
     // Navigate to the Fleet section: compliance, drift, reconcile.

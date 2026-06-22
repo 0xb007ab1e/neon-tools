@@ -160,6 +160,14 @@ export function createDashboard(options: DashboardOptions): Hono {
     return c.json(await options.tf.operatorDigest());
   });
 
+  // Webhook subscriptions panel data (read-only; never the signing secret).
+  app.get('/api/webhook-subscriptions', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'webhooks:read')) return c.json({ error: 'forbidden' }, 403);
+    return c.json({ subscriptions: await options.tf.listWebhookSubscriptions() });
+  });
+
   // Fleet schema-version drift panel data (read).
   app.get('/api/drift', async (c) => {
     const principal = session(c);

@@ -148,6 +148,14 @@ export {
   type OperatorDigestInput,
 } from './operator-digest.js';
 export {
+  webhookSecretKey,
+  subscriptionMatchesEvent,
+  toWebhookSubscriptionSummary,
+  type WebhookSubscriptionRecord,
+  type WebhookSubscriptionSummary,
+  type WebhookSubscriptionCreated,
+} from './webhook-subscription.js';
+export {
   signupTokenStatus,
   assertRedeemable,
   type SignupTokenRecord,

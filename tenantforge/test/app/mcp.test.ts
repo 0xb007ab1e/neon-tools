@@ -61,6 +61,7 @@ describe('MCP server', () => {
       'tf_signup_tokens',
       'tf_suspend',
       'tf_tenant',
+      'tf_webhook_subscriptions',
     ]);
     // Mutating/SQL-bearing fleet ops + purge are intentionally NOT on the agent surface (LLM08).
     const names = tools.map((t) => t.name);
@@ -77,6 +78,9 @@ describe('MCP server', () => {
       'tf_signup_redeem',
       'tf_export',
       'tf_set_allowance',
+      'tf_webhook_add', // create returns a signing secret → off the agent surface
+      'tf_webhook_create',
+      'tf_webhook_delete',
     ]) {
       expect(names).not.toContain(off);
     }
@@ -218,6 +222,21 @@ describe('MCP server', () => {
     const client = await connect(fakeTf({ operatorDigest: async () => digest as never }));
     const out = body(await client.callTool({ name: 'tf_operator_digest', arguments: {} }));
     expect(out).toContain('"severity": "warning"');
+    await client.close();
+  });
+
+  it('tf_webhook_subscriptions lists subscriptions (never the secret)', async () => {
+    const client = await connect(
+      fakeTf({
+        listWebhookSubscriptions: async () =>
+          [
+            { id: 's1', url: 'https://hook.test/x', eventTypes: [], active: true, createdAt: 'x' },
+          ] as never,
+      }),
+    );
+    const out = body(await client.callTool({ name: 'tf_webhook_subscriptions', arguments: {} }));
+    expect(out).toContain('https://hook.test/x');
+    expect(out).not.toContain('secret');
     await client.close();
   });
 

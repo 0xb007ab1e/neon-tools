@@ -4,6 +4,8 @@ import {
   fetchOperatorDigest,
   type OperatorDigest,
   type DigestSeverity,
+  fetchWebhookSubscriptions,
+  type WebhookSubscriptionEntry,
   fetchCost,
   fetchDrift,
   fetchInvoices,
@@ -325,7 +327,12 @@ function DashboardView(props: {
         aria-label={`${activeLabel} section`}
       >
         <div className="panels">
-          {active === 'health' && <OperatorDigestPanel />}
+          {active === 'health' && (
+            <>
+              <OperatorDigestPanel />
+              <WebhookSubscriptionsPanel />
+            </>
+          )}
           {active === 'fleet' && (
             <>
               <CompliancePanel />
@@ -440,6 +447,44 @@ function OperatorDigestPanel(): React.JSX.Element {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+/** Webhook subscriptions — read-only list (the signing secret is never exposed to the browser). */
+function WebhookSubscriptionsPanel(): React.JSX.Element {
+  const { data, error } = usePanelData<WebhookSubscriptionEntry[]>(fetchWebhookSubscriptions);
+  return (
+    <Panel id="webhooks-h" title="Webhook subscriptions" error={error} loading={data === null}>
+      {data !== null && (
+        <div>
+          <p>
+            {data.length} subscription(s). Create/delete runs via the CLI (`webhook-add` /
+            `webhook-rm`) or the HTTP API; the signing secret is shown only once at creation.
+          </p>
+          {data.length > 0 && (
+            <table>
+              <caption>Active webhook subscriptions</caption>
+              <thead>
+                <tr>
+                  <th scope="col">URL</th>
+                  <th scope="col">Events</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((s) => (
+                  <tr key={s.id}>
+                    <th scope="row">{s.url}</th>
+                    <td>{s.eventTypes.length > 0 ? s.eventTypes.join(', ') : 'all'}</td>
+                    <td>{s.active ? 'active' : 'inactive'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </Panel>
