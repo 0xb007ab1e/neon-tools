@@ -21,8 +21,12 @@ const json = (value: unknown) => text(JSON.stringify(value, null, 2));
  * connection secret into the model context (LLM06 sensitive-information disclosure). Irreversible /
  * SQL-bearing operations are kept off the agent surface (LLM08 excessive agency): purge is not
  * exposed at all, and fleet reconcile is exposed **read-only** (`tf_reconcile_plan` /
- * `tf_reconcile_history`) — execution stays on the CLI / gated dashboard. The extension reports
- * (compliance / cost / invoices) are read-only and carry no secrets.
+ * `tf_reconcile_history`) — execution stays on the CLI / gated dashboard. The read surface mirrors
+ * the HTTP reads: compliance / cost (+ anomalies) / invoices / audit trail (`tf_audit`, which
+ * subsumes the per-event billing histories via its `events` filter) / audit anomalies / retention /
+ * plan catalog / signup-token status / credit balance — all read-only and carrying no secrets.
+ * Money-moving and resource-creating ops (charge / refund / credit grant / plan settlement / signup
+ * issue+redeem / data export) stay off MCP.
  *
  * @param tf - The TenantForge application service the tools delegate to.
  * @returns A configured (not-yet-connected) MCP server.
@@ -236,6 +240,140 @@ export function createMcpServer(tf: TenantForge): McpServer {
       inputSchema: { limit: z.number().int().min(1).max(1000).optional() },
     },
     async ({ limit }) => json({ history: await tf.reconcileHistory(limit) }),
+  );
+
+  server.registerTool(
+    'tf_audit',
+    {
+      description:
+        'Query the control-plane audit trail (read-only): who-did-what-when, newest-first. Filter ' +
+        'by `events` (e.g. ["tenant.charged","tenant.refunded","tenant.plan_changed"]), `tenantId`, ' +
+        'and a `since` ISO-8601 lower bound; `limit` caps the rows. This subsumes the per-event ' +
+        'billing/lifecycle histories (charges, refunds, dunning, plan changes, credit grants, ' +
+        'notifications, exports, usage alerts, …) via the `events` filter. Empty without an audit store.',
+      inputSchema: {
+        events: z.array(z.string()).optional(),
+        tenantId: z.string().optional(),
+        since: z.string().optional(),
+        limit: z.number().int().min(1).optional(),
+      },
+    },
+    async ({ events, tenantId, since, limit }) => {
+      try {
+        return json({
+          events: await tf.queryAudit({
+            ...(events ? { events } : {}),
+            ...(tenantId ? { tenantId } : {}),
+            ...(since ? { since } : {}),
+            ...(limit ? { limit } : {}),
+          }),
+        });
+      } catch (error) {
+        return text(error instanceof Error ? error.message : 'invalid audit query');
+      }
+    },
+  );
+
+  server.registerTool(
+    'tf_audit_anomalies',
+    {
+      description:
+        'Scan the recent audit trail for anomalies (read-only): an overall error spike plus ' +
+        'per-actor / per-tenant error clusters. Optional `since` (ISO-8601) and window `limit`. ' +
+        'Detection only — no mutation.',
+      inputSchema: { since: z.string().optional(), limit: z.number().int().min(1).optional() },
+    },
+    async ({ since, limit }) =>
+      json({
+        anomalies: await tf.scanAuditAnomalies({
+          ...(since ? { since } : {}),
+          ...(limit ? { limit } : {}),
+        }),
+      }),
+  );
+
+  server.registerTool(
+    'tf_cost_anomalies',
+    {
+      description:
+        'Scan the fleet for cost/margin anomalies over a period (read-only FinOps): unprofitable + ' +
+        'unpriced tenants always, plus opt-in thin-margin (`minMarginUsd`) / high-cost (`maxCostUsd`). ' +
+        'from/to are ISO-8601; default is the current calendar month.',
+      inputSchema: {
+        from: z.string().optional(),
+        to: z.string().optional(),
+        minMarginUsd: z.number().optional(),
+        maxCostUsd: z.number().optional(),
+      },
+    },
+    async ({ from, to, minMarginUsd, maxCostUsd }) => {
+      const p = period(from, to);
+      return p === null
+        ? text('invalid from/to date (use ISO-8601)')
+        : json({
+            anomalies: await tf.scanCostAnomalies(p, {
+              ...(minMarginUsd !== undefined ? { minMarginUsd } : {}),
+              ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+            }),
+          });
+    },
+  );
+
+  server.registerTool(
+    'tf_retention',
+    {
+      description:
+        'Retention report (read-only): which archived (offboarding) tenants are scheduled for purge ' +
+        'and when, given the retention window. Optional `retentionDays` override (default = ' +
+        'configured). The preview of what the purge sweep would delete; eligibility matches it exactly.',
+      inputSchema: { retentionDays: z.number().int().min(0).optional() },
+    },
+    async ({ retentionDays }) =>
+      json(await tf.retentionReport(retentionDays !== undefined ? { retentionDays } : undefined)),
+  );
+
+  server.registerTool(
+    'tf_plans',
+    {
+      description:
+        "The operator's plan catalog (read-only): published tiers (id, name, price, included " +
+        'allowances). Assigning a plan to a tenant is a billing-policy op kept off the agent surface.',
+      inputSchema: {},
+    },
+    () => json({ plans: tf.listPlans() }),
+  );
+
+  server.registerTool(
+    'tf_signup_tokens',
+    {
+      description:
+        'Recent signup/invite tokens (read-only): status only — never the token or its hash. ' +
+        'Issuing/redeeming (which provisions a tenant) is kept off the agent surface. ' +
+        '`limit` caps the newest-first results.',
+      inputSchema: { limit: z.number().int().min(1).optional() },
+    },
+    async ({ limit }) => json({ signupTokens: await tf.listSignupTokens(limit) }),
+  );
+
+  server.registerTool(
+    'tf_credit_balance',
+    {
+      description:
+        "A tenant's credit balance + ledger (read-only). `currency` defaults to usd. Granting/" +
+        'consuming credit (money) is kept off the agent surface.',
+      inputSchema: {
+        id: z.string(),
+        currency: z.string().optional(),
+        limit: z.number().int().min(1).optional(),
+      },
+    },
+    async ({ id, currency, limit }) =>
+      json({
+        tenantId: id,
+        currency: (currency ?? 'usd').toLowerCase(),
+        balanceMinor: await tf.creditBalance(id, currency),
+        entries: await tf.creditHistory(id, limit),
+      }),
   );
 
   return server;

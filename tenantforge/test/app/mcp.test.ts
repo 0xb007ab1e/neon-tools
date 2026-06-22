@@ -40,16 +40,23 @@ describe('MCP server', () => {
     const client = await connect(fakeTf({}));
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      'tf_audit',
+      'tf_audit_anomalies',
       'tf_compliance_report',
+      'tf_cost_anomalies',
       'tf_cost_report',
+      'tf_credit_balance',
       'tf_invoice',
       'tf_invoices',
       'tf_list_tenants',
       'tf_offboard',
+      'tf_plans',
       'tf_provision',
       'tf_reconcile_history',
       'tf_reconcile_plan',
       'tf_resume',
+      'tf_retention',
+      'tf_signup_tokens',
       'tf_suspend',
       'tf_tenant',
     ]);
@@ -57,6 +64,20 @@ describe('MCP server', () => {
     const names = tools.map((t) => t.name);
     expect(names).not.toContain('tf_purge');
     expect(names).not.toContain('tf_reconcile'); // execution; only the read-only plan is exposed
+    // Money-moving / resource-creating ops stay off MCP (read surface only for these areas).
+    for (const off of [
+      'tf_charge',
+      'tf_refund',
+      'tf_grant_credit',
+      'tf_plan_change',
+      'tf_assign_plan',
+      'tf_signup_issue',
+      'tf_signup_redeem',
+      'tf_export',
+      'tf_set_allowance',
+    ]) {
+      expect(names).not.toContain(off);
+    }
     await client.close();
   });
 
@@ -243,6 +264,66 @@ describe('MCP server', () => {
     expect(target).toBe('0003');
     const histOut = body(await client.callTool({ name: 'tf_reconcile_history', arguments: {} }));
     expect(histOut).toContain('fleet.reconcile');
+    await client.close();
+  });
+
+  it('tf_audit forwards the filter and returns events', async () => {
+    let q: unknown;
+    const client = await connect(
+      fakeTf({
+        queryAudit: async (query) => {
+          q = query;
+          return [{ event: 'tenant.charged', at: 'x', outcome: 'ok' }] as never;
+        },
+      }),
+    );
+    const out = body(
+      await client.callTool({
+        name: 'tf_audit',
+        arguments: { events: ['tenant.charged'], tenantId: 't1', limit: 10 },
+      }),
+    );
+    expect(out).toContain('tenant.charged');
+    expect(q).toEqual({ events: ['tenant.charged'], tenantId: 't1', limit: 10 });
+    await client.close();
+  });
+
+  it('tf_retention, tf_plans, tf_signup_tokens, tf_credit_balance are read-only passthroughs', async () => {
+    const client = await connect(
+      fakeTf({
+        retentionReport: async () => ({
+          generatedAt: 'x',
+          retentionDays: 30,
+          eligible: 0,
+          pending: 0,
+          tenants: [],
+        }),
+        listPlans: () => [{ id: 'pro', name: 'Pro', priceUsd: 49 }] as never,
+        listSignupTokens: async () =>
+          [{ slug: 'acme', status: 'pending', expiresAt: 'x', createdAt: 'y' }] as never,
+        creditBalance: async () => 1500,
+        creditHistory: async () =>
+          [{ tenantId: 't1', amountMinor: 1500, currency: 'usd' }] as never,
+        scanCostAnomalies: async () => [{ kind: 'unprofitable', tenantId: 't1' }] as never,
+      }),
+    );
+    expect(body(await client.callTool({ name: 'tf_retention', arguments: {} }))).toContain(
+      '"retentionDays": 30',
+    );
+    expect(body(await client.callTool({ name: 'tf_plans', arguments: {} }))).toContain(
+      '"id": "pro"',
+    );
+    expect(body(await client.callTool({ name: 'tf_signup_tokens', arguments: {} }))).toContain(
+      '"slug": "acme"',
+    );
+    const credit = body(
+      await client.callTool({ name: 'tf_credit_balance', arguments: { id: 't1' } }),
+    );
+    expect(credit).toContain('"balanceMinor": 1500');
+    expect(credit).toContain('"currency": "usd"');
+    expect(body(await client.callTool({ name: 'tf_cost_anomalies', arguments: {} }))).toContain(
+      'unprofitable',
+    );
     await client.close();
   });
 });
