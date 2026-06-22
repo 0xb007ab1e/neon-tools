@@ -50,3 +50,31 @@ jobs:
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Supply-chain gate (std-supplychain / workflow-cicd): generate an SBOM and scan the dependency
+  # tree + repo config for vulnerabilities and misconfigurations. Blocks on fixable HIGH/CRITICAL.
+  supply-chain:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload Trivy SARIF to code scanning
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # CycloneDX SBOM of the repo (source + dependencies); kept as a build artifact for CVE impact.
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: .
+          format: cyclonedx-json
+          artifact-name: sbom-cyclonedx.json
+      # Vulnerability + misconfiguration scan of the filesystem (lockfile deps + any IaC/Dockerfile).
+      # ignore-unfixed: don't block on CVEs with no available fix (e.g. base-image noise).
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table

@@ -205,6 +205,16 @@ risks, and abuse tests. The HTTP API contract is
 (local + CI), `NEON_API_KEY` and `DATABASE_URL` rotations, and a PITR row-level recovery; see the
 [drill report](./docs/runbooks/drill-report.md).)_
 
+**Supply chain & CI gates:** every PR runs merge-blocking gates — lint/format, type-check, the
+six-site version gate, unit + integration tests with coverage thresholds (100% on the pure core),
+`pnpm audit` (SCA), **CodeQL** (SAST), **gitleaks** (secret scan), and a **supply-chain** job that
+emits a **CycloneDX SBOM** and runs a **Trivy** filesystem vuln + misconfig scan (blocks on fixable
+HIGH/CRITICAL). On a `tenantforge-v*` tag, the **release** workflow builds the artifact once, attests
+**non-falsifiable SLSA build provenance** (keyless via OIDC — no stored signing keys), and publishes
+a GitHub Release with the tarball + SBOM; verify with `gh attestation verify <tarball> --repo <repo>`.
+All third-party actions are pinned by commit SHA. _(A hardened, scanned + signed container image is a
+deferred follow-up — it needs a registry + deploy-target decision.)_
+
 **Per-tenant observability:** every control-plane operation emits a structured, tenant-scoped JSON
 event (provision / transition / connection-resolved-or-denied / fleet-migration / purge-sweep) to
 stdout as a 12-Factor event stream — carrying the tenant id, outcome, and timing, with connection
