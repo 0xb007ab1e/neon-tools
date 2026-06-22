@@ -116,6 +116,14 @@ export {
 } from './retention-report.js';
 export { redactSecrets, type TenantEvent } from './observability.js';
 export {
+  TRACEPARENT_HEADER,
+  type TraceParent,
+  isValidTraceId,
+  isValidSpanId,
+  parseTraceparent,
+  formatTraceparent,
+} from './trace.js';
+export {
   normalizeAuditQuery,
   type AuditQueryInput,
   type NormalizedAuditQuery,

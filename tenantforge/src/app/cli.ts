@@ -6,6 +6,7 @@ import { defineCommand, runMain } from 'citty';
 import type { TenantRecord } from '../core/index.js';
 import { decodeCursor, encodeCursor } from '../core/index.js';
 import { runWithActor } from './actor-context.js';
+import { runWithTrace, startTrace } from './trace-context.js';
 import { parseLifecycleCommand } from '../adapters/lifecycle-command.js';
 import { createPgMessageQueue } from '../adapters/neon-pg/message-queue.js';
 import { loadConfig } from './config.js';
@@ -21,8 +22,10 @@ async function withTenantForge<T>(fn: (tf: TenantForge) => Promise<T>): Promise<
   const tf = tenantForgeFromConfig(loadConfig());
   // Attribute CLI actions to the invoking OS user in the audit stream.
   const actor = { id: `cli:${userInfo().username}`, role: 'admin' };
+  // A fresh trace per CLI invocation so the command's events share a correlation id and any Neon
+  // call is propagated (adopts the active OTel trace when the host runs an SDK).
   try {
-    return await runWithActor(actor, () => fn(tf));
+    return await runWithTrace(startTrace(), () => runWithActor(actor, () => fn(tf)));
   } finally {
     await tf.close();
   }

@@ -5,6 +5,7 @@ import type { JsonObject } from '../core/index.js';
 import { decodeCursor, encodeCursor } from '../core/index.js';
 import type { TenantForge } from './lib.js';
 import { runWithActor } from './actor-context.js';
+import { runWithTrace, startTrace } from './trace-context.js';
 
 /** Wrap a string as a tool text result. */
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] });
@@ -35,9 +36,10 @@ export function createMcpServer(tf: TenantForge): McpServer {
   const server = new McpServer({ name: TENANTFORGE.id, version: TENANTFORGE.version });
 
   // Attribute control-plane actions taken via the agent surface to a single `mcp` operator in
-  // the audit stream (the MCP transport carries no per-call principal). Wrap emitting ops.
+  // the audit stream (the MCP transport carries no per-call principal). Each call also runs in a
+  // fresh trace scope so its events share a correlation id and any Neon call is propagated.
   const asMcp = <T>(fn: () => Promise<T>): Promise<T> =>
-    runWithActor({ id: 'mcp', role: 'admin' }, fn);
+    runWithTrace(startTrace(), () => runWithActor({ id: 'mcp', role: 'admin' }, fn));
 
   server.registerTool(
     'tf_provision',

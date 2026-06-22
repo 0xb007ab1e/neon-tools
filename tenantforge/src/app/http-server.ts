@@ -4,10 +4,17 @@ import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
 import { HTTPException } from 'hono/http-exception';
 import type { Context, MiddlewareHandler } from 'hono';
+import { SpanKind } from '@opentelemetry/api';
 import { z } from 'zod';
 import { TENANTFORGE } from '../meta.js';
 import type { JsonObject, TenantStatus } from '../core/index.js';
-import { decodeCursor, encodeCursor, can, type Permission } from '../core/index.js';
+import {
+  decodeCursor,
+  encodeCursor,
+  can,
+  type Permission,
+  TRACEPARENT_HEADER,
+} from '../core/index.js';
 import type { RateLimitStore } from '../ports/rate-limit-store.js';
 import { createInMemoryRateLimitStore } from '../adapters/rate-limit-store.js';
 import type { IdempotencyStore } from '../ports/idempotency-store.js';
@@ -16,6 +23,7 @@ import type { Authenticator, HttpCredential, Principal } from '../ports/authenti
 import { createTokenAuthenticator } from '../adapters/auth/token-authenticator.js';
 import type { TenantForge } from './lib.js';
 import { runWithActor } from './actor-context.js';
+import { currentTrace, withOperationSpan } from './trace-context.js';
 import { createDashboard } from './dashboard.js';
 import { createPortal } from './portal.js';
 import type { TenantAuthenticator } from '../ports/tenant-authenticator.js';
@@ -178,6 +186,27 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
   const now = options.now ?? ((): number => Date.now());
   const rateLimitStore = options.rateLimitStore ?? createInMemoryRateLimitStore();
   const idempotencyStore = options.idempotencyStore ?? createInMemoryIdempotencyStore();
+
+  // Tracing + correlation (first, so every request — including health, auth failures, and errors —
+  // runs in a trace scope). Continues an inbound W3C `traceparent` (or the active OTel trace, or a
+  // freshly generated one); echoes the correlation id back so a client/operator can tie their
+  // request to our logs. The span is a no-op until a host configures an OTel SDK.
+  app.use('*', (c, next) => {
+    const inbound = c.req.header(TRACEPARENT_HEADER);
+    const opts =
+      inbound === undefined
+        ? { kind: SpanKind.SERVER }
+        : { inboundTraceparent: inbound, kind: SpanKind.SERVER };
+    return withOperationSpan(
+      `${c.req.method} ${c.req.routePath}`,
+      async () => {
+        const trace = currentTrace();
+        if (trace !== undefined) c.header('x-correlation-id', trace.correlationId);
+        await next();
+      },
+      opts,
+    );
+  });
 
   app.use('*', secureHeaders());
 

@@ -49,6 +49,12 @@ export interface NeonProvisioningOptions {
   maxAttempts?: number;
   /** Injectable fetch (for testing). Defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /**
+   * Supplies trace-propagation headers (e.g. W3C `traceparent`) for each outbound call, so the
+   * upstream sees this operation's distributed-trace context. Injected (not read from a global) to
+   * keep the adapter decoupled from the request context. Returns `{}` outside any trace scope.
+   */
+  traceHeaders?: () => Record<string, string>;
   /** Permit a non-https base URL (local dev / mock only — the documented leaky-endpoint opt-out). */
   allowInsecure?: boolean;
 }
@@ -74,6 +80,7 @@ export function createNeonProvisioningProvider(
   const timeoutMs = options.timeoutMs ?? 30_000;
   const maxAttempts = options.maxAttempts ?? 3;
   const doFetch = options.fetchImpl ?? globalThis.fetch;
+  const traceHeaders = options.traceHeaders ?? (() => ({}));
 
   const once = async (method: string, path: string, body?: unknown): Promise<unknown> => {
     const controller = new AbortController();
@@ -87,6 +94,9 @@ export function createNeonProvisioningProvider(
             authorization: `Bearer ${options.apiKey}`,
             'content-type': 'application/json',
             accept: 'application/json',
+            // Distributed-trace propagation (W3C). Listed after the fixed headers; the provider
+            // only ever returns safe propagation headers, never overriding auth/content-type.
+            ...traceHeaders(),
           },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
           signal: controller.signal,
