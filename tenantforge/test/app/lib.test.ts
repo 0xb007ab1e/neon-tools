@@ -2177,6 +2177,62 @@ describe('createTenantForge.scanCostAnomalies', () => {
   });
 });
 
+describe('createTenantForge.operatorDigest', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  const provider = {
+    getProjectConsumption: () =>
+      Promise.resolve([
+        {
+          computeTimeSeconds: 100,
+          activeTimeSeconds: 0,
+          writtenDataBytes: 0,
+          syntheticStorageBytes: 0,
+        },
+      ]),
+  };
+
+  it('reports ok for a clean fleet, returns all five categories, and emits an operator.digest event', async () => {
+    const events: TenantEvent[] = [];
+    // No usage provider / audit store / migration runner → every detector degrades to nothing,
+    // proving the roll-up is best-effort (no detector failure breaks it).
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      eventSink: { emit: (e: TenantEvent) => events.push(e) },
+    });
+    const digest = await tf.operatorDigest({ period });
+    expect(digest.severity).toBe('ok');
+    expect(digest.categories.map((c) => c.category).sort()).toEqual([
+      'audit',
+      'cost',
+      'drift',
+      'retention',
+      'usage',
+    ]);
+    expect(events.some((e) => e.event === 'operator.digest' && e.outcome === 'ok')).toBe(true);
+  });
+
+  it('rolls up to critical (outcome error) when a tenant is unprofitable', async () => {
+    const events: TenantEvent[] = [];
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      usageProvider: provider,
+      costRates: { computeSecondUsd: 0.1 },
+      defaultRegion: 'aws-us-east-1',
+      eventSink: { emit: (e: TenantEvent) => events.push(e) },
+    });
+    await tf.provision({ slug: 'loss', metadata: { priceUsd: 5 } }); // cost 10 > price 5
+    const digest = await tf.operatorDigest({ period });
+    expect(digest.severity).toBe('critical');
+    expect(digest.categories.find((c) => c.category === 'cost')?.severity).toBe('critical');
+    expect(events.some((e) => e.event === 'operator.digest' && e.outcome === 'error')).toBe(true);
+  });
+});
+
 describe('createTenantForge.queryAudit', () => {
   const seeded = async () => {
     const auditLog = createInMemoryAuditLogStore();

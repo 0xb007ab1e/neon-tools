@@ -352,6 +352,27 @@ tr.status-bad th,
 tr.status-bad td {
   color: var(--bad-fg);
 }
+/* Digest severity pill — color is an enhancement; the text label carries the meaning (WCAG 1.4.1). */
+.status-sev {
+  display: inline-block;
+  padding: 0 0.45em;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  font-size: 0.82em;
+  letter-spacing: 0.02em;
+}
+.status-sev-ok {
+  color: var(--ok-fg);
+}
+.status-sev-info {
+  color: var(--fg);
+}
+.status-sev-warning {
+  color: var(--warn-fg, #b45309);
+}
+.status-sev-critical {
+  color: var(--bad-fg);
+}
 .error {
   color: var(--bad-fg);
   background: var(--bad-bg);

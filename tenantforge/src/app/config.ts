@@ -271,6 +271,8 @@ const EnvSchema = z
     // Relay endpoint for TENANTFORGE_NOTIFIER=http (must be https); optional HMAC signing secret.
     TENANTFORGE_NOTIFIER_URL: z.string().url().optional(),
     TENANTFORGE_NOTIFIER_SECRET: z.string().min(1).optional(),
+    // Ops recipient for the operator alert digest (operatorDigest({ notify: true })); needs a notifier.
+    TENANTFORGE_OPERATOR_EMAIL: z.string().min(1).optional(),
     // Outbound lifecycle webhook (optional): HMAC-signed POST of each event to an external endpoint.
     TENANTFORGE_WEBHOOK_URL: z.string().url().optional(),
     TENANTFORGE_WEBHOOK_SECRET: z.string().min(1).optional(),
@@ -505,6 +507,8 @@ export interface Config {
   notifier: 'none' | 'log' | 'http';
   /** HTTP notifier relay URL + optional signing secret (when notifier=http). */
   notifierHttp?: { url: string; secret?: string };
+  /** Ops recipient for the operator alert digest (when set with a notifier). */
+  operatorEmail?: string;
   /** Port for the HTTP entrypoint. */
   port: number;
 }
@@ -630,6 +634,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         ? { secret: parsed.TENANTFORGE_NOTIFIER_SECRET }
         : {}),
     };
+  }
+  if (parsed.TENANTFORGE_OPERATOR_EMAIL !== undefined) {
+    config.operatorEmail = parsed.TENANTFORGE_OPERATOR_EMAIL;
   }
   if (parsed.TENANTFORGE_PORTAL_AUTH_MODE === 'oidc') {
     // superRefine guarantees issuer/audience/jwks are present for this mode.

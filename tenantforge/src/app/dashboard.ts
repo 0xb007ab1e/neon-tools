@@ -152,6 +152,14 @@ export function createDashboard(options: DashboardOptions): Hono {
     return c.json({ report, digest });
   });
 
+  // Operator alert digest panel data (read-only roll-up of all detectors).
+  app.get('/api/operator-digest', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'tenant:read')) return c.json({ error: 'forbidden' }, 403);
+    return c.json(await options.tf.operatorDigest());
+  });
+
   // Fleet schema-version drift panel data (read).
   app.get('/api/drift', async (c) => {
     const principal = session(c);

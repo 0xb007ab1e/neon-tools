@@ -185,6 +185,18 @@ export function createMcpServer(tf: TenantForge): McpServer {
   );
 
   server.registerTool(
+    'tf_operator_digest',
+    {
+      description:
+        'Operator alert digest (read-only): one operational-health roll-up of all detectors — audit ' +
+        'anomalies, cost anomalies, fleet drift, retention backlog, usage alerts — with an overall ' +
+        'severity (ok/info/warning/critical). The single pane to check control-plane health.',
+      inputSchema: {},
+    },
+    async () => asMcp(async () => json(await tf.operatorDigest())),
+  );
+
+  server.registerTool(
     'tf_cost_report',
     {
       description:

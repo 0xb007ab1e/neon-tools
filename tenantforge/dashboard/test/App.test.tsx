@@ -233,6 +233,30 @@ const costAnomalies = [
   },
 ];
 
+const operatorDigest = {
+  generatedAt: '2026-06-20T00:00:00.000Z',
+  severity: 'critical',
+  totalIssues: 3,
+  headline: 'critical: 3 issues across cost, audit, drift',
+  categories: [
+    {
+      category: 'cost',
+      severity: 'critical',
+      count: 1,
+      detail: '1 anomaly (incl. unprofitable tenants)',
+    },
+    { category: 'audit', severity: 'warning', count: 1, detail: '1 anomaly' },
+    { category: 'drift', severity: 'warning', count: 1, detail: '1 tenant behind target 0003' },
+    {
+      category: 'retention',
+      severity: 'ok',
+      count: 0,
+      detail: 'none past retention (0 within window)',
+    },
+    { category: 'usage', severity: 'ok', count: 0, detail: 'usage within allowances' },
+  ],
+};
+
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -260,6 +284,7 @@ beforeEach(() => {
         authed = true;
         return Promise.resolve(json({ id: 'op', role: 'admin' }));
       }
+      if (url.endsWith('/operator-digest')) return Promise.resolve(json(operatorDigest));
       if (url.endsWith('/compliance'))
         return Promise.resolve(json({ report, digest: 'abc123def456' }));
       if (url.endsWith('/drift')) return Promise.resolve(json(drift));
@@ -313,11 +338,19 @@ describe('dashboard App', () => {
     await screen.findByText(/Signed in as/);
   };
 
-  it('logs in and renders the Fleet section by default, no a11y violations', async () => {
+  it('logs in to the Health section by default, then navigates to Fleet, no a11y violations', async () => {
     const { container } = render(<App />);
     await signIn();
 
-    // Fleet section (default route): compliance, drift, reconcile.
+    // Health section (default route): the operator digest roll-up.
+    expect(await screen.findByRole('heading', { name: 'Operator digest' })).toBeInTheDocument();
+    expect(
+      await screen.findByText('critical: 3 issues across cost, audit, drift'),
+    ).toBeInTheDocument();
+    expect((await axe(container)).violations).toEqual([]);
+
+    // Navigate to the Fleet section: compliance, drift, reconcile.
+    fireEvent.click(await screen.findByRole('link', { name: 'Fleet' }));
     expect(await screen.findByRole('heading', { name: 'Compliance' })).toBeInTheDocument();
     expect(await screen.findByText('region not in org allow-list')).toBeInTheDocument();
     expect(
@@ -432,6 +465,8 @@ describe('dashboard App', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
+    // ReconcilePanel lives in the Fleet section (Health is the default landing).
+    fireEvent.click(await screen.findByRole('link', { name: 'Fleet' }));
     const run = await screen.findByRole('button', { name: 'Run reconcile' });
     fireEvent.click(run);
     expect(confirmSpy).toHaveBeenCalled();

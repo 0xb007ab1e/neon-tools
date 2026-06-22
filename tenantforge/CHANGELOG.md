@@ -6,6 +6,20 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Operator alert digest** — `tf.operatorDigest({ period?, notify? })` aggregates all five
+  control-plane detectors (audit anomalies, cost anomalies, fleet drift, retention backlog, usage
+  alerts) into one operational-health summary with an overall severity (`ok`/`info`/`warning`/
+  `critical`). The single pane an operator checks instead of running five scans. Pure-core assembler
+  `buildOperatorDigest` (100% covered); gathering is best-effort per detector. Always emits an
+  `operator.digest` event (→ logs / audit store / outbound webhooks — the alert hook); with
+  `--notify` + a notifier + the new `TENANTFORGE_OPERATOR_EMAIL` it also emails the digest for a
+  non-`ok` severity (best-effort). Surfaces: CLI `operator-digest [--json] [--notify]` (exits non-zero
+  on non-`ok`), HTTP `GET /v1/operator/digest` (read-only, `tenant:read`), MCP `tf_operator_digest`,
+  and a new dashboard **Health** panel (the default landing). Builder-only — Neon has no view of the
+  operator's control-plane health.
+
 ## [0.35.0] - 2026-06-22
 
 Completes the tenant lifecycle with a safe un-offboard. MINOR — additive operation; one behavior

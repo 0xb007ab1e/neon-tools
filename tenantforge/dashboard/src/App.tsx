@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchCompliance,
+  fetchOperatorDigest,
+  type OperatorDigest,
+  type DigestSeverity,
   fetchCost,
   fetchDrift,
   fetchInvoices,
@@ -212,6 +215,7 @@ function LoginView(props: {
 
 /** The dashboard's top-level sections (grouped panels), each deep-linkable via `#/<id>`. */
 const SECTIONS = [
+  { id: 'health', label: 'Health' },
   { id: 'fleet', label: 'Fleet' },
   { id: 'billing', label: 'Billing' },
   { id: 'audit', label: 'Audit' },
@@ -223,7 +227,7 @@ const SECTION_IDS: readonly string[] = SECTIONS.map((s) => s.id);
 function useHashRoute(): [SectionId, (id: SectionId) => void] {
   const read = (): SectionId => {
     const raw = window.location.hash.replace(/^#\/?/, '');
-    return SECTION_IDS.includes(raw) ? (raw as SectionId) : 'fleet';
+    return SECTION_IDS.includes(raw) ? (raw as SectionId) : 'health';
   };
   const [active, setActive] = useState<SectionId>(read);
   useEffect(() => {
@@ -321,6 +325,7 @@ function DashboardView(props: {
         aria-label={`${activeLabel} section`}
       >
         <div className="panels">
+          {active === 'health' && <OperatorDigestPanel />}
           {active === 'fleet' && (
             <>
               <CompliancePanel />
@@ -393,6 +398,51 @@ function statusText(ok: boolean): React.JSX.Element {
     <span className={ok ? 'status status-ok' : 'status status-bad'}>
       {ok ? '✓ Compliant' : '✗ Violations'}
     </span>
+  );
+}
+
+/** Severity badge — urgency shown by the text label + a class, never color alone (WCAG 1.4.1). */
+function severityBadge(severity: DigestSeverity): React.JSX.Element {
+  return <span className={`status status-sev status-sev-${severity}`}>{severity}</span>;
+}
+
+/** Operator alert digest — the at-a-glance control-plane health roll-up (default landing panel). */
+function OperatorDigestPanel(): React.JSX.Element {
+  const { data, error } = usePanelData<OperatorDigest>(fetchOperatorDigest);
+  return (
+    <Panel id="operator-digest-h" title="Operator digest" error={error} loading={data === null}>
+      {data !== null && (
+        <div>
+          <p>Overall {severityBadge(data.severity)}</p>
+          <p className="digest-headline">{data.headline}</p>
+          <p>
+            {data.totalIssues} issue{data.totalIssues === 1 ? '' : 's'} · generated{' '}
+            {new Date(data.generatedAt).toLocaleString()}
+          </p>
+          <table>
+            <caption>Detector breakdown</caption>
+            <thead>
+              <tr>
+                <th scope="col">Detector</th>
+                <th scope="col">Severity</th>
+                <th scope="col">Count</th>
+                <th scope="col">Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.categories.map((c) => (
+                <tr key={c.category}>
+                  <th scope="row">{c.category}</th>
+                  <td>{severityBadge(c.severity)}</td>
+                  <td>{c.count}</td>
+                  <td>{c.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
   );
 }
 

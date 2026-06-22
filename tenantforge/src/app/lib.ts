@@ -31,6 +31,9 @@ import {
   normalizeAuditQuery,
   detectAuditAnomalies,
   detectCostAnomalies,
+  buildOperatorDigest,
+  formatOperatorDigest,
+  type OperatorDigest,
   signupTokenStatus,
   assertRedeemable,
   type SignupTokenRecord,
@@ -407,6 +410,12 @@ export interface TenantForgeDeps {
    * the billing operation it confirms.
    */
   notifier?: Notifier;
+  /**
+   * Operator/ops recipient for the operator alert digest (an operations address, not a tenant's).
+   * When set together with a {@link notifier}, `operatorDigest({ notify: true })` emails the digest
+   * (best-effort) for non-`ok` severities. Absent = the digest is read-only (event/log only).
+   */
+  operatorEmail?: string;
   /**
    * Credit ledger for prorated downgrade credits + applying credit to charges. When provided, a
    * charge first draws down any available balance (so the card is charged the remainder), and a plan
@@ -953,6 +962,20 @@ export interface TenantForge {
     period: BillingPeriod,
     thresholds?: CostAnomalyThresholds,
   ): Promise<CostAnomaly[]>;
+
+  /**
+   * **Operator alert digest** — aggregate the control-plane detectors (audit anomalies, cost
+   * anomalies, fleet drift, retention backlog, usage alerts) into one operational-health summary
+   * with an overall severity (`ok`/`info`/`warning`/`critical`). Read-only and best-effort per
+   * detector (a detector that can't run contributes nothing). Always emits an `operator.digest`
+   * event (the webhook/SIEM alert hook); with `notify` + a configured notifier + operator email it
+   * also emails the digest for a non-`ok` severity. The single pane an operator checks instead of
+   * running five scans — builder-only (Neon has no view of your control-plane operations).
+   *
+   * @param options - Optional billing `period` (defaults to the current month) and `notify`.
+   * @returns The assembled {@link OperatorDigest}.
+   */
+  operatorDigest(options?: { period?: BillingPeriod; notify?: boolean }): Promise<OperatorDigest>;
 
   /**
    * Generate an **invoice document** for one tenant over `period`: its usage billed at the
@@ -1546,6 +1569,95 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const currentMonthPeriod = (): BillingPeriod => {
     const now = new Date();
     return { from: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)), to: now };
+  };
+
+  /** Read-only fleet orchestrator (no applies) — a placeholder runner suffices when none is wired. */
+  const reconcileOrchestrator = () =>
+    createFleetOrchestrator({
+      registry,
+      connectionRouter: router,
+      migrationRunner: migrationRunner ?? {
+        applyToTenant: () =>
+          Promise.reject(new Error('reconcilePlan: no migration runner is configured')),
+      },
+    });
+
+  /** Run `fn`, returning `fallback` on any failure (best-effort detector for the digest roll-up). */
+  const safe = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+    try {
+      return await fn();
+    } catch {
+      return fallback;
+    }
+  };
+
+  /**
+   * Gather every detector's current findings and assemble the operator digest. Best-effort per
+   * detector: one that can't run (e.g. cost without a usage provider, or audit without a store)
+   * contributes nothing rather than failing the whole roll-up — the dedicated scans surface the
+   * underlying error.
+   */
+  const gatherOperatorDigest = async (period: BillingPeriod): Promise<OperatorDigest> => {
+    const retentionDays = deps.retentionDays ?? DEFAULT_RETENTION_DAYS;
+    const [auditAnomalies, costAnomalies, plan, retention, usage] = await Promise.all([
+      safe<AuditAnomaly[]>(
+        async () =>
+          auditLog === undefined
+            ? []
+            : detectAuditAnomalies(await auditLog.query({ limit: 500 }), {}),
+        [],
+      ),
+      safe<CostAnomaly[]>(
+        async () => detectCostAnomalies((await costEngine().report(period)).rows, {}),
+        [],
+      ),
+      safe<FleetReconcilePlan | null>(async () => reconcileOrchestrator().reconcilePlan(), null),
+      safe<RetentionReport | null>(
+        async () =>
+          buildRetentionReport(await registry.list({ status: 'offboarding', limit: MAX_SWEEP }), {
+            now: new Date(),
+            retentionDays,
+          }),
+        null,
+      ),
+      safe<UsageAlertSweepReport | null>(async () => usageAlertEngine().checkAll(period), null),
+    ]);
+    return buildOperatorDigest({
+      generatedAt: new Date().toISOString(),
+      auditAnomalies,
+      costAnomalies,
+      drift: { target: plan?.target ?? null, pendingTenants: plan?.pendingTenants.length ?? 0 },
+      retention: { eligible: retention?.eligible ?? 0, pending: retention?.pending ?? 0 },
+      usage: {
+        alertedTenants: usage?.alerted.length ?? 0,
+        scanFailures: usage?.failed.length ?? 0,
+      },
+    });
+  };
+
+  /** Best-effort operator alert: email the digest for a non-`ok` severity. Never throws. */
+  const maybeNotifyDigest = async (digest: OperatorDigest): Promise<void> => {
+    const to = deps.operatorEmail;
+    if (notifier === undefined || to === undefined || digest.severity === 'ok') return;
+    try {
+      const result = await notifier.notify({
+        to,
+        subject: `[TenantForge] operator digest — ${digest.headline}`,
+        body: formatOperatorDigest(digest),
+        idempotencyKey: `tenantforge:operator-digest:${digest.generatedAt}`,
+        metadata: { severity: digest.severity },
+      });
+      observe('operator.digest_notified', {
+        outcome: 'ok',
+        context: {
+          provider: result.provider,
+          notificationId: result.id,
+          severity: digest.severity,
+        },
+      });
+    } catch {
+      // An alert send must never break the digest it reports on (topic-notifications best-effort).
+    }
   };
 
   /** Read a tenant's PSP customer reference from metadata, if present + non-empty. */
@@ -2512,16 +2624,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     },
 
     reconcilePlan(options?: ReconcileFleetOptions): Promise<FleetReconcilePlan> {
-      // Read-only (no applies) — a placeholder runner suffices when none is wired.
-      const orchestrator = createFleetOrchestrator({
-        registry,
-        connectionRouter: router,
-        migrationRunner: migrationRunner ?? {
-          applyToTenant: () =>
-            Promise.reject(new Error('reconcilePlan: no migration runner is configured')),
-        },
-      });
-      return orchestrator.reconcilePlan(options);
+      return reconcileOrchestrator().reconcilePlan(options);
     },
 
     async reconcileFleet(
@@ -2721,6 +2824,26 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       assertPeriod(period);
       const report = await costEngine().report(period); // fails closed without a usage provider
       return detectCostAnomalies(report.rows, thresholds);
+    },
+
+    async operatorDigest(
+      options: { period?: BillingPeriod; notify?: boolean } = {},
+    ): Promise<OperatorDigest> {
+      const period = options.period ?? currentMonthPeriod();
+      assertPeriod(period);
+      const digest = await gatherOperatorDigest(period);
+      // Emit on the event stream (→ JSON logs, audit store, outbound webhooks/SIEM) as the alert
+      // hook; a non-`ok` severity is recorded as outcome `error` so anomaly alerting can key off it.
+      observe('operator.digest', {
+        outcome: digest.severity === 'critical' || digest.severity === 'warning' ? 'error' : 'ok',
+        context: {
+          severity: digest.severity,
+          totalIssues: digest.totalIssues,
+          ...Object.fromEntries(digest.categories.map((c) => [c.category, c.severity])),
+        },
+      });
+      if (options.notify === true) await maybeNotifyDigest(digest);
+      return digest;
     },
 
     async invoice(id: string, period: BillingPeriod): Promise<Invoice> {
@@ -3361,6 +3484,7 @@ export function tenantForgeFromConfig(
             }),
           }
         : {}),
+    ...(config.operatorEmail !== undefined ? { operatorEmail: config.operatorEmail } : {}),
     // Off-Neon archive tier (pg_dump → object store) — enabled when an export object store is
     // configured (TENANTFORGE_EXPORT_DIR); archives use the `archives/` key prefix. Retention is the
     // object store's lifecycle policy. Without it, archive() fails closed.
