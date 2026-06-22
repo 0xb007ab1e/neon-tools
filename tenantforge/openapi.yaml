@@ -648,6 +648,28 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/exports:
+    get:
+      tags: [reports]
+      summary: >
+        Recent data-export history (requires `tenant:read`) — the GDPR portability / DSAR trail.
+        Read-only; the export itself reads tenant data and is a CLI/library op (never over HTTP/MCP).
+        Empty unless an audit store is wired.
+      responses:
+        '200':
+          description: Recent `tenant.exported` events.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exports:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
+                required: [exports]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/audit:
     get:
       tags: [reports]

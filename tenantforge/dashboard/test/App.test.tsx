@@ -49,6 +49,14 @@ const reconcile = {
   upToDate: [],
   totalMissing: 2,
 };
+const dataExports = [
+  {
+    at: '2026-06-20T12:00:00.000Z',
+    outcome: 'ok',
+    tenantId: 'tenant-exported',
+    context: { location: 's3://exports/tenant-exported.tar', bytes: 4096 },
+  },
+];
 const reconcileHistory = [
   {
     at: '2026-06-19T12:00:00.000Z',
@@ -247,6 +255,7 @@ beforeEach(() => {
       if (url.endsWith('/reconcile') && method === 'POST')
         return Promise.resolve(json({ target: '0003', reconciled: ['t1', 't2'], partial: [] }));
       if (url.endsWith('/reconcile')) return Promise.resolve(json(reconcile));
+      if (url.endsWith('/exports')) return Promise.resolve(json({ exports: dataExports }));
       if (url.endsWith('/invoices')) return Promise.resolve(json(invoices));
       if (url.endsWith('/payment-events')) return Promise.resolve(json({ events: paymentEvents }));
       if (url.endsWith('/billing-runs')) return Promise.resolve(json({ runs: billingRuns }));
@@ -306,6 +315,11 @@ describe('dashboard App', () => {
     // Erasure history (from the persisted audit trail) is shown in the compliance panel.
     expect(await screen.findByText('Erasures recorded: 1')).toBeInTheDocument();
     expect(await screen.findByText('tenant-gone')).toBeInTheDocument();
+    // Data exports (portability / DSAR) render in the fleet section.
+    expect(
+      await screen.findByRole('heading', { name: 'Data exports (portability / DSAR)' }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('tenant-exported')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);

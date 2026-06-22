@@ -297,6 +297,25 @@ const offboard = defineCommand({
   },
 });
 
+const exportTenant = defineCommand({
+  meta: {
+    name: 'export-tenant',
+    description:
+      "Export a tenant's data to durable storage (GDPR portability / DSAR) — no deletion",
+  },
+  args: { id: { type: 'positional', description: 'Tenant id (UUID)', required: true } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const result = await tf.exportTenantData(args.id);
+      process.stdout.write(
+        `exported ${args.id} → ${result.location}` +
+          (result.bytes !== undefined ? ` (${result.bytes} bytes)` : '') +
+          '\n',
+      );
+    });
+  },
+});
+
 const purge = defineCommand({
   meta: {
     name: 'purge',
@@ -1471,6 +1490,7 @@ const main = defineCommand({
     suspend,
     resume,
     offboard,
+    'export-tenant': exportTenant,
     enqueue,
     purge,
     'purge-expired': purgeExpired,

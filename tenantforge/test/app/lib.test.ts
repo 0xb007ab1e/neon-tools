@@ -1945,6 +1945,52 @@ describe('createTenantForge.checkUsageAlerts', () => {
   });
 });
 
+describe('createTenantForge.exportTenantData', () => {
+  const deps = (withExporter: boolean) => {
+    const auditLog = createInMemoryAuditLogStore();
+    return {
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1' as const,
+      auditLog,
+      eventSink: createAuditLogEventSink(auditLog),
+      ...(withExporter
+        ? {
+            exporter: {
+              exportTenant: (t: { id: string }) =>
+                Promise.resolve({ location: `s3://exports/${t.id}.tar`, bytes: 4096 }),
+            },
+          }
+        : {}),
+    };
+  };
+
+  it('fails closed when no exporter is configured', async () => {
+    const tf = createTenantForge(deps(false));
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    await expect(tf.exportTenantData(tenant.id)).rejects.toThrow(/exporter/);
+  });
+
+  it('exports tenant data (no state change) and records tenant.exported', async () => {
+    const tf = createTenantForge(deps(true));
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    const result = await tf.exportTenantData(tenant.id);
+    expect(result.location).toBe(`s3://exports/${tenant.id}.tar`);
+    expect(result.bytes).toBe(4096);
+    // The tenant is unchanged (not offboarded/deleted).
+    expect((await tf.getTenant(tenant.id))?.status).toBe('active');
+    const history = await tf.exportHistory();
+    expect(history[0]?.event).toBe('tenant.exported');
+    expect(history[0]?.context?.location).toBe(`s3://exports/${tenant.id}.tar`);
+  });
+
+  it('rejects an unknown tenant', async () => {
+    const tf = createTenantForge(deps(true));
+    await expect(tf.exportTenantData('ghost')).rejects.toThrow();
+  });
+});
+
 describe('createTenantForge signup tokens', () => {
   const base = () => ({
     registry: fakeRegistry(),

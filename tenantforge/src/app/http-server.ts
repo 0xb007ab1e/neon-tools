@@ -577,6 +577,15 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Recent data-export history (read-only; the export itself reads tenant data → CLI/library only).
+  app.get('/v1/exports', requirePermission('tenant:read'), async (c) => {
+    try {
+      return c.json({ exports: await tf.exportHistory() });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // Scan the recent audit trail for anomalies (read-only; error spikes + per-actor/tenant clusters).
   app.get('/v1/audit/anomalies', requirePermission('tenant:read'), async (c) => {
     const sinceParam = c.req.query('since');

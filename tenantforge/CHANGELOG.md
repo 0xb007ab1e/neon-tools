@@ -6,6 +6,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Tenant data export (portability / DSAR)** — `exportTenantData(id)` (CLI `export-tenant`) exports
+  a tenant's data to durable storage via the configured `TenantExporter` and returns a reference
+  (object-store `location` + size) — the GDPR Art. 20 / data-subject-request path. Unlike
+  offboard/erase it changes no state and deletes nothing (the tenant stays active and gets a copy).
+  Records a `tenant.exported` audit event (artifact reference, never the data). Reads tenant data ⇒
+  **CLI/library only** (never HTTP/MCP); `exportHistory` / `GET /v1/exports` / dashboard "Data
+  exports" panel show history read-only. Fails closed without an exporter. Builder-side — Neon
+  doesn't map customers to data or handle DSARs (not a Neon feature).
+
 ## [0.27.0] - 2026-06-21
 
 Adds FinOps cost/margin anomaly detection over the cost report. Additive/backward-compatible

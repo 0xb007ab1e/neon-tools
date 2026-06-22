@@ -381,6 +381,16 @@ describe('HTTP control-plane', () => {
     expect(post.status).toBe(404);
   });
 
+  it('serves data-export history (tenant:read); exporting is not over HTTP', async () => {
+    const exports = [{ event: 'tenant.exported', at: 'x', outcome: 'ok' }];
+    const server = app({ exportHistory: async () => exports as never });
+    const ok = await server.request('/v1/exports', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ exports });
+  });
+
   it('queries the audit trail (tenant:read), passing filters, and 400s on a bad limit', async () => {
     const events = [{ event: 'tenant.charged', at: 'x', outcome: 'ok', tenantId: 't1' }];
     let captured: unknown;
