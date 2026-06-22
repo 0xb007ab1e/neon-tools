@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-06-22
+
+Hardens the release pipeline: SBOM + SLSA build provenance on tag, and an SBOM + vulnerability/
+misconfig scan gate in CI. The first release attested by the new provenance pipeline. No runtime
+code change.
+
 ### Security
 
 - **Supply-chain release integrity** (std-supplychain / workflow-cicd). CI gains a **supply-chain**
