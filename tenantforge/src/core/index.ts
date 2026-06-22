@@ -121,6 +121,12 @@ export {
   type AuditAnomaly,
 } from './audit-anomaly.js';
 export {
+  signupTokenStatus,
+  assertRedeemable,
+  type SignupTokenRecord,
+  type SignupTokenStatus,
+} from './signup-token.js';
+export {
   buildErasureCertificate,
   type ErasureCertificate,
   type ErasureVerification,

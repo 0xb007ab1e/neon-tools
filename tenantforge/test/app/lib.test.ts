@@ -17,6 +17,7 @@ import type {
 import { createInMemorySecretStore } from '../../src/adapters/secret-store.js';
 import { createInMemoryAuditLogStore } from '../../src/adapters/audit-log-store.js';
 import { createInMemoryCreditLedger } from '../../src/adapters/credit-ledger.js';
+import { createInMemorySignupTokenStore } from '../../src/adapters/signup-token-store.js';
 import { createAuditLogEventSink } from '../../src/adapters/event-sink.js';
 import { createLifecycleHandler, createTenantForge } from '../../src/app/lib.js';
 import { runWithActor } from '../../src/app/actor-context.js';
@@ -1941,6 +1942,55 @@ describe('createTenantForge.checkUsageAlerts', () => {
     await tf.provision({ slug: 'acme', metadata: {} });
     const report = await tf.checkUsageAlerts(period);
     expect(report.alerted).toEqual([]);
+  });
+});
+
+describe('createTenantForge signup tokens', () => {
+  const base = () => ({
+    registry: fakeRegistry(),
+    provisioning: fakeProvisioning(),
+    secretStore: createInMemorySecretStore(),
+    defaultRegion: 'aws-us-east-1' as const,
+  });
+
+  it('fails closed without a signup-token store', async () => {
+    const tf = createTenantForge(base());
+    await expect(tf.issueSignupToken({ slug: 'acme' })).rejects.toThrow(/signup-token store/);
+    await expect(tf.redeemSignupToken('x')).rejects.toThrow(/signup-token store/);
+    expect(await tf.listSignupTokens()).toEqual([]);
+  });
+
+  it('issues a one-time token, redeems it to provision, and is single-use', async () => {
+    const store = createInMemorySignupTokenStore();
+    const tf = createTenantForge({ ...base(), signupTokenStore: store });
+
+    const issued = await tf.issueSignupToken({ slug: 'acme', planId: 'pro' });
+    expect(issued.slug).toBe('acme');
+    expect(typeof issued.token).toBe('string');
+    expect(issued.token.length).toBeGreaterThan(20);
+
+    // The raw token is never stored — only its hash; listing never exposes it.
+    const listed = await tf.listSignupTokens();
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ slug: 'acme', status: 'pending', planId: 'pro' });
+    expect(JSON.stringify(listed)).not.toContain(issued.token);
+
+    const { tenant } = await tf.redeemSignupToken(issued.token);
+    expect(tenant.slug).toBe('acme');
+    expect(tenant.metadata.planId).toBe('pro');
+    expect((await tf.listSignupTokens())[0]?.status).toBe('redeemed');
+
+    // Single-use: a second redemption fails closed.
+    await expect(tf.redeemSignupToken(issued.token)).rejects.toThrow(/already redeemed/);
+  });
+
+  it('rejects an unknown or expired token', async () => {
+    const store = createInMemorySignupTokenStore();
+    const tf = createTenantForge({ ...base(), signupTokenStore: store });
+    await expect(tf.redeemSignupToken('not-a-real-token')).rejects.toThrow(/unknown signup token/);
+
+    const issued = await tf.issueSignupToken({ slug: 'acme', ttlSeconds: -1 }); // already expired
+    await expect(tf.redeemSignupToken(issued.token)).rejects.toThrow(/expired/);
   });
 });
 

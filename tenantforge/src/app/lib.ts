@@ -27,6 +27,10 @@ import {
   selectRegion,
   normalizeAuditQuery,
   detectAuditAnomalies,
+  signupTokenStatus,
+  assertRedeemable,
+  type SignupTokenRecord,
+  type SignupTokenStatus,
   findPlan,
   planAssignment,
   buildComplianceReport,
@@ -130,12 +134,15 @@ import type { CreditLedger } from '../ports/credit-ledger.js';
 import { createStripeWebhookVerifier } from '../adapters/payment/stripe-webhook.js';
 import { createInMemoryCreditLedger } from '../adapters/credit-ledger.js';
 import { createPgCreditLedger } from '../adapters/neon-pg/credit-ledger.js';
+import { createInMemorySignupTokenStore } from '../adapters/signup-token-store.js';
+import { createPgSignupTokenStore } from '../adapters/neon-pg/signup-token-store.js';
+import type { SignupTokenStore } from '../ports/signup-token-store.js';
 import { createLogNotifier } from '../adapters/notify/log-notifier.js';
 import { createHttpNotifier } from '../adapters/notify/http-notifier.js';
 import type { UsageProvider } from '../ports/usage-provider.js';
 import type { MigrationRunner } from '../ports/migration-runner.js';
 import type { TenantConnection } from '../ports/connection-router.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { loadConfig, type Config } from './config.js';
 
 export type { Config } from './config.js';
@@ -394,6 +401,12 @@ export interface TenantForgeDeps {
    * **downgrade** grants an uncapped credit rather than a capped refund. Absent = credit features off.
    */
   creditLedger?: CreditLedger;
+  /**
+   * Store for one-time tenant **signup/invite tokens** (the builder-owned "signup" lifecycle stage).
+   * When provided, `issueSignupToken` / `redeemSignupToken` / `listSignupTokens` are enabled; absent
+   * ⇒ they fail closed. Only the token hash is persisted.
+   */
+  signupTokenStore?: SignupTokenStore;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -503,6 +516,36 @@ export interface FleetInvoiceDeliveryReport {
   failed: { tenantId: string; error: string }[];
 }
 
+/** The result of issuing a signup token — the **raw token is returned once** and never stored. */
+export interface SignupTokenIssued {
+  /** The raw token (show once; the customer redeems with it). Never persisted or logged. */
+  token: string;
+  /** The desired tenant slug this token provisions. */
+  slug: string;
+  /** Expiry instant (ISO-8601 UTC). */
+  expiresAt: string;
+}
+
+/** A redacted signup-token summary for listing (never includes the hash or raw token). */
+export interface SignupTokenSummary {
+  /** The desired tenant slug. */
+  slug: string;
+  /** Lifecycle status at read time. */
+  status: SignupTokenStatus;
+  /** Optional region override. */
+  region?: string;
+  /** Optional plan id recorded on the tenant. */
+  planId?: string;
+  /** Expiry instant (ISO-8601 UTC). */
+  expiresAt: string;
+  /** When issued (ISO-8601 UTC). */
+  createdAt: string;
+  /** When redeemed (ISO-8601 UTC), if redeemed. */
+  redeemedAt?: string;
+  /** The tenant provisioned on redemption, if redeemed. */
+  redeemedTenantId?: string;
+}
+
 /** The TenantForge control-plane API (library surface). */
 export interface TenantForge {
   /** Apply the control-plane registry migrations idempotently. */
@@ -526,6 +569,46 @@ export interface TenantForge {
    * @returns The tenant record and (only when newly created) its connection secret.
    */
   provision(input: ProvisionInput): Promise<ProvisionOutcome>;
+
+  /**
+   * **Issue a one-time signup/invite token** scoped to a desired `slug` (+ optional region / plan),
+   * expiring after `ttlSeconds` (default 7 days). Returns the **raw token once** — only its hash is
+   * stored, so it can't be recovered later (treat it like a credential). The operator hands the
+   * token to a prospective tenant; redeeming it provisions the tenant. Creating a token is an
+   * operator action — **CLI/library only** (never HTTP/MCP). Requires a signup-token store.
+   *
+   * @param opts - Desired `slug` and optional `region` / `planId` / `ttlSeconds`.
+   * @returns The raw token, slug, and expiry.
+   * @throws Error if no signup-token store is wired or the slug is invalid.
+   */
+  issueSignupToken(opts: {
+    slug: string;
+    region?: string;
+    planId?: string;
+    ttlSeconds?: number;
+  }): Promise<SignupTokenIssued>;
+
+  /**
+   * **Redeem a signup token** → provision the tenant it was issued for (the self-serve "signup"
+   * step; call this from your authenticated signup handler). Validates the token (unknown / expired
+   * / already-redeemed all fail closed), provisions with the token's slug/region (+ records its
+   * plan), and marks the token consumed (single-use). Provisions real resources — **CLI/library
+   * only** (never HTTP/MCP). Requires a signup-token store.
+   *
+   * @param token - The raw token from {@link TenantForge.issueSignupToken}.
+   * @returns The provisioned tenant + connection secret (as {@link TenantForge.provision}).
+   * @throws Error if no store is wired, or the token is unknown / expired / already redeemed.
+   */
+  redeemSignupToken(token: string): Promise<ProvisionOutcome>;
+
+  /**
+   * List recent signup tokens (redacted — never the hash or raw token), newest-first, with each
+   * token's current status. Read-only; returns `[]` when no store is wired.
+   *
+   * @param limit - Max rows (default 50).
+   * @returns The token summaries.
+   */
+  listSignupTokens(limit?: number): Promise<SignupTokenSummary[]>;
 
   /**
    * Look up a tenant by id.
@@ -2030,6 +2113,78 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return finishProvisioning(created);
     },
 
+    async issueSignupToken(opts: {
+      slug: string;
+      region?: string;
+      planId?: string;
+      ttlSeconds?: number;
+    }): Promise<SignupTokenIssued> {
+      const store = deps.signupTokenStore;
+      if (store === undefined)
+        throw new Error('signup tokens require a configured signup-token store');
+      const slug = assertSlug(opts.slug); // fail closed on a bad slug before issuing
+      const token = randomBytes(32).toString('base64url'); // raw — returned once, never stored
+      const tokenHash = createHash('sha256').update(token).digest('hex');
+      const ttlSeconds = opts.ttlSeconds ?? 7 * 24 * 60 * 60; // default 7 days
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
+      const record: SignupTokenRecord = {
+        tokenHash,
+        slug,
+        ...(opts.region !== undefined ? { region: opts.region } : {}),
+        ...(opts.planId !== undefined ? { planId: opts.planId } : {}),
+        expiresAt,
+        createdAt: now.toISOString(),
+      };
+      await store.create(record);
+      // Audit the issue WITHOUT the raw token or hash (a credential — master §5).
+      observe('signup.token_issued', {
+        outcome: 'ok',
+        context: { slug, expiresAt, ...(opts.planId !== undefined ? { planId: opts.planId } : {}) },
+      });
+      return { token, slug, expiresAt };
+    },
+
+    async redeemSignupToken(token: string): Promise<ProvisionOutcome> {
+      const store = deps.signupTokenStore;
+      if (store === undefined)
+        throw new Error('signup tokens require a configured signup-token store');
+      const tokenHash = createHash('sha256').update(token).digest('hex');
+      const record = await store.findByHash(tokenHash);
+      if (record === null) throw new Error('unknown signup token');
+      assertRedeemable(record, new Date().toISOString()); // throws if expired / already redeemed
+      const outcome = await this.provision({
+        slug: record.slug,
+        ...(record.region !== undefined ? { region: record.region } : {}),
+        ...(record.planId !== undefined ? { metadata: { planId: record.planId } } : {}),
+      });
+      await store.markRedeemed(tokenHash, outcome.tenant.id, new Date().toISOString());
+      observe('signup.token_redeemed', {
+        tenantId: outcome.tenant.id,
+        outcome: 'ok',
+        context: { slug: record.slug },
+      });
+      return outcome;
+    },
+
+    async listSignupTokens(limit = 50): Promise<SignupTokenSummary[]> {
+      const store = deps.signupTokenStore;
+      if (store === undefined) return [];
+      const now = new Date().toISOString();
+      const rows = await store.list(limit);
+      // Redacted: never expose the hash or raw token.
+      return rows.map((r) => ({
+        slug: r.slug,
+        status: signupTokenStatus(r, now),
+        ...(r.region !== undefined ? { region: r.region } : {}),
+        ...(r.planId !== undefined ? { planId: r.planId } : {}),
+        expiresAt: r.expiresAt,
+        createdAt: r.createdAt,
+        ...(r.redeemedAt !== undefined ? { redeemedAt: r.redeemedAt } : {}),
+        ...(r.redeemedTenantId !== undefined ? { redeemedTenantId: r.redeemedTenantId } : {}),
+      }));
+    },
+
     async getTenant(id: string): Promise<TenantRecord | null> {
       return registry.getById(id);
     },
@@ -2891,9 +3046,10 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     },
 
     async close(): Promise<void> {
-      // Release any pg-backed pools the adapters own (audit store, credit ledger) before the registry.
+      // Release any pg-backed pools the adapters own (audit store, credit ledger, signup tokens).
       await (auditLog as { close?: () => Promise<void> } | undefined)?.close?.();
       await (creditLedger as { close?: () => Promise<void> } | undefined)?.close?.();
+      await (deps.signupTokenStore as { close?: () => Promise<void> } | undefined)?.close?.();
       await registry.close();
     },
   };
@@ -2980,6 +3136,15 @@ export function tenantForgeFromConfig(
       : config.creditLedger === 'memory'
         ? createInMemoryCreditLedger()
         : undefined;
+  const signupTokenStore =
+    config.signupTokenStore === 'pg'
+      ? createPgSignupTokenStore({
+          connectionString: config.databaseUrl,
+          allowInsecure: allowInsecureDb,
+        })
+      : config.signupTokenStore === 'memory'
+        ? createInMemorySignupTokenStore()
+        : undefined;
   return createTenantForge({
     registry,
     provisioning,
@@ -2988,6 +3153,7 @@ export function tenantForgeFromConfig(
     exporter,
     eventSink,
     ...(creditLedger !== undefined ? { creditLedger } : {}),
+    ...(signupTokenStore !== undefined ? { signupTokenStore } : {}),
     ...(auditLog !== undefined ? { auditLog } : {}),
     usageProvider: createNeonUsageProvider({
       apiKey: config.neonApiKey,

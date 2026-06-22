@@ -168,6 +168,15 @@ const plans = [
   { id: 'pro', name: 'Pro plan', priceUsd: 49, includedUsage: { computeTimeSeconds: 10000 } },
 ];
 
+const signupTokens = [
+  {
+    slug: 'tenant-invited',
+    status: 'pending',
+    expiresAt: '2026-07-01T00:00:00.000Z',
+    createdAt: '2026-06-20T00:00:00.000Z',
+  },
+];
+
 const invoicesSent = [
   {
     at: '2026-06-20T10:00:00.000Z',
@@ -228,6 +237,7 @@ beforeEach(() => {
       if (url.endsWith('/plan-changes')) return Promise.resolve(json({ planChanges }));
       if (url.endsWith('/credit-grants')) return Promise.resolve(json({ creditGrants }));
       if (url.endsWith('/usage-alerts')) return Promise.resolve(json({ usageAlerts }));
+      if (url.endsWith('/signup-tokens')) return Promise.resolve(json({ signupTokens }));
       if (url.endsWith('/plans')) return Promise.resolve(json({ plans }));
       if (url.endsWith('/invoices-sent')) return Promise.resolve(json({ invoicesSent }));
       if (url.endsWith('/audit-anomalies'))
@@ -319,6 +329,9 @@ describe('dashboard App', () => {
     // Plan catalog renders.
     expect(await screen.findByRole('heading', { name: 'Plan catalog' })).toBeInTheDocument();
     expect(await screen.findByText('Pro plan')).toBeInTheDocument();
+    // Signup tokens panel renders.
+    expect(await screen.findByRole('heading', { name: 'Signup tokens' })).toBeInTheDocument();
+    expect(await screen.findByText('tenant-invited')).toBeInTheDocument();
     // Invoice deliveries render in the billing panel.
     expect(
       await screen.findByText('Recent invoice deliveries (emailed to tenants)'),

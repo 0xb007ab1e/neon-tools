@@ -389,6 +389,25 @@ export async function fetchPlans(): Promise<PlanEntry[]> {
   return ((await res.json()) as { plans: PlanEntry[] }).plans;
 }
 
+/** One signup-token summary (status only — never the token or its hash). */
+export interface SignupTokenEntry {
+  slug: string;
+  status: 'pending' | 'redeemed' | 'expired';
+  region?: string;
+  planId?: string;
+  expiresAt: string;
+  createdAt: string;
+  redeemedAt?: string;
+  redeemedTenantId?: string;
+}
+
+/** Load recent signup tokens (read-only; empty when no store is wired). */
+export async function fetchSignupTokens(): Promise<SignupTokenEntry[]> {
+  const res = await fetch(`${BASE}/signup-tokens`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load signup tokens');
+  return ((await res.json()) as { signupTokens: SignupTokenEntry[] }).signupTokens;
+}
+
 /** One invoice-delivery entry (a persisted `tenant.invoiced` audit event). */
 export interface InvoiceSentEntry {
   at: string;

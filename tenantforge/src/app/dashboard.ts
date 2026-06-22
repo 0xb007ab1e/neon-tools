@@ -276,6 +276,14 @@ export function createDashboard(options: DashboardOptions): Hono {
     return c.json({ plans: options.tf.listPlans() });
   });
 
+  // Signup-token status (read-only; issuing/redeeming is a CLI op that provisions resources).
+  app.get('/api/signup-tokens', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'tenant:read')) return c.json({ error: 'forbidden' }, 403);
+    return c.json({ signupTokens: await options.tf.listSignupTokens() });
+  });
+
   // Recent invoice-delivery history (read-only; sending an invoice email is a CLI op).
   app.get('/api/invoices-sent', async (c) => {
     const principal = session(c);

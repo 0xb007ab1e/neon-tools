@@ -73,6 +73,79 @@ const provision = defineCommand({
   },
 });
 
+const signupIssue = defineCommand({
+  meta: {
+    name: 'signup-issue',
+    description: 'Issue a one-time signup/invite token (prints the raw token ONCE)',
+  },
+  args: {
+    slug: { type: 'positional', description: 'Desired tenant slug', required: true },
+    region: { type: 'string', description: 'Region override for the provisioned tenant' },
+    plan: { type: 'string', description: 'Plan id to record on the tenant' },
+    ttl: { type: 'string', description: 'Time-to-live in seconds (default 604800 = 7 days)' },
+  },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const issued = await tf.issueSignupToken({
+        slug: args.slug,
+        ...(args.region !== undefined ? { region: args.region } : {}),
+        ...(args.plan !== undefined ? { planId: args.plan } : {}),
+        ...(args.ttl !== undefined ? { ttlSeconds: Number(args.ttl) } : {}),
+      });
+      // The raw token is shown ONCE — it is never stored and cannot be recovered.
+      process.stdout.write(
+        `signup token for "${issued.slug}" (expires ${issued.expiresAt}):\n${issued.token}\n`,
+      );
+    });
+  },
+});
+
+const signupRedeem = defineCommand({
+  meta: {
+    name: 'signup-redeem',
+    description: 'Redeem a signup token → provision the tenant it was issued for',
+  },
+  args: { token: { type: 'positional', description: 'The raw signup token', required: true } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const { tenant, connectionUri } = await tf.redeemSignupToken(args.token);
+      process.stdout.write(`${formatTenant(tenant)}\n`);
+      process.stdout.write(
+        connectionUri
+          ? 'provisioned: connection secret issued (store it in your secret manager)\n'
+          : 'already provisioned (idempotent no-op)\n',
+      );
+    });
+  },
+});
+
+const signupList = defineCommand({
+  meta: {
+    name: 'signup-list',
+    description: 'List recent signup tokens (status only; never the token)',
+  },
+  args: { json: { type: 'boolean', description: 'Emit as JSON', default: false } },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const tokens = await tf.listSignupTokens();
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(tokens, null, 2)}\n`);
+        return;
+      }
+      if (tokens.length === 0) {
+        process.stdout.write('no signup tokens\n');
+        return;
+      }
+      for (const t of tokens) {
+        process.stdout.write(
+          `${t.slug}  ${t.status}  expires=${t.expiresAt}` +
+            `${t.redeemedTenantId !== undefined ? `  tenant=${t.redeemedTenantId}` : ''}\n`,
+        );
+      }
+    });
+  },
+});
+
 const list = defineCommand({
   meta: { name: 'list', description: 'List tenants (most recent first)' },
   args: {
@@ -1348,6 +1421,9 @@ const main = defineCommand({
   subCommands: {
     migrate,
     provision,
+    'signup-issue': signupIssue,
+    'signup-redeem': signupRedeem,
+    'signup-list': signupList,
     list,
     get,
     usage,

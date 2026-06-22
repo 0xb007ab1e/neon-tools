@@ -52,6 +52,7 @@ const permissiveTf = (): TenantForge =>
     queryAudit: () => Promise.resolve([]),
     scanAuditAnomalies: () => Promise.resolve([]),
     listPlans: () => [],
+    listSignupTokens: () => Promise.resolve([]),
     previewPlanChange: (id: string, newPriceUsd: number) =>
       Promise.resolve({
         tenantId: id,
