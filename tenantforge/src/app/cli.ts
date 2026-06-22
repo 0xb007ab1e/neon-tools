@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { defineCommand, runMain } from 'citty';
 import type { TenantRecord } from '../core/index.js';
-import { decodeCursor, encodeCursor } from '../core/index.js';
+import { decodeCursor, encodeCursor, formatOperatorDigest } from '../core/index.js';
 import { runWithActor } from './actor-context.js';
 import { runWithTrace, startTrace } from './trace-context.js';
 import { parseLifecycleCommand } from '../adapters/lifecycle-command.js';
@@ -849,6 +849,31 @@ const complianceReport = defineCommand({
   },
 });
 
+const operatorDigest = defineCommand({
+  meta: {
+    name: 'operator-digest',
+    description: 'Operational-health roll-up of all detectors with an overall severity',
+  },
+  args: {
+    json: { type: 'boolean', description: 'Emit the full digest as JSON', default: false },
+    notify: {
+      type: 'boolean',
+      description: 'Also email the digest to the operator (needs a notifier + operator email)',
+      default: false,
+    },
+  },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const digest = await tf.operatorDigest({ notify: args.notify });
+      process.stdout.write(
+        args.json ? `${JSON.stringify(digest, null, 2)}\n` : `${formatOperatorDigest(digest)}\n`,
+      );
+      // Non-zero exit on any non-ok severity so a cron / CI alert can gate on it.
+      if (digest.severity !== 'ok') process.exitCode = 1;
+    });
+  },
+});
+
 const costScan = defineCommand({
   meta: {
     name: 'cost-scan',
@@ -1556,6 +1581,7 @@ const main = defineCommand({
     'archive-fleet': archiveFleet,
     'check-quotas': checkQuotas,
     'compliance-report': complianceReport,
+    'operator-digest': operatorDigest,
     audit,
     'audit-scan': auditScan,
     'cost-report': costReport,

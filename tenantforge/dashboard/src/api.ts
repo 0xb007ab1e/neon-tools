@@ -70,6 +70,24 @@ export async function fetchCompliance(): Promise<{ report: ComplianceReport; dig
   return (await res.json()) as { report: ComplianceReport; digest: string };
 }
 
+/** Operational severity (mirrors core DigestSeverity), ascending urgency. */
+export type DigestSeverity = 'ok' | 'info' | 'warning' | 'critical';
+
+/** The operator digest shape from GET /dashboard/api/operator-digest (mirrors core OperatorDigest). */
+export interface OperatorDigest {
+  generatedAt: string;
+  severity: DigestSeverity;
+  totalIssues: number;
+  headline: string;
+  categories: { category: string; severity: DigestSeverity; count: number; detail: string }[];
+}
+
+export async function fetchOperatorDigest(): Promise<OperatorDigest> {
+  const res = await fetch(`${BASE}/operator-digest`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load the operator digest');
+  return (await res.json()) as OperatorDigest;
+}
+
 /** Fleet schema-version drift summary (subset of the server's FleetDriftReport). */
 export interface DriftReport {
   latest: string | null;

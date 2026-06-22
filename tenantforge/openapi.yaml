@@ -267,6 +267,22 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/operator/digest:
+    get:
+      tags: [reports]
+      summary: >
+        Operator alert digest (requires `tenant:read`): a read-only roll-up of every control-plane
+        detector — audit anomalies, cost anomalies, fleet drift, retention backlog, usage alerts —
+        into one operational-health summary with an overall severity.
+      responses:
+        '200':
+          description: The operational-health digest.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorDigest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/cost/report:
     get:
       tags: [reports]
@@ -1044,6 +1060,30 @@ components:
           type: string
           description: SHA-256 hex digest over the canonical report JSON (integrity anchor).
       required: [report, digest]
+    DigestSeverity:
+      type: string
+      enum: [ok, info, warning, critical]
+      description: Operational severity, ascending urgency. `ok` = nothing to report.
+    OperatorDigest:
+      type: object
+      description: Operational-health roll-up across all control-plane detectors.
+      properties:
+        generatedAt: { type: string, format: date-time }
+        severity: { $ref: '#/components/schemas/DigestSeverity' }
+        totalIssues: { type: integer, description: Total non-ok items across all categories. }
+        headline: { type: string, description: One-line summary (counts only — no secrets/PII). }
+        categories:
+          type: array
+          items:
+            type: object
+            properties:
+              category:
+                { type: string, description: 'Detector key: audit/cost/drift/retention/usage.' }
+              severity: { $ref: '#/components/schemas/DigestSeverity' }
+              count: { type: integer }
+              detail: { type: string }
+            required: [category, severity, count, detail]
+      required: [generatedAt, severity, totalIssues, headline, categories]
     ComplianceAuditEntry:
       type: object
       properties:

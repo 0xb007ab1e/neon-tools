@@ -448,6 +448,16 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Operator alert digest — read-only roll-up of every detector into one severity. No `notify` over
+  // HTTP (the email push is a CLI-side effect); the event/webhook stream is the programmatic alert.
+  app.get('/v1/operator/digest', requirePermission('tenant:read'), async (c) => {
+    try {
+      return c.json(await tf.operatorDigest());
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.get('/v1/cost/report', requirePermission('tenant:read'), async (c) => {
     // Default to the current calendar month; allow ?from / ?to ISO overrides.
     const t = new Date(now());

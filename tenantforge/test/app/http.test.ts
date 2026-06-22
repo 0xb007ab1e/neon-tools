@@ -213,6 +213,16 @@ describe('HTTP control-plane', () => {
     expect(await res.json()).toEqual(result);
   });
 
+  it('serves the operator digest (tenant:read, read-only)', async () => {
+    const digest = { severity: 'ok', headline: 'ok: all clear', totalIssues: 0, categories: [] };
+    const res = await app({ operatorDigest: async () => digest as never }).request(
+      '/v1/operator/digest',
+      { headers: { authorization: `Bearer ${TOKEN}` } },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ severity: 'ok' });
+  });
+
   it('serves the cost report (tenant:read) and 400s a bad period', async () => {
     const cost = {
       generatedAt: 'x',

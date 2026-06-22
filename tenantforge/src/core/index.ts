@@ -140,6 +140,14 @@ export {
   type CostAnomaly,
 } from './cost-anomaly.js';
 export {
+  buildOperatorDigest,
+  formatOperatorDigest,
+  type DigestSeverity,
+  type DigestCategory,
+  type OperatorDigest,
+  type OperatorDigestInput,
+} from './operator-digest.js';
+export {
   signupTokenStatus,
   assertRedeemable,
   type SignupTokenRecord,

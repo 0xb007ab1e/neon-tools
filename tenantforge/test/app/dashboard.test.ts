@@ -30,6 +30,8 @@ const app = () =>
   createHttpServer(
     fakeTf({
       complianceReport: async () => report as never,
+      operatorDigest: async () =>
+        ({ severity: 'ok', headline: 'ok: all clear', categories: [] }) as never,
       fleetStatus: async () => drift,
       costReport: async () => cost,
       reconcilePlan: async () => reconcile,
@@ -95,6 +97,19 @@ describe('dashboard backend', () => {
     const data = await server.request('/dashboard/api/compliance', { headers: { cookie } });
     expect(data.status).toBe(200);
     expect(await data.json()).toEqual(report);
+  });
+
+  it('serves the operator-digest panel data to an authenticated session', async () => {
+    const server = app();
+    const cookie = cookieOf(await login(server, TOKEN));
+    const res = await server.request('/dashboard/api/operator-digest', { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ severity: 'ok' });
+  });
+
+  it('rejects unauthenticated operator-digest panel data (401)', async () => {
+    const res = await app().request('/dashboard/api/operator-digest');
+    expect(res.status).toBe(401);
   });
 
   it('serves the drift and cost panels for a valid session', async () => {

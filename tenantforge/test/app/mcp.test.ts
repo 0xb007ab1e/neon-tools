@@ -50,6 +50,7 @@ describe('MCP server', () => {
       'tf_invoices',
       'tf_list_tenants',
       'tf_offboard',
+      'tf_operator_digest',
       'tf_plans',
       'tf_provision',
       'tf_reconcile_history',
@@ -205,6 +206,18 @@ describe('MCP server', () => {
     const client = await connect(fakeTf({ complianceReport: async () => report as never }));
     const out = body(await client.callTool({ name: 'tf_compliance_report', arguments: {} }));
     expect(out).toContain('"digest": "abc123"');
+    await client.close();
+  });
+
+  it('tf_operator_digest returns the operational-health roll-up', async () => {
+    const digest = {
+      severity: 'warning',
+      headline: 'warning: 1 issue across drift',
+      categories: [],
+    };
+    const client = await connect(fakeTf({ operatorDigest: async () => digest as never }));
+    const out = body(await client.callTool({ name: 'tf_operator_digest', arguments: {} }));
+    expect(out).toContain('"severity": "warning"');
     await client.close();
   });
 
