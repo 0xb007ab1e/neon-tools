@@ -71,12 +71,9 @@ export function buildRetentionReport(
     }))
     .sort(
       (a, b) =>
+        // eligible first, then soonest purge-eligible (ISO-8601 sorts chronologically), then id.
         Number(b.eligible) - Number(a.eligible) ||
-        (a.purgeEligibleAt < b.purgeEligibleAt
-          ? -1
-          : a.purgeEligibleAt > b.purgeEligibleAt
-            ? 1
-            : 0) ||
+        a.purgeEligibleAt.localeCompare(b.purgeEligibleAt) ||
         a.tenantId.localeCompare(b.tenantId),
     );
   const eligible = rows.filter((r) => r.eligible).length;
