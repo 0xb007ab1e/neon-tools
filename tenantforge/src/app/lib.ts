@@ -502,6 +502,32 @@ export interface ProvisionOutcome {
   connectionUri: string | null;
 }
 
+/** Input to adopt an EXISTING Neon project into the registry as a managed tenant. */
+export interface ImportInput {
+  /** Desired slug (validated + normalized). */
+  slug: string;
+  /** The existing Neon project's id to adopt (NOT created — it already exists). */
+  neonProjectId: string;
+  /**
+   * The existing project's owner connection URI — a **secret** supplied by the operator. Stored in
+   * the SecretStore (keyed by tenant id) and never logged. Required because, unlike provision, no
+   * project is created here to mint one.
+   */
+  connectionUri: string;
+  /** Region the existing project lives in (validated + allow-list/residency-checked like provision). */
+  region?: string;
+  /** Required data-residency jurisdiction; the region must satisfy it or import fails closed. */
+  residency?: Jurisdiction;
+  /** Optional non-sensitive metadata. */
+  metadata?: JsonObject;
+}
+
+/** The result of an import call — the adopted tenant (no connection URI: it was supplied inbound). */
+export interface ImportOutcome {
+  /** The adopted tenant record (active). */
+  tenant: TenantRecord;
+}
+
 /** A readiness report: overall status plus per-dependency check results. */
 export interface HealthReport {
   /** `ok` when every dependency check passed; `degraded` otherwise. */
@@ -590,6 +616,21 @@ export interface TenantForge {
    * @returns The tenant record and (only when newly created) its connection secret.
    */
   provision(input: ProvisionInput): Promise<ProvisionOutcome>;
+
+  /**
+   * **Adopt an existing Neon project** into the registry as a managed tenant — the migration-
+   * onboarding path (bring a fleet already on Neon under TenantForge management) without creating
+   * or destroying a project. Mirrors {@link TenantForge.provision} minus the Neon-API create: the
+   * operator supplies the existing `neonProjectId` + its `connectionUri` (stored as the per-tenant
+   * secret, never logged). Same slug + region/residency validation; fails closed on a slug already
+   * in use. Builder-only — mapping an existing project to your tenant identity is knowledge Neon
+   * doesn't have. CLI/HTTP only (it accepts a secret) — not the agent surface.
+   *
+   * @param input - The slug, existing project id + connection URI, optional region/residency/metadata.
+   * @returns The adopted (active) tenant record.
+   * @throws If the slug is already in use, or the region violates the required residency.
+   */
+  importTenant(input: ImportInput): Promise<ImportOutcome>;
 
   /**
    * **Issue a one-time signup/invite token** scoped to a desired `slug` (+ optional region / plan),
@@ -2099,6 +2140,34 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   };
 
   /** Create the Neon project for a provisioning-state tenant and activate it. */
+  /**
+   * Resolve + validate the region for provision/import (fail closed before any project is touched):
+   * an explicit region is checked against the allow-list + any required jurisdiction; with no region
+   * but a required residency the ResidencyRouter selects a compliant one; otherwise the configured
+   * default (still allow-list-checked).
+   */
+  const resolveRegion = (
+    regionOpt: string | undefined,
+    residency: Jurisdiction | undefined,
+  ): string => {
+    if (regionOpt !== undefined) {
+      const region = assertRegion(regionOpt);
+      assertRegionAllowed(region, allowedRegions);
+      if (residency !== undefined) assertResidency(region, residency);
+      return region;
+    }
+    if (residency !== undefined) {
+      return selectRegion({
+        jurisdiction: residency,
+        allowed: allowedRegions,
+        preferred: defaultRegion,
+      });
+    }
+    const region = assertRegion(defaultRegion);
+    assertRegionAllowed(region, allowedRegions);
+    return region;
+  };
+
   const finishProvisioning = async (tenant: TenantRecord): Promise<ProvisionOutcome> => {
     const result = await provisioning.createTenantProject({
       slug: tenant.slug,
@@ -2257,28 +2326,8 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
 
     async provision(input: ProvisionInput): Promise<ProvisionOutcome> {
       const slug = assertSlug(input.slug);
-      // Residency enforcement (std-privacy), fail closed before any project is created:
-      // - explicit region → validate it's known, allow-listed, and satisfies any required jurisdiction;
-      // - region omitted + residency required → the ResidencyRouter (#16) *selects* a compliant region
-      //   from the allow-list (preferring the default when it qualifies);
-      // - neither → the configured default, still allow-list-checked.
-      let region: string;
-      if (input.region !== undefined) {
-        region = assertRegion(input.region);
-        assertRegionAllowed(region, allowedRegions);
-        if (input.residency !== undefined) {
-          assertResidency(region, input.residency);
-        }
-      } else if (input.residency !== undefined) {
-        region = selectRegion({
-          jurisdiction: input.residency,
-          allowed: allowedRegions,
-          preferred: defaultRegion,
-        });
-      } else {
-        region = assertRegion(defaultRegion);
-        assertRegionAllowed(region, allowedRegions);
-      }
+      // Residency enforcement (std-privacy), fail closed before any project is created.
+      const region = resolveRegion(input.region, input.residency);
 
       const existing = await registry.getBySlug(slug);
       if (existing) {
@@ -2300,6 +2349,37 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         ...(input.metadata ? { metadata: input.metadata } : {}),
       });
       return finishProvisioning(created);
+    },
+
+    async importTenant(input: ImportInput): Promise<ImportOutcome> {
+      const slug = assertSlug(input.slug);
+      const region = resolveRegion(input.region, input.residency);
+      // Adoption is not a resume: a slug already in any state fails closed (no silent overwrite).
+      const existing = await registry.getBySlug(slug);
+      if (existing) {
+        throw new Error(`slug "${slug}" is already in use (status: ${existing.status})`);
+      }
+      const created = await registry.create({
+        slug,
+        region,
+        ...(input.metadata ? { metadata: input.metadata } : {}),
+      });
+      // Adopt the EXISTING project — attach its id, store the operator-supplied secret, activate.
+      // No Neon-API create (mirrors finishProvisioning minus project creation).
+      await registry.attachProject(created.id, input.neonProjectId);
+      await secretStore.set(created.id, input.connectionUri);
+      assertTransition(created.status, 'active');
+      await registry.setStatus(created.id, 'active');
+      // Event carries slug/region/projectId — NEVER the inbound connection URI (master §5).
+      observe('tenant.imported', {
+        tenantId: created.id,
+        outcome: 'ok',
+        context: { slug, region, neonProjectId: input.neonProjectId },
+      });
+      const active = await registry.getById(created.id);
+      return {
+        tenant: active ?? { ...created, status: 'active', neonProjectId: input.neonProjectId },
+      };
     },
 
     async issueSignupToken(opts: {

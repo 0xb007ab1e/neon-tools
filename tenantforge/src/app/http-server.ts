@@ -91,6 +91,17 @@ const ProvisionSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
+// Adopt an existing project: like provision, plus the existing project id + its connection URI (a
+// secret accepted in the request body over TLS, like provision returns one — never logged).
+const ImportSchema = z.object({
+  slug: z.string().min(1),
+  neonProjectId: z.string().min(1),
+  connectionUri: z.string().min(1),
+  region: z.string().min(1).optional(),
+  residency: z.enum(['us', 'eu', 'apac']).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
 const PurgeSchema = z.object({
   // Defense in depth: the irreversible hard-delete must be explicitly confirmed in the body.
   confirm: z.literal(true),
@@ -125,7 +136,7 @@ function handleError(c: Context<Env>, error: unknown) {
     return problem(c, 400, 'Bad Request', message);
   }
   if (
-    /illegal tenant status transition|belongs to a|no exporter configured|restore requires|retention window|cannot resume an offboarding/.test(
+    /illegal tenant status transition|belongs to a|no exporter configured|restore requires|retention window|cannot resume an offboarding|already in use/.test(
       message,
     )
   ) {
@@ -390,6 +401,27 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
       });
       // connectionUri is a secret delivered once to the authenticated caller; never logged.
       return c.json({ tenant: outcome.tenant, connectionUri: outcome.connectionUri }, 201);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // Adopt an existing Neon project as a managed tenant (migration onboarding). The connection URI is
+  // a secret accepted in the body and stored server-side; the response carries only the tenant.
+  app.post('/v1/tenants/import', requirePermission('tenant:provision'), async (c) => {
+    const parsed = await readJson(c, ImportSchema);
+    if (!parsed.ok) return parsed.res;
+    const { slug, neonProjectId, connectionUri, region, residency, metadata } = parsed.data;
+    try {
+      const outcome = await tf.importTenant({
+        slug,
+        neonProjectId,
+        connectionUri,
+        ...(region !== undefined ? { region } : {}),
+        ...(residency !== undefined ? { residency } : {}),
+        ...(metadata !== undefined ? { metadata: metadata as JsonObject } : {}),
+      });
+      return c.json({ tenant: outcome.tenant }, 201);
     } catch (error) {
       return handleError(c, error);
     }

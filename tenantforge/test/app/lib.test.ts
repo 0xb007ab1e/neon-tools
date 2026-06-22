@@ -256,6 +256,41 @@ describe('createTenantForge.provision', () => {
     await expect(tf.provision({ slug: 'a' })).rejects.toThrow(/invalid tenant slug/);
     expect(spy).not.toHaveBeenCalled();
   });
+
+  it('imports an existing project: adopts it, stores the supplied secret, activates — no Neon create', async () => {
+    const tf = make();
+    const { tenant } = await tf.importTenant({
+      slug: 'Adopted-Co',
+      neonProjectId: 'existing-proj-9',
+      connectionUri: 'postgresql://owner@host/adopted',
+    });
+    expect(tenant.slug).toBe('adopted-co'); // normalized
+    expect(tenant.status).toBe('active');
+    expect(tenant.neonProjectId).toBe('existing-proj-9'); // the supplied id, not a created one
+    expect(provisioning.calls).toHaveLength(0); // the Neon API was NOT called to create a project
+    expect(await secretStore.get(tenant.id)).toBe('postgresql://owner@host/adopted'); // secret stored
+  });
+
+  it('fails closed when the slug is already in use (no silent overwrite)', async () => {
+    const tf = make();
+    await tf.provision({ slug: 'acme' });
+    await expect(
+      tf.importTenant({ slug: 'acme', neonProjectId: 'p', connectionUri: 'postgresql://x@h/d' }),
+    ).rejects.toThrow(/already in use/);
+  });
+
+  it('applies residency validation on import (rejects a region that violates it)', async () => {
+    const tf = make();
+    await expect(
+      tf.importTenant({
+        slug: 'eu-co',
+        neonProjectId: 'p',
+        connectionUri: 'postgresql://x@h/d',
+        region: 'aws-us-east-1',
+        residency: 'eu',
+      }),
+    ).rejects.toThrow(/does not satisfy required residency "eu"/);
+  });
 });
 
 describe('createTenantForge.erase', () => {
