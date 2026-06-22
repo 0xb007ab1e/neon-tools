@@ -193,6 +193,14 @@ limiting; the **MCP** server uses a **stdio** transport (a subprocess of the LLM
 listener, so there is no port to expose); money-moving / destructive operations are **CLI-only and
 gated** and are never reachable over HTTP or MCP.
 
+The **MCP tool surface mirrors the HTTP reads** (LLM08 least-agency): lifecycle (provision / suspend /
+resume / offboard — purge excluded) plus read-only reports — compliance, cost (+ `tf_cost_anomalies`),
+invoices, the filterable **audit trail** (`tf_audit`, which subsumes the per-event billing/lifecycle
+histories via its `events` filter), `tf_audit_anomalies`, `tf_retention`, `tf_plans`,
+`tf_signup_tokens`, and `tf_credit_balance`. Money-moving / resource-creating ops (charge, refund,
+credit grant, plan settlement, signup issue/redeem, data export, fleet-reconcile execution) stay off
+MCP — read their results via the audit/report tools, run them via the CLI.
+
 ## Operations
 
 Runbooks live in [`docs/runbooks/`](./docs/runbooks/) ([index](./docs/runbooks/README.md)) — deploy,

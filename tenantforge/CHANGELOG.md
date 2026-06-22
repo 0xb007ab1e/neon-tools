@@ -6,6 +6,15 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **MCP read-surface parity** — the MCP server gains the read tools that had drifted behind the HTTP
+  surface: `tf_audit` (filterable audit trail, subsuming the per-event billing/lifecycle histories
+  via its `events` filter), `tf_audit_anomalies`, `tf_cost_anomalies`, `tf_retention`, `tf_plans`,
+  `tf_signup_tokens`, and `tf_credit_balance`. All read-only, no secrets. Money-moving /
+  resource-creating ops (charge, refund, credit grant, plan settlement, signup issue/redeem, data
+  export, reconcile execution, purge) remain off the agent surface (LLM08).
+
 ## [0.30.0] - 2026-06-22
 
 Hardens the release pipeline: SBOM + SLSA build provenance on tag, and an SBOM + vulnerability/
