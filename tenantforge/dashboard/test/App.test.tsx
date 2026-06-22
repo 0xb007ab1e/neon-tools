@@ -208,6 +208,13 @@ let reconcileExecutable = false;
 beforeEach(() => {
   authed = false;
   reconcileExecutable = false;
+  window.location.hash = ''; // reset routed section between tests
+  document.documentElement.removeAttribute('data-theme');
+  try {
+    localStorage.clear();
+  } catch {
+    /* ignore */
+  }
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -261,83 +268,88 @@ describe('dashboard App', () => {
     expect((await axe(container)).violations).toEqual([]);
   });
 
-  it('logs in and renders all three panels (compliance, drift, cost), no a11y violations', async () => {
-    const { container } = render(<App />);
+  const signIn = async (): Promise<void> => {
     fireEvent.change(await screen.findByLabelText('Operator token'), {
       target: { value: 'op-token' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByText(/Signed in as/);
+  };
 
-    expect(await screen.findByText(/Signed in as/)).toBeInTheDocument();
+  it('logs in and renders the Fleet section by default, no a11y violations', async () => {
+    const { container } = render(<App />);
+    await signIn();
+
+    // Fleet section (default route): compliance, drift, reconcile.
     expect(await screen.findByRole('heading', { name: 'Compliance' })).toBeInTheDocument();
     expect(await screen.findByText('region not in org allow-list')).toBeInTheDocument();
     expect(
       await screen.findByRole('heading', { name: 'Fleet migration drift' }),
     ).toBeInTheDocument();
-    // Reconcile plan preview renders the behind tenant.
     expect(
       await screen.findByRole('heading', { name: 'Fleet reconcile (plan)' }),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-behind')).toBeInTheDocument();
-    // Reconcile history (from the audit trail) renders.
     expect(await screen.findByText('Recent reconcile runs (audit trail)')).toBeInTheDocument();
-    expect(await screen.findByRole('heading', { name: 'Cost & margin' })).toBeInTheDocument();
-    // The unprofitable tenant row is rendered.
-    expect(await screen.findByText('tenant-a')).toBeInTheDocument();
-    // Erasure history (from the persisted audit trail) is shown.
+    // Erasure history (from the persisted audit trail) is shown in the compliance panel.
     expect(await screen.findByText('Erasures recorded: 1')).toBeInTheDocument();
     expect(await screen.findByText('tenant-gone')).toBeInTheDocument();
-    // Invoices panel renders.
+    // Reconcile execution is not enabled by default → preview-only, no Run button.
+    expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
+    expect((await axe(container)).violations).toEqual([]);
+  });
+
+  it('navigates to the Billing section and renders its panels, no a11y violations', async () => {
+    const { container } = render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Billing' }));
+
+    expect(await screen.findByRole('heading', { name: 'Cost & margin' })).toBeInTheDocument();
+    expect(await screen.findByText('tenant-a')).toBeInTheDocument();
     expect(
       await screen.findByRole('heading', { name: 'Invoices (this month)' }),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-billed')).toBeInTheDocument();
-    // The overage line item (from an included allowance) is surfaced in the invoices panel.
     expect(
       await screen.findByText(/Compute time \(overage; 60 compute-second incl\.\): 40/),
     ).toBeInTheDocument();
-    // Billing (recent charges) panel renders.
     expect(
       await screen.findByRole('heading', { name: 'Billing (recent charges)' }),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-charged')).toBeInTheDocument();
-    // Inbound PSP webhook events render in the billing panel.
     expect(await screen.findByText('Recent inbound PSP webhook events')).toBeInTheDocument();
     expect(await screen.findByText('tenant-hooked')).toBeInTheDocument();
-    // Dunning (failed-charge retries) render in the billing panel.
     expect(await screen.findByText('Recent dunning (failed-charge retries)')).toBeInTheDocument();
     expect(await screen.findByText('tenant-dunned')).toBeInTheDocument();
-    // Billing runs render in the billing panel.
     expect(await screen.findByText('Recent billing runs')).toBeInTheDocument();
-    // Refunds render in the billing panel.
     expect(await screen.findByText('Recent refunds')).toBeInTheDocument();
     expect(await screen.findByText('tenant-refunded')).toBeInTheDocument();
-    // Receipt notifications render in the billing panel.
     expect(await screen.findByText('Recent receipts (notifications)')).toBeInTheDocument();
     expect(await screen.findByText('tenant-notified')).toBeInTheDocument();
-    // Plan changes render in the billing panel.
     expect(await screen.findByText('Recent plan changes')).toBeInTheDocument();
     expect(await screen.findByText('tenant-replanned')).toBeInTheDocument();
-    // Credit grants render in the billing panel.
     expect(await screen.findByText('Recent credit grants')).toBeInTheDocument();
     expect(await screen.findByText('tenant-credited')).toBeInTheDocument();
-    // Usage alerts render in the billing panel.
     expect(
       await screen.findByText('Recent usage alerts (approaching/over plan allowance)'),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-near-limit')).toBeInTheDocument();
-    // Plan catalog renders.
     expect(await screen.findByRole('heading', { name: 'Plan catalog' })).toBeInTheDocument();
     expect(await screen.findByText('Pro plan')).toBeInTheDocument();
-    // Signup tokens panel renders.
     expect(await screen.findByRole('heading', { name: 'Signup tokens' })).toBeInTheDocument();
     expect(await screen.findByText('tenant-invited')).toBeInTheDocument();
-    // Invoice deliveries render in the billing panel.
     expect(
       await screen.findByText('Recent invoice deliveries (emailed to tenants)'),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-emailed')).toBeInTheDocument();
-    // Audit log panel renders, including detected anomalies.
+    expect((await axe(container)).violations).toEqual([]);
+  });
+
+  it('navigates to the Audit section and renders the audit log + anomalies, no a11y violations', async () => {
+    const { container } = render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Audit' }));
+
     expect(await screen.findByRole('heading', { name: 'Audit log (recent)' })).toBeInTheDocument();
     expect(await screen.findByText('tenant-audited')).toBeInTheDocument();
     expect(
@@ -346,9 +358,19 @@ describe('dashboard App', () => {
       ),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-flaky')).toBeInTheDocument();
-    // Reconcile execution is not enabled by default → preview-only, no Run button.
-    expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);
+  });
+
+  it('toggles between light and dark themes and persists the choice', async () => {
+    render(<App />);
+    await signIn();
+    const toggle = await screen.findByRole('button', { name: /Switch to (light|dark) theme/ });
+    const initial = document.documentElement.getAttribute('data-theme');
+    fireEvent.click(toggle);
+    const next = document.documentElement.getAttribute('data-theme');
+    expect(next).not.toBe(initial);
+    expect(next === 'light' || next === 'dark').toBe(true);
+    expect(localStorage.getItem('tf-theme')).toBe(next);
   });
 
   it('runs a reconcile from the dashboard when executable + permitted (confirmed)', async () => {

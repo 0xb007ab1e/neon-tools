@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchCompliance,
   fetchCost,
@@ -49,8 +49,64 @@ import {
   type Session,
 } from './api';
 
+/**
+ * Resolve + apply the light/dark theme. Defaults to the OS `prefers-color-scheme`, with an in-app
+ * toggle that persists the explicit choice (localStorage). Applied via `data-theme` on the root so
+ * the token CSS can switch; `prefers-reduced-motion` is honored in CSS. Accessibility-first.
+ */
+function useTheme(): { theme: 'light' | 'dark'; toggle: () => void } {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      const stored = localStorage.getItem('tf-theme');
+      if (stored === 'light' || stored === 'dark') return stored;
+    } catch {
+      /* localStorage unavailable — fall back to system */
+    }
+    if (
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches
+    ) {
+      return 'dark';
+    }
+    return 'light';
+  });
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+  const toggle = useCallback(() => {
+    setTheme((t) => {
+      const next = t === 'dark' ? 'light' : 'dark';
+      try {
+        localStorage.setItem('tf-theme', next);
+      } catch {
+        /* ignore persistence failure */
+      }
+      return next;
+    });
+  }, []);
+  return { theme, toggle };
+}
+
+/** An accessible light/dark theme toggle (labelled; shows the current theme + what it switches to). */
+function ThemeToggle(props: { theme: 'light' | 'dark'; onToggle: () => void }): React.JSX.Element {
+  const next = props.theme === 'dark' ? 'light' : 'dark';
+  return (
+    <button
+      type="button"
+      className="theme-toggle"
+      onClick={props.onToggle}
+      aria-label={`Switch to ${next} theme`}
+      title={`Switch to ${next} theme`}
+    >
+      <span aria-hidden="true">{props.theme === 'dark' ? '🌙' : '☀️'}</span>
+      <span className="theme-toggle-label">{props.theme === 'dark' ? 'Dark' : 'Light'}</span>
+    </button>
+  );
+}
+
 /** Root dashboard app: auth gate → panels. */
 export function App(): React.JSX.Element {
+  const { theme, toggle } = useTheme();
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,7 +118,7 @@ export function App(): React.JSX.Element {
 
   if (session === undefined) {
     return (
-      <main className="app">
+      <main className="app app-center">
         <p role="status">Loading…</p>
       </main>
     );
@@ -71,6 +127,8 @@ export function App(): React.JSX.Element {
     return (
       <LoginView
         error={error}
+        theme={theme}
+        onToggleTheme={toggle}
         onSubmit={async (token) => {
           setError(null);
           try {
@@ -85,6 +143,8 @@ export function App(): React.JSX.Element {
   return (
     <DashboardView
       session={session}
+      theme={theme}
+      onToggleTheme={toggle}
       onLogout={async () => {
         await logout();
         setSession(null);
@@ -96,67 +156,183 @@ export function App(): React.JSX.Element {
 /** Token login form. */
 function LoginView(props: {
   error: string | null;
+  theme: 'light' | 'dark';
+  onToggleTheme: () => void;
   onSubmit: (token: string) => void | Promise<void>;
 }): React.JSX.Element {
   const [token, setToken] = useState('');
   return (
-    <main className="app">
-      <h1>TenantForge</h1>
-      <form
-        className="login"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void props.onSubmit(token);
-        }}
-      >
-        <h2>Sign in</h2>
-        <label htmlFor="token">Operator token</label>
-        <input
-          id="token"
-          name="token"
-          type="password"
-          autoComplete="off"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          required
-        />
-        {props.error !== null && (
-          <p role="alert" className="error">
-            {props.error}
-          </p>
-        )}
-        <button type="submit">Sign in</button>
-      </form>
+    <main className="app app-center">
+      <div className="login-card card">
+        <div className="login-head">
+          <span className="brand-mark" aria-hidden="true">
+            TF
+          </span>
+          <ThemeToggle theme={props.theme} onToggle={props.onToggleTheme} />
+        </div>
+        <h1 className="login-title">TenantForge</h1>
+        <p className="login-sub">Control plane for database-per-tenant SaaS on Neon.</p>
+        <form
+          className="login"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void props.onSubmit(token);
+          }}
+        >
+          <h2>Sign in</h2>
+          <label htmlFor="token">Operator token</label>
+          <input
+            id="token"
+            name="token"
+            type="password"
+            autoComplete="off"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            required
+          />
+          {props.error !== null && (
+            <p role="alert" className="error">
+              {props.error}
+            </p>
+          )}
+          <button type="submit" className="btn-primary">
+            Sign in
+          </button>
+        </form>
+      </div>
     </main>
   );
 }
 
-/** Signed-in shell: header + the panels. */
+/** The dashboard's top-level sections (grouped panels), each deep-linkable via `#/<id>`. */
+const SECTIONS = [
+  { id: 'fleet', label: 'Fleet' },
+  { id: 'billing', label: 'Billing' },
+  { id: 'audit', label: 'Audit' },
+] as const;
+type SectionId = (typeof SECTIONS)[number]['id'];
+const SECTION_IDS: readonly string[] = SECTIONS.map((s) => s.id);
+
+/** Hash-based section routing (deep-linkable, dependency-free). Unknown hashes are ignored. */
+function useHashRoute(): [SectionId, (id: SectionId) => void] {
+  const read = (): SectionId => {
+    const raw = window.location.hash.replace(/^#\/?/, '');
+    return SECTION_IDS.includes(raw) ? (raw as SectionId) : 'fleet';
+  };
+  const [active, setActive] = useState<SectionId>(read);
+  useEffect(() => {
+    const onHash = (): void => {
+      const raw = window.location.hash.replace(/^#\/?/, '');
+      if (SECTION_IDS.includes(raw)) setActive(raw as SectionId); // ignore e.g. the #main skip-link
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  const navigate = useCallback((id: SectionId) => {
+    setActive(id);
+    try {
+      window.location.hash = `#/${id}`;
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  return [active, navigate];
+}
+
+/** Section navigation as a tab-style list of links (responsive; wraps on narrow viewports). */
+function Nav(props: { active: SectionId; onNavigate: (id: SectionId) => void }): React.JSX.Element {
+  return (
+    <nav className="nav" aria-label="Dashboard sections">
+      <ul>
+        {SECTIONS.map((s) => (
+          <li key={s.id}>
+            <a
+              href={`#/${s.id}`}
+              className="nav-link"
+              aria-current={props.active === s.id ? 'page' : undefined}
+              onClick={(e) => {
+                e.preventDefault();
+                props.onNavigate(s.id);
+              }}
+            >
+              {s.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+/** Signed-in shell: skip-link → sticky header (brand + theme + sign-out) → nav → routed main. */
 function DashboardView(props: {
   session: Session;
+  theme: 'light' | 'dark';
+  onToggleTheme: () => void;
   onLogout: () => void | Promise<void>;
 }): React.JSX.Element {
+  const [active, navigate] = useHashRoute();
+  const mainRef = useRef<HTMLElement>(null);
+  const firstRender = useRef(true);
+  // On a section change, move focus to <main> so keyboard / screen-reader users land in the new content.
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    mainRef.current?.focus();
+  }, [active]);
+  const activeLabel = SECTIONS.find((s) => s.id === active)?.label ?? '';
   return (
-    <div className="app">
+    <div className="shell">
+      <a className="skip-link" href="#main">
+        Skip to main content
+      </a>
       <header className="topbar">
-        <h1>TenantForge</h1>
-        <p>
-          Signed in as <strong>{props.session.id}</strong> ({props.session.role}){' '}
-          <button type="button" onClick={() => void props.onLogout()}>
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            TF
+          </span>
+          <h1 className="brand-name">TenantForge</h1>
+        </div>
+        <div className="topbar-actions">
+          <span className="who">
+            Signed in as <strong>{props.session.id}</strong>{' '}
+            <span className="role-chip">{props.session.role}</span>
+          </span>
+          <ThemeToggle theme={props.theme} onToggle={props.onToggleTheme} />
+          <button type="button" className="btn-ghost" onClick={() => void props.onLogout()}>
             Sign out
           </button>
-        </p>
+        </div>
       </header>
-      <main>
-        <CompliancePanel />
-        <DriftPanel />
-        <ReconcilePanel />
-        <CostPanel />
-        <PlansPanel />
-        <SignupTokensPanel />
-        <InvoicesPanel />
-        <BillingPanel />
-        <AuditPanel />
+      <Nav active={active} onNavigate={navigate} />
+      <main
+        id="main"
+        ref={mainRef}
+        tabIndex={-1}
+        className="main"
+        aria-label={`${activeLabel} section`}
+      >
+        <div className="panels">
+          {active === 'fleet' && (
+            <>
+              <CompliancePanel />
+              <DriftPanel />
+              <ReconcilePanel />
+            </>
+          )}
+          {active === 'billing' && (
+            <>
+              <CostPanel />
+              <PlansPanel />
+              <SignupTokensPanel />
+              <InvoicesPanel />
+              <BillingPanel />
+            </>
+          )}
+          {active === 'audit' && <AuditPanel />}
+        </div>
       </main>
     </div>
   );
@@ -176,7 +352,7 @@ function usePanelData<T>(load: () => Promise<T>): { data: T | null; error: strin
   return { data, error };
 }
 
-/** A section wrapper with heading + loading/error states. */
+/** A card-styled panel with heading + loading/error states. Body scrolls horizontally on overflow. */
 function Panel(props: {
   id: string;
   title: string;
@@ -185,15 +361,21 @@ function Panel(props: {
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <section aria-labelledby={props.id}>
-      <h2 id={props.id}>{props.title}</h2>
+    <section className="panel card" aria-labelledby={props.id}>
+      <h2 id={props.id} className="panel-title">
+        {props.title}
+      </h2>
       {props.error !== null && (
         <p role="alert" className="error">
           {props.error}
         </p>
       )}
-      {props.loading && props.error === null && <p role="status">Loading…</p>}
-      {props.children}
+      {props.loading && props.error === null && (
+        <p role="status" className="loading">
+          Loading…
+        </p>
+      )}
+      <div className="panel-body">{props.children}</div>
     </section>
   );
 }

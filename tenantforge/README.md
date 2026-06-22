@@ -273,10 +273,16 @@ excerpt** — the durable, queryable record behind the ephemeral stdout event st
 **Receipts / notifications:** a successful charge or refund **best-effort** sends a receipt to the tenant's `metadata.billingEmail`, behind the swappable **`Notifier` port**. Env-selectable: `log` (default — records an auditable receipt trail, no external send) or `http` (POST each receipt to a relay over https, optionally HMAC-signed, zero-dep via injectable `fetch`). **Real email** ships too — **`createSesNotifier`** (AWS SES) and **`createSmtpNotifier`** (any SMTP / nodemailer) take a minimal **injected client/transport** so the SDK isn't a dependency here (the same hand-wired pattern as the AWS Secrets Manager / S3 adapters; wire via `createTenantForge({ notifier })`). Configure SPF/DKIM/DMARC on the sending domain for deliverability. The receipt body is rendered in the **pure core** (`renderReceipt`, 100%) and carries only safe fields (amount, currency, reference, date) — **no card data, and the recipient address is never written to the audit trail** (PII, master §5). Idempotent on `tenantforge:receipt:{kind}:{reference}` so a retry never double-notifies; a send failure **never breaks the charge/refund** it confirms. Enable with `TENANTFORGE_NOTIFIER=log|http` (+ `TENANTFORGE_NOTIFIER_URL` for http). Read-only history at `GET /v1/billing/notifications` + the dashboard billing panel; **not on MCP**.
 
 **Web dashboard:** a React/Vite SPA (`dashboard/`) gives operators a browser view of the control
-plane — panels for compliance, fleet drift, and cost/margin. It logs in with an operator token
-exchanged for an **HttpOnly session cookie** by the `/dashboard` backend (mounted when
-`TENANTFORGE_DASHBOARD_SECRET` is set), then reads `/dashboard/api/*`. WCAG 2.2 AA semantic HTML
-(enforced by jsx-a11y lint + axe tests). Dev: `pnpm dashboard:dev` (tailnet-only — loopback by
+plane, organized into deep-linkable sections — **Fleet** (compliance, drift, reconcile), **Billing**
+(cost, plans, invoices, charges, signup tokens), and **Audit** (log + anomalies) — reachable via a
+tab nav (`#/fleet` · `#/billing` · `#/audit`). It logs in with an operator token exchanged for an
+**HttpOnly session cookie** by the `/dashboard` backend (mounted when `TENANTFORGE_DASHBOARD_SECRET`
+is set), then reads `/dashboard/api/*`. The UI is **responsive (mobile-first)** with a card-based
+layout and **light/dark themes** (follows `prefers-color-scheme` by default, with a persisted
+in-app toggle). **Accessibility-first / WCAG 2.2 AA**: semantic landmarks + skip link, keyboard
+operability with visible focus, focus moved to `main` on section change, `prefers-reduced-motion`
+honored, and sufficient contrast in both themes — enforced by jsx-a11y lint + axe tests (run per
+section). Token-based hand-rolled CSS, **zero external style deps** (CSP-safe). Dev: `pnpm dashboard:dev` (tailnet-only — loopback by
 default, `DASHBOARD_HOST` for a Tailscale IP; never public). In **production**, set
 `TENANTFORGE_DASHBOARD_DIST=./dashboard/dist` (after `pnpm dashboard:build`) and the control-plane
 server serves the built SPA under `/dashboard` itself — no separate web server. The CLI/HTTP/MCP
