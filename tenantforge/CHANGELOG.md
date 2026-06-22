@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-06-21
+
+Redesigns the operator dashboard: sectioned IA, light/dark themes, mobile-first responsive layout,
+and reinforced WCAG 2.2 AA accessibility. Dashboard-only — no API/contract change; all panels and
+data are unchanged.
+
 ### Changed
 
 - **Dashboard UI/UX redesign** — the operator dashboard is reorganized into deep-linkable sections
