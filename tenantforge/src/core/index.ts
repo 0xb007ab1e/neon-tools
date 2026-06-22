@@ -116,6 +116,11 @@ export {
   type AuditQueryBounds,
 } from './audit-query.js';
 export {
+  detectAuditAnomalies,
+  type AnomalyThresholds,
+  type AuditAnomaly,
+} from './audit-anomaly.js';
+export {
   buildErasureCertificate,
   type ErasureCertificate,
   type ErasureVerification,

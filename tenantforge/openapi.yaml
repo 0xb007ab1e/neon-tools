@@ -556,6 +556,40 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/audit/anomalies:
+    get:
+      tags: [reports]
+      summary: >
+        Scan the recent audit trail for anomalies (requires `tenant:read`) — an overall error spike
+        plus per-actor / per-tenant error clusters (std-mitre-attack detection). Read-only.
+        Empty unless an audit store is wired.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: Only examine events at/after this ISO-8601 instant.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          description: Recent-event window to scan (default 500, capped).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: The detected anomalies (empty when none cross a threshold).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  anomalies:
+                    type: array
+                    items: { type: object }
+                required: [anomalies]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/audit:
     get:
       tags: [reports]

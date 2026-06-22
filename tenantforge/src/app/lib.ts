@@ -26,12 +26,15 @@ import {
   retentionCutoff,
   selectRegion,
   normalizeAuditQuery,
+  detectAuditAnomalies,
   findPlan,
   planAssignment,
   buildComplianceReport,
   type ComplianceReport,
   type ComplianceReportOptions,
   type AuditQueryInput,
+  type AnomalyThresholds,
+  type AuditAnomaly,
   type PlanDefinition,
   type BillingPeriod,
   type Jurisdiction,
@@ -766,6 +769,22 @@ export interface TenantForge {
    * @returns Matching audit events, most-recent first.
    */
   queryAudit(query?: AuditQueryInput): Promise<TenantEvent[]>;
+
+  /**
+   * **Scan the recent audit trail for anomalies** — an overall error spike plus per-actor /
+   * per-tenant error clusters (std-mitre-attack detection / topic-logging-observability: alert on
+   * error bursts + repeated failures). Reads a recent window and runs the pure
+   * {@link detectAuditAnomalies}; read-only, returns `[]` when no audit store is wired. Builder-side
+   * control-plane detection — Neon has no record of these operations.
+   *
+   * @param opts - Optional `since` lower bound, window `limit` (default 500), and `thresholds`.
+   * @returns The detected anomalies (most severe orderings first; empty when none).
+   */
+  scanAuditAnomalies(opts?: {
+    since?: string;
+    limit?: number;
+    thresholds?: AnomalyThresholds;
+  }): Promise<AuditAnomaly[]>;
 
   /**
    * Per-tenant **cost / margin** report over `period`: estimated Neon cost (from the configured
@@ -2382,6 +2401,25 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         ...(q.since !== undefined ? { since: q.since } : {}),
         limit: q.limit,
       });
+    },
+
+    async scanAuditAnomalies(
+      opts: { since?: string; limit?: number; thresholds?: AnomalyThresholds } = {},
+    ): Promise<AuditAnomaly[]> {
+      if (auditLog === undefined) return [];
+      // Read a recent window (default 500), then detect over it with the pure core.
+      const q = normalizeAuditQuery(
+        {
+          ...(opts.since !== undefined ? { since: opts.since } : {}),
+          limit: opts.limit ?? 500,
+        },
+        { defaultLimit: 500 },
+      );
+      const events = await auditLog.query({
+        ...(q.since !== undefined ? { since: q.since } : {}),
+        limit: q.limit,
+      });
+      return detectAuditAnomalies(events, opts.thresholds ?? {});
     },
 
     costReport(period: BillingPeriod): Promise<CostReport> {

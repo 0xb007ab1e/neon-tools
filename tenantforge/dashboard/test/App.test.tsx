@@ -187,6 +187,10 @@ const auditEvents = [
   },
 ];
 
+const auditAnomalies = [
+  { kind: 'tenant-errors', subject: 'tenant-flaky', count: 6, events: ['tenant.charged'] },
+];
+
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -226,6 +230,8 @@ beforeEach(() => {
       if (url.endsWith('/usage-alerts')) return Promise.resolve(json({ usageAlerts }));
       if (url.endsWith('/plans')) return Promise.resolve(json({ plans }));
       if (url.endsWith('/invoices-sent')) return Promise.resolve(json({ invoicesSent }));
+      if (url.endsWith('/audit-anomalies'))
+        return Promise.resolve(json({ anomalies: auditAnomalies }));
       if (url.endsWith('/audit')) return Promise.resolve(json({ events: auditEvents }));
       if (url.endsWith('/refunds')) return Promise.resolve(json({ refunds }));
       if (url.endsWith('/dunning')) return Promise.resolve(json({ events: dunning }));
@@ -318,9 +324,15 @@ describe('dashboard App', () => {
       await screen.findByText('Recent invoice deliveries (emailed to tenants)'),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-emailed')).toBeInTheDocument();
-    // Audit log panel renders.
+    // Audit log panel renders, including detected anomalies.
     expect(await screen.findByRole('heading', { name: 'Audit log (recent)' })).toBeInTheDocument();
     expect(await screen.findByText('tenant-audited')).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'Detected anomalies (error spikes / per-actor / per-tenant clusters)',
+      ),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('tenant-flaky')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
     expect((await axe(container)).violations).toEqual([]);

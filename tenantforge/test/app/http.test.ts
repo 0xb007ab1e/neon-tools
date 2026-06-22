@@ -403,6 +403,16 @@ describe('HTTP control-plane', () => {
     expect(bad.status).toBe(400);
   });
 
+  it('scans the audit trail for anomalies (tenant:read)', async () => {
+    const anomalies = [{ kind: 'error-spike', count: 12, events: ['tenant.charged'] }];
+    const server = app({ scanAuditAnomalies: async () => anomalies as never });
+    const ok = await server.request('/v1/audit/anomalies', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ anomalies });
+  });
+
   it('serves invoice-delivery history (tenant:read); sending is not over HTTP', async () => {
     const invoicesSent = [{ event: 'tenant.invoiced', at: 'x', outcome: 'ok' }];
     const server = app({ invoiceDeliveryHistory: async () => invoicesSent as never });

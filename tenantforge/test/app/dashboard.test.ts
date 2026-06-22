@@ -53,6 +53,8 @@ const app = () =>
       invoiceDeliveryHistory: async () =>
         [{ event: 'tenant.invoiced', at: 'x', outcome: 'ok' }] as never,
       queryAudit: async () => [{ event: 'tenant.transition', at: 'x', outcome: 'ok' }] as never,
+      scanAuditAnomalies: async () =>
+        [{ kind: 'error-spike', count: 12, events: ['tenant.charged'] }] as never,
     }),
     { token: TOKEN, dashboardSecret: 'session-secret' },
   );
@@ -159,6 +161,11 @@ describe('dashboard backend', () => {
     expect(await au.json()).toEqual({
       events: [{ event: 'tenant.transition', at: 'x', outcome: 'ok' }],
     });
+    const an = await server.request('/dashboard/api/audit-anomalies', { headers: { cookie } });
+    expect(an.status).toBe(200);
+    expect(await an.json()).toEqual({
+      anomalies: [{ kind: 'error-spike', count: 12, events: ['tenant.charged'] }],
+    });
     // The panels require a session.
     expect((await server.request('/dashboard/api/cost')).status).toBe(401);
     expect((await server.request('/dashboard/api/reconcile')).status).toBe(401);
@@ -176,6 +183,7 @@ describe('dashboard backend', () => {
     expect((await server.request('/dashboard/api/plans')).status).toBe(401);
     expect((await server.request('/dashboard/api/invoices-sent')).status).toBe(401);
     expect((await server.request('/dashboard/api/audit')).status).toBe(401);
+    expect((await server.request('/dashboard/api/audit-anomalies')).status).toBe(401);
   });
 
   it('rejects an invalid operator token (401) and sets no cookie', async () => {
