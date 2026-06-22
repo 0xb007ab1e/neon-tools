@@ -6,6 +6,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Cost anomaly detection (FinOps)** — `scanCostAnomalies(period, thresholds?)` (CLI `cost-scan`,
+  HTTP `GET /v1/cost/anomalies`, dashboard cost panel) scans the per-tenant cost report and flags
+  the tenants needing attention: **unprofitable** and **unpriced-but-consuming** always, plus opt-in
+  **thin-margin** (`min-margin`) and **high-cost** (`max-cost`). Pure core `detectCostAnomalies`
+  (deterministic, one most-severe finding per tenant, ordered by severity → cost → id; 100%).
+  Read-only; `cost-scan` exits non-zero on findings (cron/CI FinOps gate). Builder-side — Neon has
+  no notion of the operator's prices/margins (not a Neon feature). Requires a usage provider.
+
 ## [0.26.0] - 2026-06-21
 
 Redesigns the operator dashboard: sectioned IA, light/dark themes, mobile-first responsive layout,

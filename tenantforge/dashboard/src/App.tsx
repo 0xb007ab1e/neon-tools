@@ -22,6 +22,7 @@ import {
   fetchAudit,
   fetchAuditAnomalies,
   fetchSignupTokens,
+  fetchCostAnomalies,
   fetchSession,
   login,
   logout,
@@ -46,6 +47,7 @@ import {
   type AuditEventEntry,
   type AuditAnomalyEntry,
   type SignupTokenEntry,
+  type CostAnomalyEntry,
   type Session,
 } from './api';
 
@@ -1050,6 +1052,7 @@ function InvoicesPanel(): React.JSX.Element {
 
 function CostPanel(): React.JSX.Element {
   const { data, error } = usePanelData<CostReport>(fetchCost);
+  const anomalies = usePanelData<CostAnomalyEntry[]>(fetchCostAnomalies);
   return (
     <Panel id="cost-h" title="Cost & margin" error={error} loading={data === null}>
       {data !== null && (
@@ -1059,6 +1062,29 @@ function CostPanel(): React.JSX.Element {
             {data.totals.priceUsd} · margin ${data.totals.marginUsd} · {data.totals.unprofitable}{' '}
             unprofitable · {data.totals.unpriced} unpriced
           </p>
+          {anomalies.data !== null && anomalies.data.length > 0 && (
+            <table>
+              <caption>Cost anomalies (needs attention)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Kind</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Cost</th>
+                  <th scope="col">Margin</th>
+                </tr>
+              </thead>
+              <tbody>
+                {anomalies.data.map((a) => (
+                  <tr key={`${a.kind}-${a.tenantId}`} className="status-bad">
+                    <td>{a.kind}</td>
+                    <th scope="row">{a.tenantId}</th>
+                    <td>${a.costUsd}</td>
+                    <td>{a.marginUsd === null ? '—' : `$${a.marginUsd}`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
           <table>
             <caption>Per-tenant cost vs. price (USD)</caption>
             <thead>

@@ -200,6 +200,16 @@ const auditAnomalies = [
   { kind: 'tenant-errors', subject: 'tenant-flaky', count: 6, events: ['tenant.charged'] },
 ];
 
+const costAnomalies = [
+  {
+    kind: 'unprofitable',
+    tenantId: 'tenant-underwater',
+    costUsd: 30,
+    priceUsd: 20,
+    marginUsd: -10,
+  },
+];
+
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -253,6 +263,8 @@ beforeEach(() => {
       if (url.endsWith('/refunds')) return Promise.resolve(json({ refunds }));
       if (url.endsWith('/dunning')) return Promise.resolve(json({ events: dunning }));
       if (url.endsWith('/charges')) return Promise.resolve(json({ charges }));
+      if (url.endsWith('/cost-anomalies'))
+        return Promise.resolve(json({ anomalies: costAnomalies }));
       if (url.endsWith('/cost')) return Promise.resolve(json(cost));
       return Promise.resolve(json({}, 404));
     }),
@@ -306,6 +318,9 @@ describe('dashboard App', () => {
 
     expect(await screen.findByRole('heading', { name: 'Cost & margin' })).toBeInTheDocument();
     expect(await screen.findByText('tenant-a')).toBeInTheDocument();
+    // Cost anomalies surface in the cost panel.
+    expect(await screen.findByText('Cost anomalies (needs attention)')).toBeInTheDocument();
+    expect(await screen.findByText('tenant-underwater')).toBeInTheDocument();
     expect(
       await screen.findByRole('heading', { name: 'Invoices (this month)' }),
     ).toBeInTheDocument();

@@ -433,6 +433,31 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Cost/margin anomalies for a period (read-only): unprofitable / unpriced (+ opt-in min-margin /
+  // max-cost thresholds via query). FinOps detection — the live scan is read-only.
+  app.get('/v1/cost/anomalies', requirePermission('tenant:read'), async (c) => {
+    const t = new Date(now());
+    const fromParam = c.req.query('from');
+    const toParam = c.req.query('to');
+    const from =
+      fromParam !== undefined ? new Date(fromParam) : new Date(t.getFullYear(), t.getMonth(), 1);
+    const to = toParam !== undefined ? new Date(toParam) : t;
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      return problem(c, 400, 'Bad Request', 'from/to must be ISO-8601 dates');
+    }
+    const minMargin = c.req.query('min-margin');
+    const maxCost = c.req.query('max-cost');
+    const thresholds = {
+      ...(minMargin !== undefined ? { minMarginUsd: Number(minMargin) } : {}),
+      ...(maxCost !== undefined ? { maxCostUsd: Number(maxCost) } : {}),
+    };
+    try {
+      return c.json({ anomalies: await tf.scanCostAnomalies({ from, to }, thresholds) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // Fleet invoices for a period (?from/?to ISO; default current month). Read-only document generation.
   app.get('/v1/invoices', requirePermission('tenant:read'), async (c) => {
     const period = invoicePeriod(c, now);

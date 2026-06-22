@@ -423,6 +423,25 @@ describe('HTTP control-plane', () => {
     expect(await ok.json()).toEqual({ invoicesSent });
   });
 
+  it('scans cost anomalies (tenant:read), passing threshold query params', async () => {
+    const anomalies = [
+      { kind: 'unprofitable', tenantId: 't1', costUsd: 30, priceUsd: 20, marginUsd: -10 },
+    ];
+    let captured: unknown;
+    const server = app({
+      scanCostAnomalies: async (_period, thresholds) => {
+        captured = thresholds;
+        return anomalies as never;
+      },
+    });
+    const ok = await server.request('/v1/cost/anomalies?min-margin=5&max-cost=100', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ anomalies });
+    expect(captured).toEqual({ minMarginUsd: 5, maxCostUsd: 100 });
+  });
+
   it('serves signup-token status (tenant:read); issue/redeem are not over HTTP', async () => {
     const signupTokens = [{ slug: 'acme', status: 'pending', expiresAt: 'x', createdAt: 'y' }];
     const server = app({ listSignupTokens: async () => signupTokens as never });

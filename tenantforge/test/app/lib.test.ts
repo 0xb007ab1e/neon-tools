@@ -1994,6 +1994,62 @@ describe('createTenantForge signup tokens', () => {
   });
 });
 
+describe('createTenantForge.scanCostAnomalies', () => {
+  const period = { from: new Date('2026-06-01'), to: new Date('2026-07-01') };
+  // Every metered tenant costs $10 (100 compute-seconds × $0.10).
+  const provider = {
+    getProjectConsumption: () =>
+      Promise.resolve([
+        {
+          computeTimeSeconds: 100,
+          activeTimeSeconds: 0,
+          writtenDataBytes: 0,
+          syntheticStorageBytes: 0,
+        },
+      ]),
+  };
+  const base = () => ({
+    registry: fakeRegistry(),
+    provisioning: fakeProvisioning(),
+    secretStore: createInMemorySecretStore(),
+    usageProvider: provider,
+    costRates: { computeSecondUsd: 0.1 },
+    defaultRegion: 'aws-us-east-1' as const,
+  });
+
+  it('fails closed without a usage provider', async () => {
+    const tf = createTenantForge({
+      registry: fakeRegistry(),
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+    });
+    await expect(tf.scanCostAnomalies(period)).rejects.toThrow(/usage provider/);
+  });
+
+  it('flags unprofitable + unpriced tenants (most-severe first); ignores healthy ones', async () => {
+    const tf = createTenantForge(base());
+    await tf.provision({ slug: 'loss', metadata: { priceUsd: 5 } }); // cost 10 > price 5 → unprofitable
+    await tf.provision({ slug: 'free', metadata: {} }); // cost 10, no price → unpriced
+    await tf.provision({ slug: 'healthy', metadata: { priceUsd: 50 } }); // margin +40 → healthy
+    const found = await tf.scanCostAnomalies(period);
+    expect(found.map((f) => f.kind)).toEqual(['unprofitable', 'unpriced']);
+    expect(found.map((f) => f.tenantId).sort()).toEqual(
+      found.map((f) => f.tenantId).sort(), // tenant ids are generated; assert kinds + count
+    );
+    expect(found).toHaveLength(2);
+  });
+
+  it('honors opt-in thresholds (thin margin)', async () => {
+    const tf = createTenantForge(base());
+    await tf.provision({ slug: 'thin', metadata: { priceUsd: 11 } }); // margin +1
+    const none = await tf.scanCostAnomalies(period);
+    expect(none).toEqual([]); // profitable; not flagged by default
+    const flagged = await tf.scanCostAnomalies(period, { minMarginUsd: 5 });
+    expect(flagged.map((f) => f.kind)).toEqual(['low-margin']);
+  });
+});
+
 describe('createTenantForge.queryAudit', () => {
   const seeded = async () => {
     const auditLog = createInMemoryAuditLogStore();
