@@ -6,6 +6,19 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Tenant import (adopt an existing Neon project).** `tf.importTenant({ slug, neonProjectId,
+connectionUri, region?, residency?, metadata? })` brings an existing project under management
+  without creating one — the migration-onboarding path. Mirrors `provision` minus the Neon-API
+  create: same slug + region/residency validation (fails closed on a slug already in use), attaches
+  the supplied project id, stores the operator-supplied connection URI as the per-tenant secret, and
+  activates. The connection URI is a **secret** — never returned or logged; the CLI `import` reads it
+  from `TENANTFORGE_IMPORT_CONNECTION_URI` (not an argv flag), HTTP `POST /v1/tenants/import` from the
+  request body (response carries only the tenant). **CLI/HTTP only** — off the MCP agent surface and
+  the dashboard (it handles a secret). Extracted a shared `resolveRegion` helper (provision + import).
+  Builder-only — Neon has no notion of your tenant registry/identity.
+
 ## [0.36.0] - 2026-06-22
 
 Adds the single-pane operator health roll-up. MINOR — additive; one optional new config var

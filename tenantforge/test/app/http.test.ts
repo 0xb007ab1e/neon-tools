@@ -98,6 +98,50 @@ describe('HTTP control-plane', () => {
     });
   });
 
+  it('imports an existing project (201) and does NOT echo the supplied connection secret', async () => {
+    let received: { neonProjectId: string; connectionUri: string } | undefined;
+    const res = await app({
+      importTenant: async (input) => {
+        received = { neonProjectId: input.neonProjectId, connectionUri: input.connectionUri };
+        return { tenant };
+      },
+    }).request('/v1/tenants/import', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        slug: 'acme',
+        neonProjectId: 'existing-1',
+        connectionUri: 'postgresql://owner@host/db',
+      }),
+    });
+    expect(res.status).toBe(201);
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(json).toEqual({ tenant: tenantJson }); // tenant only — no connectionUri in the response
+    expect(json.connectionUri).toBeUndefined();
+    // The inbound secret reached the service (to be stored), but is never returned.
+    expect(received).toEqual({
+      neonProjectId: 'existing-1',
+      connectionUri: 'postgresql://owner@host/db',
+    });
+  });
+
+  it('maps an already-in-use slug on import to 409 Conflict', async () => {
+    const res = await app({
+      importTenant: async () => {
+        throw new Error('slug "acme" is already in use (status: active)');
+      },
+    }).request('/v1/tenants/import', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        slug: 'acme',
+        neonProjectId: 'p',
+        connectionUri: 'postgresql://x@h/d',
+      }),
+    });
+    expect(res.status).toBe(409);
+  });
+
   it('replays a POST response for a repeated Idempotency-Key (executes once)', async () => {
     let calls = 0;
     const server = app({

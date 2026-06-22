@@ -133,6 +133,35 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/tenants/import:
+    post:
+      tags: [tenants]
+      summary: >
+        Adopt an EXISTING Neon project as a managed tenant (migration onboarding) — no project is
+        created. The operator supplies the existing project id + its connection URI (a secret,
+        accepted in the body and stored server-side, never returned or logged). Requires
+        `tenant:provision`. 409 if the slug is already in use or the region violates residency.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportRequest' }
+      responses:
+        '201':
+          description: Adopted (the tenant is active). The connection URI is NOT echoed back.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant: { $ref: '#/components/schemas/Tenant' }
+                required: [tenant]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /v1/tenants/{id}:
     get:
       tags: [tenants]
@@ -1037,6 +1066,30 @@ components:
           description: Required data-residency jurisdiction; the region must belong to it (else 409).
         metadata: { type: object, additionalProperties: true }
       required: [slug]
+    ImportRequest:
+      type: object
+      description: Adopt an existing Neon project; like ProvisionRequest plus the project id + its URI.
+      properties:
+        slug:
+          type: string
+          description: 3–63 chars, lowercase alphanumerics in single-hyphen groups; not reserved.
+        neonProjectId:
+          type: string
+          description: The existing Neon project's id to adopt (not created — it already exists).
+        connectionUri:
+          type: string
+          description: >
+            The existing project's owner connection URI — a SECRET. Stored server-side (keyed by
+            tenant id) and never echoed back or logged.
+        region:
+          type: string
+          description: Region the existing project lives in; defaults to the configured region.
+        residency:
+          type: string
+          enum: [us, eu, apac]
+          description: Required data-residency jurisdiction; the region must belong to it (else 409).
+        metadata: { type: object, additionalProperties: true }
+      required: [slug, neonProjectId, connectionUri]
     PurgeRequest:
       type: object
       properties:

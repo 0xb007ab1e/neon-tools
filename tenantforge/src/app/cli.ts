@@ -76,6 +76,47 @@ const provision = defineCommand({
   },
 });
 
+const importCmd = defineCommand({
+  meta: {
+    name: 'import',
+    description: 'Adopt an existing Neon project as a managed tenant (no project is created)',
+  },
+  args: {
+    slug: {
+      type: 'positional',
+      description: 'Tenant slug (3–63 chars, [a-z0-9-])',
+      required: true,
+    },
+    projectId: { type: 'string', description: 'Existing Neon project id to adopt', required: true },
+    region: { type: 'string', description: 'Region the existing project lives in' },
+    residency: { type: 'string', description: 'Required residency jurisdiction (us | eu | apac)' },
+  },
+  async run({ args }) {
+    // The connection URI is a SECRET — read from env, never an argv flag (avoids ps/shell-history
+    // leak; lang-shell / cli-tool secret-handling).
+    const connectionUri = process.env.TENANTFORGE_IMPORT_CONNECTION_URI;
+    if (connectionUri === undefined || connectionUri.length === 0) {
+      process.stderr.write(
+        'set TENANTFORGE_IMPORT_CONNECTION_URI to the existing project owner connection URI\n',
+      );
+      process.exitCode = 1;
+      return;
+    }
+    await withTenantForge(async (tf) => {
+      await tf.migrate();
+      const { tenant } = await tf.importTenant({
+        slug: args.slug,
+        neonProjectId: args.projectId,
+        connectionUri,
+        ...(args.region ? { region: args.region } : {}),
+        ...(args.residency ? { residency: args.residency as 'us' | 'eu' | 'apac' } : {}),
+      });
+      process.stdout.write(`${formatTenant(tenant)}\n`);
+      process.stdout.write('imported: existing project adopted as a managed tenant\n');
+    });
+  },
+});
+
 const signupIssue = defineCommand({
   meta: {
     name: 'signup-issue',
@@ -1556,6 +1597,7 @@ const main = defineCommand({
   subCommands: {
     migrate,
     provision,
+    import: importCmd,
     'signup-issue': signupIssue,
     'signup-redeem': signupRedeem,
     'signup-list': signupList,

@@ -55,6 +55,13 @@ painful to build correctly.
 
 - **Provision** a tenant → an isolated Neon project (region-selectable), recorded in a control-plane
   registry. Idempotent + resumable.
+- **Import** an _existing_ Neon project → adopt it as a managed tenant without creating one
+  (migration onboarding): `tf.importTenant({ slug, neonProjectId, connectionUri, region?, residency? })`
+  (CLI `import`, HTTP `POST /v1/tenants/import`). Same slug + region/residency validation as provision;
+  fails closed if the slug is in use. The connection URI is a **secret** supplied by the operator
+  (CLI reads it from `TENANTFORGE_IMPORT_CONNECTION_URI`, HTTP from the request body) — stored
+  server-side, never echoed or logged. **CLI/HTTP only** (it accepts a secret — off the MCP + dashboard
+  surfaces). Builder-side — mapping an existing project to your tenant identity is knowledge Neon lacks.
 - **Route** an authenticated principal → its tenant's connection (tenant context derived
   server-side — never from the client).
 - **Migrate the fleet** — apply a versioned, backward-compatible schema change across all tenants,
