@@ -6,6 +6,11 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-06-22
+
+Strengthens confidence that the public surfaces match their specs. Tests only — no runtime/API
+change (MINOR for the new `ajv` dev dependency + contract suite).
+
 ### Added
 
 - **Contract tests for the HTTP and MCP surfaces** (master §4: contract tests for every public API).
