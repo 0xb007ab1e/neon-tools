@@ -6,6 +6,11 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-06-22
+
+Adds the migration-onboarding path. MINOR — additive; one optional CLI-only env var
+(`TENANTFORGE_IMPORT_CONNECTION_URI`).
+
 ### Added
 
 - **Tenant import (adopt an existing Neon project).** `tf.importTenant({ slug, neonProjectId,
