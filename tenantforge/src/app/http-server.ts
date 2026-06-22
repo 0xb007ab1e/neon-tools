@@ -124,7 +124,11 @@ function handleError(c: Context<Env>, error: unknown) {
   if (/invalid tenant slug|unknown region|requires a reason/.test(message)) {
     return problem(c, 400, 'Bad Request', message);
   }
-  if (/illegal tenant status transition|belongs to a|no exporter configured/.test(message)) {
+  if (
+    /illegal tenant status transition|belongs to a|no exporter configured|restore requires|retention window|cannot resume an offboarding/.test(
+      message,
+    )
+  ) {
     return problem(c, 409, 'Conflict', message);
   }
   // Unexpected (e.g. Neon API / registry failure): log server-side, never leak internals.
@@ -804,6 +808,15 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     try {
       const outcome = await tf.offboard(c.req.param('id'));
       return c.json({ tenant: outcome.tenant, archive: outcome.archive });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  app.post('/v1/tenants/:id/restore', requirePermission('tenant:offboard'), async (c) => {
+    // Un-archive: the inverse of offboard, gated to the retention window (409 past it). Reversible.
+    try {
+      return c.json({ tenant: await tf.restore(c.req.param('id')) });
     } catch (error) {
       return handleError(c, error);
     }

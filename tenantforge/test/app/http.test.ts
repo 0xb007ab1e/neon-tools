@@ -713,6 +713,29 @@ describe('HTTP control-plane', () => {
     });
   });
 
+  it('restores an offboarded tenant (POST /restore → active)', async () => {
+    const res = await app({
+      restore: async () => ({ ...tenant, status: 'active' }),
+    }).request('/v1/tenants/t1/restore', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ tenant: { status: 'active' } });
+  });
+
+  it('maps a past-retention restore to 409 Conflict', async () => {
+    const res = await app({
+      restore: async () => {
+        throw new Error('tenant is past its retention window (eligible for purge); cannot restore');
+      },
+    }).request('/v1/tenants/t1/restore', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(409);
+  });
+
   it('requires confirm:true to purge (400 without it)', async () => {
     const res = await app().request('/v1/tenants/t1/purge', {
       method: 'POST',

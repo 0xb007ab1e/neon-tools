@@ -182,6 +182,23 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /v1/tenants/{id}/restore:
+    post:
+      tags: [tenants]
+      summary: >
+        Restore an offboarded tenant back to active (un-archive), if still within its retention
+        window. The inverse of offboard; 409 if the tenant isn't offboarding or is past retention.
+      parameters:
+        - { $ref: '#/components/parameters/TenantId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200': { $ref: '#/components/responses/TenantEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /v1/tenants/{id}/offboard:
     post:
       tags: [tenants]

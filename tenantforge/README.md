@@ -10,7 +10,7 @@
 **Status:** `stable` (v0.34.0) — feature-complete and hardened. Implemented: the pure core
 (slug/region validation, the tenant-lifecycle state machine, the fleet-migration planner) at 100%
 test coverage; the Neon-API provisioning and Postgres registry / encrypted secret-store adapters; the
-full lifecycle (`provision` / `suspend` / `resume` / `offboard` / `purge`, plus the scheduled
+full lifecycle (`provision` / `suspend` / `resume` / `offboard` / `restore` / `purge`, plus the scheduled
 `purge-expired` sweep); connection routing; fleet-migration orchestration; per-tenant observability
 and metering; residency enforcement; and a Neon-native (Postgres) queue + worker for async lifecycle
 — all reachable as a **library**, **CLI**, **HTTP** control-plane API, and **MCP** server. Hardening
@@ -71,7 +71,8 @@ painful to build correctly.
   when the server is started with `TENANTFORGE_MIGRATIONS_DIR` — a **`tenant:provision`-gated**
   "Run reconcile" button in the dashboard (`POST /dashboard/api/reconcile`, CSRF-defended, audited).
 - **Lifecycle** — suspend / resume / **offboard** (archive: retain the project scaled-to-zero,
-  reversible) → **purge** (irreversible delete). `purge-expired` is the scheduled sweep that purges
+  reversible) / **restore** (un-archive an offboarded tenant back to active, gated to the retention
+  window) → **purge** (irreversible delete). `purge-expired` is the scheduled sweep that purges
   archived tenants past `TENANTFORGE_RETENTION_DAYS` (run by a cron / K8s CronJob).
 - Use it as a **library**, a **CLI**, an **HTTP control-plane API**, or an **MCP server**.
 

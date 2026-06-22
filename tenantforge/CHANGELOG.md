@@ -6,6 +6,24 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Tenant restore (un-offboard within the retention window).** `tf.restore(id)` reverses an
+  offboarding — the inverse of `offboard` — bringing an archived tenant back to `active`, **gated to
+  its retention window** (refused once it's past retention / purge-eligible; fail closed). Since
+  offboard retains the Neon project (scaled to zero) and the connection secret, restore is just the
+  inverse status transition — no re-provisioning. Across every control surface: CLI `restore`, HTTP
+  `POST /v1/tenants/:id/restore` (`tenant:offboard` permission; 409 when not offboarding or past
+  retention), and MCP `tf_restore`. Lets an operator recover from an accidental/premature offboard —
+  builder-only (Neon has no notion of your tenant lifecycle or retention policy).
+
+### Changed
+
+- **`resume` is now suspended-only.** It reactivates a _suspended_ tenant and **refuses an
+  offboarding one** (409 / error), directing to `restore` so the retention-window gate can't be
+  bypassed (complete mediation). Reactivating an offboarded tenant previously went through `resume`
+  ungated; use `restore` instead.
+
 ## [0.34.0] - 2026-06-22
 
 Makes every control-plane operation traceable end-to-end and across services. Additive/
