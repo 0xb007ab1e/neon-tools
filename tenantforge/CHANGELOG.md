@@ -6,6 +6,11 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-06-22
+
+Strengthens test quality on the highest-risk code. Tooling + tests only — no runtime/API change
+(MINOR for the new developer-facing `pnpm mutation` surface + CI gate).
+
 ### Added
 
 - **Mutation testing on the critical pure-core modules** (`pnpm mutation`, Stryker + the vitest
