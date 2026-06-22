@@ -6,6 +6,11 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-06-22
+
+Multi-endpoint managed webhook subscriptions. MINOR — additive (the single env webhook remains);
+adds two permissions (`webhooks:read` / `webhooks:manage`) and migration 0009.
+
 ### Added
 
 - **Managed webhook subscriptions (multi-endpoint outbound webhooks).** Beyond the single
