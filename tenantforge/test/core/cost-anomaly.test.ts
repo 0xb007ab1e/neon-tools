@@ -24,6 +24,11 @@ describe('detectCostAnomalies', () => {
     ]);
   });
 
+  it('treats a break-even tenant (margin exactly 0) as healthy, not unprofitable', () => {
+    // Boundary: only margin < 0 is unprofitable. cost == price → margin 0 → no finding.
+    expect(detectCostAnomalies([row({ costUsd: 20, priceUsd: 20, marginUsd: 0 })])).toEqual([]);
+  });
+
   it('does not flag an unpriced tenant with zero cost (nothing to bill)', () => {
     expect(
       detectCostAnomalies([row({ tenantId: 'idle', costUsd: 0, priceUsd: null, marginUsd: null })]),

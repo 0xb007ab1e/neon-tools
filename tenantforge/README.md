@@ -213,6 +213,14 @@ risks, and abuse tests. The HTTP API contract is
 (local + CI), `NEON_API_KEY` and `DATABASE_URL` rotations, and a PITR row-level recovery; see the
 [drill report](./docs/runbooks/drill-report.md).)_
 
+**Mutation testing (critical-path test quality):** coverage proves lines _ran_, not that a test would
+_catch a fault_ — so the money + authorization core (billing/proration/refunds, credit, invoicing,
+cost/anomaly, dunning, authz) is mutation-tested with **Stryker** (`pnpm mutation`). A
+[CI job](../.github/workflows/mutation.yml) runs it when that core or its tests change (plus weekly),
+failing below a `break` mutation-score threshold so a change that weakens those tests is caught. The
+remaining surviving mutants are equivalent (e.g. proration boundaries that fall through to the same
+value), which is why the bar is the practical ceiling for these modules rather than 100%.
+
 **Supply chain & CI gates:** every PR runs merge-blocking gates — lint/format, type-check, the
 six-site version gate, unit + integration tests with coverage thresholds (100% on the pure core),
 `pnpm audit` (SCA), **CodeQL** (SAST), **gitleaks** (secret scan), and a **supply-chain** job that

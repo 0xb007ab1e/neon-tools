@@ -6,6 +6,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Mutation testing on the critical pure-core modules** (`pnpm mutation`, Stryker + the vitest
+  runner) — validates that the tests for the money + authorization logic (billing/proration/refunds,
+  credit, invoicing, cost/anomaly, dunning, authz) actually _catch_ faults, not just execute lines
+  (master §4: mutation testing on critical paths). Scoped via `stryker.config.mjs` with a `break`
+  mutation-score threshold that fails CI on a regression in test quality. A dedicated
+  `mutation.yml` workflow runs it when that core or its tests change (path-filtered), weekly, or on
+  demand. Added a break-even-margin (margin exactly 0 → healthy, not unprofitable) boundary test to
+  the cost-anomaly suite to kill a real survivor. No runtime/API changes (tooling + tests only).
+
 ## [0.31.0] - 2026-06-22
 
 Brings the MCP agent surface to read parity with the HTTP API. Additive/backward-compatible (MINOR);
