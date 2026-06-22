@@ -373,6 +373,39 @@ const purgeExpired = defineCommand({
   },
 });
 
+const retentionReport = defineCommand({
+  meta: {
+    name: 'retention-report',
+    description: 'Show archived tenants scheduled for purge and when (read-only retention preview)',
+  },
+  args: {
+    'retention-days': { type: 'string', description: 'Override the retention window (days)' },
+    json: { type: 'boolean', description: 'Emit the full report as JSON', default: false },
+  },
+  async run({ args }) {
+    const retentionDays =
+      args['retention-days'] !== undefined
+        ? Number(args['retention-days'])
+        : loadConfig().retentionDays;
+    await withTenantForge(async (tf) => {
+      const report = await tf.retentionReport({ retentionDays });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+        return;
+      }
+      process.stdout.write(
+        `retention (${report.retentionDays}d): ${report.eligible} eligible now · ` +
+          `${report.pending} pending · ${report.tenants.length} archived\n`,
+      );
+      for (const r of report.tenants) {
+        process.stdout.write(
+          `  ${r.eligible ? 'ELIGIBLE' : 'pending '} ${r.tenantId} (${r.slug}) → purge-eligible ${r.purgeEligibleAt}\n`,
+        );
+      }
+    });
+  },
+});
+
 const migrateFleet = defineCommand({
   meta: {
     name: 'migrate-fleet',
@@ -1494,6 +1527,7 @@ const main = defineCommand({
     enqueue,
     purge,
     'purge-expired': purgeExpired,
+    'retention-report': retentionReport,
     'migrate-fleet': migrateFleet,
     'reconcile-fleet': reconcileFleet,
     snapshot,

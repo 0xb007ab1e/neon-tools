@@ -6,6 +6,23 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Retention report** — `retentionReport({ retentionDays?, now? })` (CLI `retention-report`, HTTP
+  `GET /v1/retention`, dashboard "Retention" panel) is the read-only preview of the purge pipeline:
+  which archived (`offboarding`) tenants are scheduled for deletion and when. Pure core
+  `buildRetentionReport` computes per-tenant `purgeEligibleAt` + eligibility (reusing `isPurgeable`,
+  so it matches `purge-expired` exactly; 100%), eligible-first. Defaults to the configured retention
+  window (`TENANTFORGE_RETENTION_DAYS`) — now wired through `deps.retentionDays`, which
+  `purgeExpired` also honors. Read-only everywhere; builder-side data-retention policy (not a Neon
+  feature).
+
+### Changed
+
+- `purgeExpired` now defaults its retention window to the configured `TENANTFORGE_RETENTION_DAYS`
+  (via `deps.retentionDays`) instead of a hard-coded 30 when the caller passes none. The CLI already
+  passed the configured value explicitly, so behavior is unchanged in practice.
+
 ## [0.28.0] - 2026-06-21
 
 Adds tenant data export for GDPR portability / DSAR (export a copy, no state change). Additive/

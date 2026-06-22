@@ -24,6 +24,7 @@ import {
   fetchSignupTokens,
   fetchCostAnomalies,
   fetchExports,
+  fetchRetention,
   fetchSession,
   login,
   logout,
@@ -50,6 +51,7 @@ import {
   type SignupTokenEntry,
   type CostAnomalyEntry,
   type ExportEntry,
+  type RetentionReport,
   type Session,
 } from './api';
 
@@ -324,6 +326,7 @@ function DashboardView(props: {
               <CompliancePanel />
               <DriftPanel />
               <ReconcilePanel />
+              <RetentionPanel />
               <ExportsPanel />
             </>
           )}
@@ -844,6 +847,50 @@ function BillingPanel(): React.JSX.Element {
                       {d.context?.attempt !== undefined ? ` #${d.context.attempt}` : ''}
                     </td>
                     <td>{d.outcome}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function RetentionPanel(): React.JSX.Element {
+  const { data, error } = usePanelData<RetentionReport>(fetchRetention);
+  return (
+    <Panel
+      id="retention-h"
+      title="Retention (scheduled purges)"
+      error={error}
+      loading={data === null}
+    >
+      {data !== null && (
+        <div>
+          <p>
+            {data.eligible} eligible now · {data.pending} pending · retention {data.retentionDays}d.
+            Purging runs via the CLI (`purge-expired`), not the dashboard.
+          </p>
+          {data.tenants.length > 0 && (
+            <table>
+              <caption>Archived tenants and when they become purge-eligible</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Archived</th>
+                  <th scope="col">Purge-eligible</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.tenants.map((t) => (
+                  <tr key={t.tenantId} className={t.eligible ? 'status-bad' : undefined}>
+                    <th scope="row">{t.tenantId}</th>
+                    <td>{t.archivedAt}</td>
+                    <td>{t.purgeEligibleAt}</td>
+                    <td>{t.eligible ? 'eligible' : 'pending'}</td>
                   </tr>
                 ))}
               </tbody>

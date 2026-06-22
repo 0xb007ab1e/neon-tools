@@ -381,6 +381,27 @@ describe('HTTP control-plane', () => {
     expect(post.status).toBe(404);
   });
 
+  it('serves the retention report (tenant:read) and 400s on a negative window', async () => {
+    const report = { generatedAt: 'x', retentionDays: 30, eligible: 1, pending: 0, tenants: [] };
+    let captured: unknown;
+    const server = app({
+      retentionReport: async (opts) => {
+        captured = opts;
+        return report;
+      },
+    });
+    const ok = await server.request('/v1/retention?retention-days=7', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual(report);
+    expect(captured).toEqual({ retentionDays: 7 });
+    const bad = await server.request('/v1/retention?retention-days=-1', {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it('serves data-export history (tenant:read); exporting is not over HTTP', async () => {
     const exports = [{ event: 'tenant.exported', at: 'x', outcome: 'ok' }];
     const server = app({ exportHistory: async () => exports as never });

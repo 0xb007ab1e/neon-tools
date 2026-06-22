@@ -1945,6 +1945,53 @@ describe('createTenantForge.checkUsageAlerts', () => {
   });
 });
 
+describe('createTenantForge.retentionReport', () => {
+  const now = new Date('2026-06-30T00:00:00.000Z');
+  const offboarding = (id: string, archivedAt: string) => ({
+    id,
+    slug: id,
+    region: 'aws-us-east-1',
+    status: 'offboarding' as const,
+    neonProjectId: 'p',
+    metadata: {},
+    createdAt: new Date(0),
+    updatedAt: new Date(archivedAt),
+  });
+  const tfWith = (retentionDays: number, rows: ReturnType<typeof offboarding>[]) =>
+    createTenantForge({
+      registry: {
+        list: () => Promise.resolve(rows),
+        getById: () => Promise.resolve(null),
+        close: () => Promise.resolve(),
+      } as never,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      retentionDays,
+    });
+
+  it('reports eligible vs pending archived tenants (eligible first)', async () => {
+    const tf = tfWith(30, [
+      offboarding('old', '2026-05-01T00:00:00.000Z'), // 60d ago → eligible
+      offboarding('recent', '2026-06-25T00:00:00.000Z'), // 5d ago → pending
+    ]);
+    const report = await tf.retentionReport({ now });
+    expect(report.retentionDays).toBe(30); // configured default
+    expect(report.eligible).toBe(1);
+    expect(report.pending).toBe(1);
+    expect(report.tenants.map((t) => t.tenantId)).toEqual(['old', 'recent']);
+    expect(report.tenants[0]?.purgeEligibleAt).toBe('2026-05-31T00:00:00.000Z');
+  });
+
+  it('honors a retentionDays override', async () => {
+    const tf = tfWith(30, [offboarding('recent', '2026-06-25T00:00:00.000Z')]);
+    // With a 1-day window, the 5-day-old archive is now eligible.
+    const report = await tf.retentionReport({ now, retentionDays: 1 });
+    expect(report.retentionDays).toBe(1);
+    expect(report.eligible).toBe(1);
+  });
+});
+
 describe('createTenantForge.exportTenantData', () => {
   const deps = (withExporter: boolean) => {
     const auditLog = createInMemoryAuditLogStore();

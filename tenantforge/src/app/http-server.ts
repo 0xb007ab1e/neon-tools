@@ -577,6 +577,27 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     }
   });
 
+  // Retention report (read-only): which archived tenants are scheduled for purge and when.
+  // ?retention-days overrides the configured window. Purging itself is the CLI/library sweep.
+  app.get('/v1/retention', requirePermission('tenant:read'), async (c) => {
+    const daysParam = c.req.query('retention-days');
+    if (
+      daysParam !== undefined &&
+      (!Number.isInteger(Number(daysParam)) || Number(daysParam) < 0)
+    ) {
+      return problem(c, 400, 'Bad Request', 'retention-days must be a non-negative integer');
+    }
+    try {
+      return c.json(
+        await tf.retentionReport(
+          daysParam !== undefined ? { retentionDays: Number(daysParam) } : {},
+        ),
+      );
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // Recent data-export history (read-only; the export itself reads tenant data → CLI/library only).
   app.get('/v1/exports', requirePermission('tenant:read'), async (c) => {
     try {
