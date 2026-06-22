@@ -6,6 +6,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Dashboard UI/UX redesign** — the operator dashboard is reorganized into deep-linkable sections
+  (Fleet / Billing / Audit) behind a responsive tab nav (`#/fleet` · `#/billing` · `#/audit`), with
+  a card-based, mobile-first layout and a refreshed token-based design system. Adds **light/dark
+  themes** (defaults to `prefers-color-scheme`, with a persisted in-app toggle). Accessibility is
+  reinforced (WCAG 2.2 AA): skip link, landmarks, focus moved to `main` on section change, visible
+  focus, `prefers-reduced-motion` honored, and sufficient contrast in both themes. Hand-rolled CSS
+  with custom-property tokens — **no new style dependencies** (CSP-safe); axe a11y tests now run
+  per section. No API/contract change; all panels and data are unchanged.
+
 ## [0.25.0] - 2026-06-21
 
 Adds self-serve tenant onboarding via one-time signup/invite tokens. Additive/backward-compatible
