@@ -221,6 +221,14 @@ failing below a `break` mutation-score threshold so a change that weakens those 
 remaining surviving mutants are equivalent (e.g. proration boundaries that fall through to the same
 value), which is why the bar is the practical ceiling for these modules rather than 100%.
 
+**Contract tests (the surfaces honor their published contracts):** the HTTP control plane is tested
+against [`openapi.yaml`](./openapi.yaml) in two directions — a **route inventory** check (served
+routes == documented routes, catching shadow/zombie endpoints — OWASP API9) and **response-shape**
+validation (representative responses are validated with `ajv` against the resolved OpenAPI response
+schema for that path/method/status). The MCP agent surface is checked too: every advertised tool
+ships a documented, well-formed object input schema. So the wire contract can't drift from the spec
+silently.
+
 **Supply chain & CI gates:** every PR runs merge-blocking gates — lint/format, type-check, the
 six-site version gate, unit + integration tests with coverage thresholds (100% on the pure core),
 `pnpm audit` (SCA), **CodeQL** (SAST), **gitleaks** (secret scan), and a **supply-chain** job that
