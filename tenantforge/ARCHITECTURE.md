@@ -62,6 +62,10 @@ a managed primitive.
 
 ## 3. Architecture style (per the SSDLC rules)
 
+> The significant, hard-to-reverse decisions are recorded as immutable ADRs in
+> [`docs/adr/`](./docs/adr/) (context · decision · alternatives · consequences). This section
+> summarizes the style; the ADRs hold the _why_.
+
 **Functional core / imperative shell + ports & adapters.** Pure logic (tenant slug/region
 validation, migration plan/state machine, routing decisions) has no I/O and is unit-testable without
 mocks; all I/O lives behind injected adapters.

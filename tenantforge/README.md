@@ -20,7 +20,9 @@ harness, and the runbooks drilled — the live-Neon game-day (local + CI), the `
 non-prod org. The remaining **Low residuals** — the deferred alternate adapters (other brokers /
 secret stores / exporters) — are documented in [`docs/security/threat-model.md`](./docs/security/threat-model.md)
 and deferred to their own branches. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the design, scope,
-and milestones.
+and milestones, and [`docs/adr/`](./docs/adr/) for the architecture decision records — the _why_
+behind the big choices (physical isolation, ports & adapters, server-side tenant scope, surface
+gating, fleet-migration strategy, secret handling, dep-light OTel).
 
 ## Quickstart
 

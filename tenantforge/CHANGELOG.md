@@ -6,6 +6,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+
+- **Architecture Decision Records** — added `docs/adr/` (an indexed Nygard ADR log) capturing the
+  _why_ behind nine significant decisions: database-per-tenant physical isolation, ports & adapters
+  with a pure functional core, server-side tenant scope (anti-BOLA), gating secret-/money-bearing
+  ops off the MCP + dashboard surfaces, expand/contract failure-isolated fleet migrations,
+  metadata-only control-plane DB with secrets in a SecretStore, the Neon API as an untrusted
+  upstream, dep-light OpenTelemetry (instrumented-library pattern), and one-core-four-entrypoints.
+  Linked from the README and ARCHITECTURE.md. Documentation only — no code change.
+
 ## [0.38.0] - 2026-06-22
 
 Multi-endpoint managed webhook subscriptions. MINOR — additive (the single env webhook remains);
