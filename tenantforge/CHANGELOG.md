@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-06-21
+
+Adds tenant data export for GDPR portability / DSAR (export a copy, no state change). Additive/
+backward-compatible (MINOR) — requires an exporter. Builder-side data-lifecycle; Neon provisions
+projects, not customer data exports (not a Neon feature).
+
 ### Added
 
 - **Tenant data export (portability / DSAR)** — `exportTenantData(id)` (CLI `export-tenant`) exports
