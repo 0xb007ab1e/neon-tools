@@ -6,6 +6,13 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-06-21
+
+Adds control-plane anomaly detection over the audit trail (error spikes + per-actor/tenant
+clusters). Additive/backward-compatible (MINOR) — read-only, returns empty without an audit store.
+Builder-side detection; Neon monitors the database, not the operator's control-plane (not a Neon
+feature).
+
 ### Added
 
 - **Audit anomaly detection** — `scanAuditAnomalies({ since?, limit?, thresholds? })` (CLI
