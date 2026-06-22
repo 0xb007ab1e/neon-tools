@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: TenantForge HTTP Control-Plane API
-  version: 0.31.0
+  version: 0.32.0
   description: >
     Control plane for database-per-tenant SaaS on Neon: provision an isolated project per tenant,
     look tenants up, run lifecycle operations (suspend / resume / offboard), and read the
