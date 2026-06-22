@@ -19,12 +19,16 @@ describe('authz', () => {
     expect(can(grant, 'tenant:provision')).toBe(true);
     expect(can(grant, 'tenant:suspend')).toBe(true);
     expect(can(grant, 'tenant:offboard')).toBe(true);
+    expect(can(grant, 'webhooks:read')).toBe(true); // operators manage integrations
+    expect(can(grant, 'webhooks:manage')).toBe(true);
     expect(can(grant, 'tenant:purge')).toBe(false); // the irreversible op is admin-only
   });
 
   it('readonly may only read', () => {
     expect(can({ role: 'readonly' }, 'tenant:read')).toBe(true);
     expect(can({ role: 'readonly' }, 'tenant:provision')).toBe(false);
+    expect(can({ role: 'readonly' }, 'webhooks:read')).toBe(false);
+    expect(can({ role: 'readonly' }, 'webhooks:manage')).toBe(false);
     expect(can({ role: 'readonly' }, 'tenant:purge')).toBe(false);
   });
 
