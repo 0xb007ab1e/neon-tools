@@ -6,6 +6,11 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-06-22
+
+Makes every control-plane operation traceable end-to-end and across services. Additive/
+backward-compatible (MINOR); one tiny new runtime dep (`@opentelemetry/api`), no API change.
+
 ### Added
 
 - **Distributed tracing + correlation IDs (OpenTelemetry).** Every operation now runs in a trace
