@@ -6,6 +6,11 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-06-22
+
+Brings the MCP agent surface to read parity with the HTTP API. Additive/backward-compatible (MINOR);
+read-only tools, no secrets, money/destructive ops still off the agent surface.
+
 ### Added
 
 - **MCP read-surface parity** — the MCP server gains the read tools that had drifted behind the HTTP
