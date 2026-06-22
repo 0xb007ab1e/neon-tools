@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-06-21
+
+Adds a read-only retention report (purge-eligibility preview) and wires the configured retention
+window through the facade. Additive/backward-compatible (MINOR). Builder-side data-retention
+policy; not a Neon feature.
+
 ### Added
 
 - **Retention report** — `retentionReport({ retentionDays?, now? })` (CLI `retention-report`, HTTP
