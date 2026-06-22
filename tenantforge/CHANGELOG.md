@@ -6,6 +6,11 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-06-22
+
+Adds the single-pane operator health roll-up. MINOR — additive; one optional new config var
+(`TENANTFORGE_OPERATOR_EMAIL`) and a new dashboard **Health** landing section.
+
 ### Added
 
 - **Operator alert digest** — `tf.operatorDigest({ period?, notify? })` aggregates all five
