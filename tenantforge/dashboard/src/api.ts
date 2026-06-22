@@ -88,6 +88,21 @@ export async function fetchOperatorDigest(): Promise<OperatorDigest> {
   return (await res.json()) as OperatorDigest;
 }
 
+/** A webhook subscription summary from GET /dashboard/api/webhook-subscriptions (never the secret). */
+export interface WebhookSubscriptionEntry {
+  id: string;
+  url: string;
+  eventTypes: string[];
+  active: boolean;
+  createdAt: string;
+}
+
+export async function fetchWebhookSubscriptions(): Promise<WebhookSubscriptionEntry[]> {
+  const res = await fetch(`${BASE}/webhook-subscriptions`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load webhook subscriptions');
+  return ((await res.json()) as { subscriptions: WebhookSubscriptionEntry[] }).subscriptions;
+}
+
 /** Fleet schema-version drift summary (subset of the server's FleetDriftReport). */
 export interface DriftReport {
   latest: string | null;

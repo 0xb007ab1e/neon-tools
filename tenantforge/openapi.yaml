@@ -34,6 +34,8 @@ tags:
     description: Fleet schema-version drift reconciliation (read-only plan + history over HTTP).
   - name: billing
     description: Read-only charge history (charging is a CLI / gated operation, not HTTP).
+  - name: webhooks
+    description: Managed outbound webhook subscriptions (list/create/delete).
   - name: meta
     description: Service metadata.
 paths:
@@ -407,6 +409,61 @@ paths:
                 required: [signupTokens]
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/webhook-subscriptions:
+    get:
+      tags: [webhooks]
+      summary: List webhook subscriptions (requires `webhooks:read`) — never the signing secret.
+      responses:
+        '200':
+          description: Webhook subscription summaries (redacted).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscriptions:
+                    type: array
+                    items: { $ref: '#/components/schemas/WebhookSubscription' }
+                required: [subscriptions]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [webhooks]
+      summary: >
+        Create a webhook subscription (requires `webhooks:manage`). The HMAC signing **secret is
+        returned once** in the response (stored encrypted server-side, never shown again or logged).
+        The URL must be https (SSRF-validated).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookSubscriptionRequest' }
+      responses:
+        '201':
+          description: Created — includes the one-time signing secret.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookSubscriptionCreated' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/webhook-subscriptions/{id}:
+    delete:
+      tags: [webhooks]
+      summary: Delete a webhook subscription and crypto-shred its secret (requires `webhooks:manage`).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/plans:
     get:
@@ -1090,6 +1147,40 @@ components:
           description: Required data-residency jurisdiction; the region must belong to it (else 409).
         metadata: { type: object, additionalProperties: true }
       required: [slug, neonProjectId, connectionUri]
+    WebhookSubscription:
+      type: object
+      description: A webhook subscription summary (never includes the signing secret).
+      properties:
+        id: { type: string }
+        url: { type: string }
+        eventTypes:
+          type: array
+          items: { type: string }
+          description: Event-name allow-list; empty = every event.
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+      required: [id, url, eventTypes, active, createdAt]
+    WebhookSubscriptionRequest:
+      type: object
+      properties:
+        url: { type: string, description: 'https endpoint (SSRF-validated).' }
+        eventTypes:
+          type: array
+          items: { type: string }
+          description: Optional event-name allow-list; omitted/empty = every event.
+      required: [url]
+    WebhookSubscriptionCreated:
+      type: object
+      description: A created subscription, including the one-time signing secret.
+      properties:
+        id: { type: string }
+        url: { type: string }
+        secret:
+          type: string
+          description: HMAC signing secret — shown ONCE; store it in the receiver to verify signatures.
+        eventTypes: { type: array, items: { type: string } }
+        createdAt: { type: string, format: date-time }
+      required: [id, url, secret, eventTypes, createdAt]
     PurgeRequest:
       type: object
       properties:

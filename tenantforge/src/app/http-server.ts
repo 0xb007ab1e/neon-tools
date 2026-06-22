@@ -91,6 +91,11 @@ const ProvisionSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
+const WebhookSubscriptionSchema = z.object({
+  url: z.string().min(1),
+  eventTypes: z.array(z.string().min(1)).optional(),
+});
+
 // Adopt an existing project: like provision, plus the existing project id + its connection URI (a
 // secret accepted in the request body over TLS, like provision returns one — never logged).
 const ImportSchema = z.object({
@@ -132,7 +137,11 @@ function problem(c: Context<Env>, status: number, title: string, detail?: string
 function handleError(c: Context<Env>, error: unknown) {
   const message = error instanceof Error ? error.message : 'error';
   if (/not found/.test(message)) return problem(c, 404, 'Not Found', message);
-  if (/invalid tenant slug|unknown region|requires a reason/.test(message)) {
+  if (
+    /invalid tenant slug|unknown region|requires a reason|must use TLS|is not a valid URL/.test(
+      message,
+    )
+  ) {
     return problem(c, 400, 'Bad Request', message);
   }
   if (
@@ -554,6 +563,42 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
   app.get('/v1/signup-tokens', requirePermission('tenant:read'), async (c) => {
     try {
       return c.json({ signupTokens: await tf.listSignupTokens() });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // Webhook subscriptions: list (read), create (returns the signing secret ONCE), delete.
+  app.get('/v1/webhook-subscriptions', requirePermission('webhooks:read'), async (c) => {
+    try {
+      return c.json({ subscriptions: await tf.listWebhookSubscriptions() });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  app.post('/v1/webhook-subscriptions', requirePermission('webhooks:manage'), async (c) => {
+    const parsed = await readJson(c, WebhookSubscriptionSchema);
+    if (!parsed.ok) return parsed.res;
+    try {
+      // The signing `secret` is returned once to the authenticated caller; never logged.
+      return c.json(
+        await tf.createWebhookSubscription({
+          url: parsed.data.url,
+          ...(parsed.data.eventTypes !== undefined ? { eventTypes: parsed.data.eventTypes } : {}),
+        }),
+        201,
+      );
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  app.delete('/v1/webhook-subscriptions/:id', requirePermission('webhooks:manage'), async (c) => {
+    try {
+      const removed = await tf.deleteWebhookSubscription(c.req.param('id'));
+      if (!removed) return problem(c, 404, 'Not Found', 'subscription not found');
+      return c.body(null, 204);
     } catch (error) {
       return handleError(c, error);
     }

@@ -6,6 +6,26 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Managed webhook subscriptions (multi-endpoint outbound webhooks).** Beyond the single
+  env-configured webhook, many subscriptions are now managed at runtime, each with its own HMAC
+  signing secret + event-type filter; every event fans out to all matching active subscriptions
+  (reusing `createWebhookEventSink` per subscription, SSRF-validated). `createWebhookSubscription`
+  returns the signing secret **once** (stored encrypted in the SecretStore, keyed `webhook-sub:<id>`
+  — never in the `tf_webhook_subscriptions` table, migration 0009, or logs); `delete` crypto-shreds
+  it. Surfaces: CLI `webhook-add` / `webhook-list` / `webhook-rm`; HTTP `GET` / `POST` / `DELETE
+/v1/webhook-subscriptions`; MCP `tf_webhook_subscriptions` (list only); dashboard **Health** panel
+  (list, never the secret). Create/delete are CLI/HTTP only (secret-bearing — off the agent surface).
+  New `WebhookSubscriptionStore` port (+ in-memory & Postgres adapters) and a
+  `createSubscriptionWebhookEventSink` dispatch sink.
+
+### Changed
+
+- **New permissions `webhooks:read` / `webhooks:manage`** (authz). Both default to `admin` +
+  `operator`; `readonly` is unchanged. List requires `webhooks:read`; create/delete require
+  `webhooks:manage`.
+
 ## [0.37.0] - 2026-06-22
 
 Adds the migration-onboarding path. MINOR — additive; one optional CLI-only env var

@@ -382,6 +382,18 @@ export function createMcpServer(tf: TenantForge): McpServer {
   );
 
   server.registerTool(
+    'tf_webhook_subscriptions',
+    {
+      description:
+        'Webhook subscriptions (read-only): id, url, event filter, status — never the signing ' +
+        'secret. Creating/deleting a subscription handles a secret and is kept off the agent surface. ' +
+        '`limit` caps the newest-first results.',
+      inputSchema: { limit: z.number().int().min(1).optional() },
+    },
+    async ({ limit }) => json({ subscriptions: await tf.listWebhookSubscriptions(limit) }),
+  );
+
+  server.registerTool(
     'tf_credit_balance',
     {
       description:

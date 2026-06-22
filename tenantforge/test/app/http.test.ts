@@ -142,6 +142,61 @@ describe('HTTP control-plane', () => {
     expect(res.status).toBe(409);
   });
 
+  it('creates a webhook subscription (201) returning the signing secret once', async () => {
+    const created = {
+      id: 'sub-1',
+      url: 'https://hook.test/x',
+      secret: 'the-signing-secret',
+      eventTypes: [],
+      createdAt: 'x',
+    };
+    const res = await app({ createWebhookSubscription: async () => created }).request(
+      '/v1/webhook-subscriptions',
+      { method: 'POST', headers: auth, body: JSON.stringify({ url: 'https://hook.test/x' }) },
+    );
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ id: 'sub-1', secret: 'the-signing-secret' });
+  });
+
+  it('400s a non-https webhook subscription URL', async () => {
+    const res = await app({
+      createWebhookSubscription: async () => {
+        throw new Error('webhook subscription url must use TLS (https://) — got "http://".');
+      },
+    }).request('/v1/webhook-subscriptions', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ url: 'http://hook.test/x' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('lists webhook subscriptions (never the secret)', async () => {
+    const res = await app({
+      listWebhookSubscriptions: async () =>
+        [
+          { id: 's1', url: 'https://hook.test/x', eventTypes: [], active: true, createdAt: 'x' },
+        ] as never,
+    }).request('/v1/webhook-subscriptions', { headers: auth });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { subscriptions: unknown[] };
+    expect(body.subscriptions).toHaveLength(1);
+    expect(JSON.stringify(body)).not.toContain('secret');
+  });
+
+  it('deletes a webhook subscription (204) and 404s an unknown id', async () => {
+    const ok = await app({ deleteWebhookSubscription: async () => true }).request(
+      '/v1/webhook-subscriptions/s1',
+      { method: 'DELETE', headers: auth },
+    );
+    expect(ok.status).toBe(204);
+    const missing = await app({ deleteWebhookSubscription: async () => false }).request(
+      '/v1/webhook-subscriptions/nope',
+      { method: 'DELETE', headers: auth },
+    );
+    expect(missing.status).toBe(404);
+  });
+
   it('replays a POST response for a repeated Idempotency-Key (executes once)', async () => {
     let calls = 0;
     const server = app({

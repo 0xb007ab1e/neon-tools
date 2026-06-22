@@ -280,6 +280,21 @@ with `X-TenantForge-Timestamp` for replay defence), **never follows redirects** 
 with `TENANTFORGE_WEBHOOK_EVENTS` (comma-separated allow-list). Delivery is best-effort and
 non-blocking — it never delays or breaks a control-plane operation.
 
+**Managed webhook subscriptions (multi-endpoint):** beyond that single env-configured endpoint,
+**many** subscriptions are managed at runtime — each with its own signing secret + event-type filter
+— so different consumers (billing, CRM, alerting, a customer's integration) each receive the events
+they want. `tf.createWebhookSubscription({ url, eventTypes? })` (CLI `webhook-add`, HTTP `POST
+/v1/webhook-subscriptions`) returns the **HMAC signing secret once** (stored encrypted in the
+SecretStore keyed `webhook-sub:<id>`, never in the subscriptions table or logs); the URL is
+SSRF-validated (https). Every event fans out to all matching active subscriptions, each signed with
+its own secret (reusing `createWebhookEventSink` per subscription). List read-only everywhere
+(`webhook-list`, `GET /v1/webhook-subscriptions`, MCP `tf_webhook_subscriptions`, dashboard **Health**
+panel — never the secret); delete (`webhook-rm`, `DELETE /v1/webhook-subscriptions/:id`) crypto-shreds
+the secret. Create/delete are **CLI/HTTP only** (secret-bearing — off the agent surface), gated by the
+new **`webhooks:manage`** permission (list by **`webhooks:read`**; both held by `admin` + `operator`).
+The subscription metadata lives in `tf_webhook_subscriptions` (migration 0009). Builder-side — which
+endpoint gets which events is _your_ integration policy.
+
 **Per-tenant metering:** `usage <id> [--from --to]` reports a tenant's Neon resource consumption
 (compute/active seconds, bytes written, peak storage) over a period for billing — pulled on demand
 from Neon's consumption API via the `UsageProvider` port (no usage data stored in the control plane).

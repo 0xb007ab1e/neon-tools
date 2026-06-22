@@ -34,6 +34,10 @@ import {
   buildOperatorDigest,
   formatOperatorDigest,
   type OperatorDigest,
+  webhookSecretKey,
+  toWebhookSubscriptionSummary,
+  type WebhookSubscriptionCreated,
+  type WebhookSubscriptionSummary,
   signupTokenStatus,
   assertRedeemable,
   type SignupTokenRecord,
@@ -147,12 +151,16 @@ import { createPgCreditLedger } from '../adapters/neon-pg/credit-ledger.js';
 import { createInMemorySignupTokenStore } from '../adapters/signup-token-store.js';
 import { createPgSignupTokenStore } from '../adapters/neon-pg/signup-token-store.js';
 import type { SignupTokenStore } from '../ports/signup-token-store.js';
+import { createPgWebhookSubscriptionStore } from '../adapters/neon-pg/webhook-subscription-store.js';
+import { createSubscriptionWebhookEventSink } from '../adapters/subscription-webhook-event-sink.js';
+import type { WebhookSubscriptionStore } from '../ports/webhook-subscription-store.js';
+import { assertHttpsUrl } from '../core/transport-security.js';
 import { createLogNotifier } from '../adapters/notify/log-notifier.js';
 import { createHttpNotifier } from '../adapters/notify/http-notifier.js';
 import type { UsageProvider } from '../ports/usage-provider.js';
 import type { MigrationRunner } from '../ports/migration-runner.js';
 import type { TenantConnection } from '../ports/connection-router.js';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { loadConfig, type Config } from './config.js';
 
 export type { Config } from './config.js';
@@ -428,6 +436,14 @@ export interface TenantForgeDeps {
    * ⇒ they fail closed. Only the token hash is persisted.
    */
   signupTokenStore?: SignupTokenStore;
+  /**
+   * Store for managed outbound **webhook subscriptions**. When provided (with a {@link secretStore}),
+   * `createWebhookSubscription` / `listWebhookSubscriptions` / `deleteWebhookSubscription` are
+   * enabled and matching events fan out to each subscription; absent ⇒ they fail closed / no-op.
+   */
+  webhookSubscriptionStore?: WebhookSubscriptionStore;
+  /** Permit non-https webhook subscription URLs (local/testing only; default false → https enforced). */
+  allowInsecureWebhookUrl?: boolean;
 }
 
 /** Default retention window (days) an archived tenant is kept before {@link TenantForge.purgeExpired}. */
@@ -671,6 +687,39 @@ export interface TenantForge {
    * @returns The token summaries.
    */
   listSignupTokens(limit?: number): Promise<SignupTokenSummary[]>;
+
+  /**
+   * **Create a managed webhook subscription**: an endpoint that receives matching control-plane
+   * events, each HMAC-signed with this subscription's own secret. The URL is SSRF-validated
+   * (https). The signing **secret is returned ONCE** here (stored encrypted in the SecretStore; the
+   * receiver uses it to verify our `X-TenantForge-Signature`). `eventTypes` is an allow-list; empty
+   * = every event. CLI/HTTP only (it returns a secret) — never the agent surface.
+   *
+   * @param input - The destination URL and optional event-type filter.
+   * @returns The created subscription incl. the one-time signing secret.
+   * @throws If no subscription store is wired, or the URL fails SSRF validation.
+   */
+  createWebhookSubscription(input: {
+    url: string;
+    eventTypes?: readonly string[];
+  }): Promise<WebhookSubscriptionCreated>;
+
+  /**
+   * List webhook subscriptions (redacted — never the signing secret), newest-first. Read-only;
+   * returns `[]` when no store is wired.
+   *
+   * @param limit - Max rows (default 50).
+   * @returns The subscription summaries.
+   */
+  listWebhookSubscriptions(limit?: number): Promise<WebhookSubscriptionSummary[]>;
+
+  /**
+   * Delete a webhook subscription and crypto-shred its signing secret.
+   *
+   * @param id - The subscription id.
+   * @returns `true` if a subscription was removed, `false` if none matched.
+   */
+  deleteWebhookSubscription(id: string): Promise<boolean>;
 
   /**
    * Look up a tenant by id.
@@ -2454,6 +2503,49 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       }));
     },
 
+    async createWebhookSubscription(input: {
+      url: string;
+      eventTypes?: readonly string[];
+    }): Promise<WebhookSubscriptionCreated> {
+      const store = deps.webhookSubscriptionStore;
+      if (store === undefined) {
+        throw new Error('webhook subscriptions require a configured subscription store');
+      }
+      // SSRF: https-only (unless the documented local opt-out); fail closed before persisting.
+      assertHttpsUrl(input.url, 'webhook subscription url', deps.allowInsecureWebhookUrl ?? false);
+      const id = randomUUID();
+      const secret = randomBytes(32).toString('base64url'); // shown once; never re-readable
+      const eventTypes = [...(input.eventTypes ?? [])];
+      const createdAt = new Date().toISOString();
+      // The signing secret lives in the encrypted SecretStore, never the subscriptions table.
+      await secretStore.set(webhookSecretKey(id), secret);
+      await store.create({ id, url: input.url, eventTypes, active: true, createdAt });
+      // Event carries id/url/filter — NEVER the signing secret (master §5).
+      observe('webhook.subscription_created', {
+        outcome: 'ok',
+        context: { id, url: input.url, eventTypes },
+      });
+      return { id, url: input.url, secret, eventTypes, createdAt };
+    },
+
+    async listWebhookSubscriptions(limit = 50): Promise<WebhookSubscriptionSummary[]> {
+      const store = deps.webhookSubscriptionStore;
+      if (store === undefined) return [];
+      const rows = await store.list(limit);
+      return rows.map(toWebhookSubscriptionSummary); // no secret to redact — it isn't in the record
+    },
+
+    async deleteWebhookSubscription(id: string): Promise<boolean> {
+      const store = deps.webhookSubscriptionStore;
+      if (store === undefined) return false;
+      const removed = await store.delete(id);
+      if (removed) {
+        await secretStore.delete(webhookSecretKey(id)); // crypto-shred the signing secret
+        observe('webhook.subscription_deleted', { outcome: 'ok', context: { id } });
+      }
+      return removed;
+    },
+
     async getTenant(id: string): Promise<TenantRecord | null> {
       return registry.getById(id);
     },
@@ -3394,6 +3486,9 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       await (auditLog as { close?: () => Promise<void> } | undefined)?.close?.();
       await (creditLedger as { close?: () => Promise<void> } | undefined)?.close?.();
       await (deps.signupTokenStore as { close?: () => Promise<void> } | undefined)?.close?.();
+      await (
+        deps.webhookSubscriptionStore as { close?: () => Promise<void> } | undefined
+      )?.close?.();
       await registry.close();
     },
   };
@@ -3472,10 +3567,24 @@ export function tenantForgeFromConfig(
           allowInsecure: allowInsecureDb,
         })
       : undefined;
-  const eventSink =
-    auditLog !== undefined
-      ? createFanOutEventSink([baseSink, createAuditLogEventSink(auditLog)])
-      : baseSink;
+  // Managed webhook subscriptions (durable, cross-instance). The dispatch sink fans every event out
+  // to each matching active subscription, signed with its own secret (loaded from the SecretStore).
+  const webhookSubscriptionStore = createPgWebhookSubscriptionStore({
+    connectionString: config.databaseUrl,
+    allowInsecure: allowInsecureDb,
+  });
+  const subscriptionSink = createSubscriptionWebhookEventSink({
+    store: webhookSubscriptionStore,
+    secretStore,
+    allowInsecureUrl: allowInsecureUrls,
+    onError: (event, error) =>
+      process.stderr.write(`webhook subscription delivery failed for ${event.event}: ${error}\n`),
+  });
+  const eventSink = createFanOutEventSink([
+    baseSink,
+    ...(auditLog !== undefined ? [createAuditLogEventSink(auditLog)] : []),
+    subscriptionSink,
+  ]);
   // Credit ledger: durable Postgres (authoritative) or process-local memory; absent = credit off.
   const creditLedger =
     config.creditLedger === 'pg'
@@ -3504,6 +3613,8 @@ export function tenantForgeFromConfig(
     eventSink,
     ...(creditLedger !== undefined ? { creditLedger } : {}),
     ...(signupTokenStore !== undefined ? { signupTokenStore } : {}),
+    webhookSubscriptionStore,
+    allowInsecureWebhookUrl: allowInsecureUrls,
     ...(auditLog !== undefined ? { auditLog } : {}),
     usageProvider: createNeonUsageProvider({
       apiKey: config.neonApiKey,
