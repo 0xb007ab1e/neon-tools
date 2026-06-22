@@ -8,6 +8,7 @@ import {
   assertTransition,
   isPurgeable,
   redactSecrets,
+  TRACEPARENT_HEADER,
   invoiceChargeAmount,
   chargeIdempotencyKey,
   assertRefundAmount,
@@ -73,6 +74,7 @@ import {
 } from '../adapters/event-sink.js';
 import { createPgAuditLogStore } from '../adapters/neon-pg/audit-log-store.js';
 import { currentActor } from './actor-context.js';
+import { currentTrace, outboundTraceparent } from './trace-context.js';
 import { createErasureEngine, type EraseOptions } from '../adapters/erasure-engine.js';
 import { createCachingConnectionRouter } from '../adapters/caching-connection-router.js';
 import {
@@ -1505,11 +1507,13 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     },
   ): void => {
     const actor = currentActor();
+    const correlationId = currentTrace()?.correlationId;
     eventSink.emit({
       event,
       at: new Date().toISOString(),
       outcome: fields.outcome,
       ...(actor !== undefined ? { actor } : {}),
+      ...(correlationId !== undefined ? { correlationId } : {}),
       ...(fields.tenantId !== undefined ? { tenantId: fields.tenantId } : {}),
       ...(fields.durationMs !== undefined ? { durationMs: fields.durationMs } : {}),
       ...(fields.context !== undefined ? { context: redactSecrets(fields.context) } : {}),
@@ -3181,6 +3185,12 @@ export function tenantForgeFromConfig(
     orgId: config.neonOrgId,
     allowInsecure: allowInsecureUrls,
     ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
+    // Propagate the active trace to the upstream so a tenant operation is traceable across the
+    // boundary into the Neon API (W3C trace context). No-op outside any request trace scope.
+    traceHeaders: () => {
+      const traceparent = outboundTraceparent();
+      return traceparent === undefined ? {} : { [TRACEPARENT_HEADER]: traceparent };
+    },
   });
   // Per-tenant connection secrets: the Neon-prioritized default is an AES-256-GCM-encrypted store in
   // the control-plane DB (encryption key separate from the DB credential — separation of duties).

@@ -14,6 +14,9 @@ info:
     Tokens are per-operator with a role: `readonly` may read (GET), `admin` may mutate — a `readonly`
     principal calling a mutating route gets 403. Every `/v1/*` route is rate-limited per principal
     (429 with `Retry-After` when exceeded).
+    Distributed tracing: send a W3C `traceparent` header to continue your trace; every response
+    carries an `x-correlation-id` (the trace id) tying it to the server's logs. The trace is
+    propagated to the upstream Neon API, and spans export when the host runs an OpenTelemetry SDK.
 servers:
   - url: '{baseUrl}'
     variables:

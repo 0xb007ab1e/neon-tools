@@ -241,8 +241,22 @@ deferred follow-up — it needs a registry + deploy-target decision.)_
 
 **Per-tenant observability:** every control-plane operation emits a structured, tenant-scoped JSON
 event (provision / transition / connection-resolved-or-denied / fleet-migration / purge-sweep) to
-stdout as a 12-Factor event stream — carrying the tenant id, outcome, and timing, with connection
-secrets always redacted. Plug a metrics/SIEM backend via the `EventSink` port.
+stdout as a 12-Factor event stream — carrying the tenant id, outcome, timing, and a
+**`correlationId`**, with connection secrets always redacted. Plug a metrics/SIEM backend via the
+`EventSink` port.
+
+**Distributed tracing + correlation IDs (OpenTelemetry):** every operation runs in a trace scope
+established at the boundary — HTTP middleware, each CLI invocation, each MCP tool call. It continues
+an inbound W3C **`traceparent`** (or a host OTel SDK's active trace) or generates one; the **trace id
+is the `correlationId`** stamped on every emitted event, so one operation's logs tie together and
+across services. HTTP responses echo it as **`x-correlation-id`**, and the trace is propagated to the
+upstream **Neon API** as a `traceparent` header. The pure W3C parse/format/validate lives in the core
+(`src/core/trace.ts`, 100% covered — an inbound header is untrusted and fails closed). Following the
+**instrumented-library pattern, the tool depends only on `@opentelemetry/api`** (no-op + ~zero cost by
+default): spans export and adopt the real trace id when the **host configures an OpenTelemetry SDK** —
+e.g. run the standalone server with `node --import @opentelemetry/auto-instrumentations-node/register`
+and set `OTEL_EXPORTER_OTLP_ENDPOINT`. Builder-side — application-level request correlation across
+auth/lifecycle/billing and into Neon is knowledge Neon doesn't have.
 
 **Metrics (Prometheus):** the HTTP entrypoint derives **RED metrics from that same event stream** (no
 extra instrumentation) via `createMetricsEventSink` fanned out alongside the JSON sink

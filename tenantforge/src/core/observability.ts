@@ -22,6 +22,12 @@ export interface TenantEvent {
   actor?: { id: string; role: string };
   /** The tenant the event concerns (absent for fleet-level events). */
   tenantId?: string;
+  /**
+   * Correlation id tying every event of one operation together and across surfaces/services — the
+   * W3C trace id of the active trace (topic-logging-observability: one id propagated end-to-end).
+   * Derived server-side from the request's trace context; absent for actions with no trace scope.
+   */
+  correlationId?: string;
   /** Operation duration in milliseconds. */
   durationMs?: number;
   /** Safe, non-sensitive context (already redacted). */

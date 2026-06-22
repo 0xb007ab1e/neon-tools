@@ -6,6 +6,20 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Distributed tracing + correlation IDs (OpenTelemetry).** Every operation now runs in a trace
+  scope established at the boundary (HTTP middleware, each CLI invocation, each MCP tool call): it
+  continues an inbound W3C `traceparent` (or a host OTel SDK's active trace) or generates one, and
+  the trace id becomes a **`correlationId`** stamped on every emitted `TenantEvent` — so one
+  operation's logs correlate end-to-end and across services. HTTP responses echo it as
+  **`x-correlation-id`**, and the trace is **propagated to the upstream Neon API** as a `traceparent`
+  header. Pure W3C parse/format/validate lives in the core (`src/core/trace.ts`, 100% covered;
+  inbound headers are untrusted and fail closed). Follows the instrumented-library pattern — depends
+  only on **`@opentelemetry/api`** (no-op, ~zero cost by default); spans export and adopt the real
+  trace id when the host configures an OpenTelemetry SDK. The Neon provisioning adapter gains an
+  injectable `traceHeaders` provider (kept decoupled from the request context).
+
 ## [0.33.0] - 2026-06-22
 
 Strengthens confidence that the public surfaces match their specs. Tests only — no runtime/API
