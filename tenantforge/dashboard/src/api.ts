@@ -358,6 +358,21 @@ export async function fetchPlanChanges(): Promise<PlanChangeEntry[]> {
   return ((await res.json()) as { planChanges: PlanChangeEntry[] }).planChanges;
 }
 
+/** One data-export entry (a persisted `tenant.exported` audit event). */
+export interface ExportEntry {
+  at: string;
+  outcome: 'ok' | 'error';
+  tenantId?: string;
+  context?: { location?: string; bytes?: number };
+}
+
+/** Load recent data-export history (read-only; empty without an audit store). */
+export async function fetchExports(): Promise<ExportEntry[]> {
+  const res = await fetch(`${BASE}/exports`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load data exports');
+  return ((await res.json()) as { exports: ExportEntry[] }).exports;
+}
+
 /** One credit-grant entry (a persisted `tenant.credit_granted` audit event). */
 export interface CreditGrantEntry {
   at: string;

@@ -662,6 +662,28 @@ export interface TenantForge {
   offboard(id: string): Promise<OffboardOutcome>;
 
   /**
+   * **Export a tenant's data** to durable storage and return a reference — the data-portability /
+   * DSAR path (GDPR Art. 20). Unlike {@link TenantForge.offboard} / {@link TenantForge.erase}, this
+   * **does not** change the tenant's state or delete anything: the tenant stays active and is given
+   * a copy of its data. Records a `tenant.exported` audit event (location + size — a reference, not
+   * the data). Reads tenant data → **CLI/library only** (never HTTP/MCP). Requires an exporter.
+   *
+   * @param id - The tenant id.
+   * @returns A reference to the written export (`location` + optional `bytes`).
+   * @throws Error if the tenant is unknown or no exporter is configured.
+   */
+  exportTenantData(id: string): Promise<ExportResult>;
+
+  /**
+   * Recent **data-export history** (`tenant.exported` events) from the persisted audit trail.
+   * Returns `[]` without an audit store.
+   *
+   * @param limit - Max entries, newest-first (default 20).
+   * @returns The matching events, newest first.
+   */
+  exportHistory(limit?: number): Promise<TenantEvent[]>;
+
+  /**
    * Purge an offboarded tenant: **irreversibly** delete its Neon project, crypto-shred its
    * connection secret, and mark it `deleted`. The deferred hard-delete after the retention window —
    * run manually or by a scheduled job. Only valid for an `offboarding` (or never-provisioned)
@@ -2225,6 +2247,30 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       const offboarding = await transition(tenant, 'offboarding');
       const archive = exporter ? await exporter.exportTenant(offboarding) : null;
       return { tenant: offboarding, archive };
+    },
+
+    async exportTenantData(id: string): Promise<ExportResult> {
+      const tenant = await requireTenant(id);
+      if (exporter === undefined) {
+        throw new Error('data export requires a configured exporter');
+      }
+      const result = await exporter.exportTenant(tenant);
+      // Audit who exported what, when (compliance / DSAR trail). The location is a reference to the
+      // written artifact (object-store URI), not tenant data — safe to record.
+      observe('tenant.exported', {
+        tenantId: id,
+        outcome: 'ok',
+        context: {
+          location: result.location,
+          ...(result.bytes !== undefined ? { bytes: result.bytes } : {}),
+        },
+      });
+      return result;
+    },
+
+    exportHistory(limit = 20): Promise<TenantEvent[]> {
+      if (auditLog === undefined) return Promise.resolve([]);
+      return auditLog.query({ events: ['tenant.exported'], limit });
     },
 
     async purge(id: string): Promise<TenantRecord> {

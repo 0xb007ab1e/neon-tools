@@ -23,6 +23,7 @@ import {
   fetchAuditAnomalies,
   fetchSignupTokens,
   fetchCostAnomalies,
+  fetchExports,
   fetchSession,
   login,
   logout,
@@ -48,6 +49,7 @@ import {
   type AuditAnomalyEntry,
   type SignupTokenEntry,
   type CostAnomalyEntry,
+  type ExportEntry,
   type Session,
 } from './api';
 
@@ -322,6 +324,7 @@ function DashboardView(props: {
               <CompliancePanel />
               <DriftPanel />
               <ReconcilePanel />
+              <ExportsPanel />
             </>
           )}
           {active === 'billing' && (
@@ -841,6 +844,50 @@ function BillingPanel(): React.JSX.Element {
                       {d.context?.attempt !== undefined ? ` #${d.context.attempt}` : ''}
                     </td>
                     <td>{d.outcome}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function ExportsPanel(): React.JSX.Element {
+  const { data, error } = usePanelData<ExportEntry[]>(fetchExports);
+  return (
+    <Panel
+      id="exports-h"
+      title="Data exports (portability / DSAR)"
+      error={error}
+      loading={data === null}
+    >
+      {data !== null && (
+        <div>
+          <p>
+            {data.length} recent export(s). Exporting reads tenant data and runs via the CLI
+            (`export-tenant`), not the dashboard.
+          </p>
+          {data.length > 0 && (
+            <table>
+              <caption>Recent data exports</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Tenant</th>
+                  <th scope="col">Location</th>
+                  <th scope="col">Bytes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((e, i) => (
+                  <tr key={`${e.at}-${e.tenantId ?? ''}-${i}`}>
+                    <td>{e.at}</td>
+                    <td>{e.tenantId ?? '—'}</td>
+                    <td>{e.context?.location ?? '—'}</td>
+                    <td>{e.context?.bytes ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

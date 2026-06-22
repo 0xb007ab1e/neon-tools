@@ -278,6 +278,14 @@ export function createDashboard(options: DashboardOptions): Hono {
     return c.json({ usageAlerts: await options.tf.usageAlertHistory() });
   });
 
+  // Recent data-export history (read-only; the export reads tenant data and is a CLI op).
+  app.get('/api/exports', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'tenant:read')) return c.json({ error: 'forbidden' }, 403);
+    return c.json({ exports: await options.tf.exportHistory() });
+  });
+
   // The operator's plan catalog (read-only; assigning a plan is a CLI op).
   app.get('/api/plans', (c) => {
     const principal = session(c);
