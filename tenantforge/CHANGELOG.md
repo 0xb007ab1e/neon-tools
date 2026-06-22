@@ -6,6 +6,12 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-06-21
+
+Adds self-serve tenant onboarding via one-time signup/invite tokens. Additive/backward-compatible
+(MINOR) — off until `TENANTFORGE_SIGNUP_TOKEN_STORE` is configured. Builder-side onboarding; Neon
+provisions projects, not customer signups (not a Neon feature).
+
 ### Added
 
 - **Signup / onboarding tokens** — `issueSignupToken({ slug, region?, planId?, ttlSeconds? })` (CLI
