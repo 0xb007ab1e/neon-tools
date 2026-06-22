@@ -6,6 +6,11 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-06-22
+
+Completes the tenant lifecycle with a safe un-offboard. MINOR — additive operation; one behavior
+change to `resume` (now suspended-only — see Changed).
+
 ### Added
 
 - **Tenant restore (un-offboard within the retention window).** `tf.restore(id)` reverses an
