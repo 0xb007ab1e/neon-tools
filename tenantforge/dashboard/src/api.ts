@@ -112,6 +112,22 @@ export async function fetchCost(): Promise<CostReport> {
   return (await res.json()) as CostReport;
 }
 
+/** One detected cost/margin anomaly. */
+export interface CostAnomalyEntry {
+  kind: 'unprofitable' | 'unpriced' | 'low-margin' | 'high-cost';
+  tenantId: string;
+  costUsd: number;
+  priceUsd: number | null;
+  marginUsd: number | null;
+}
+
+/** Load cost/margin anomalies for the current month (read-only; default thresholds). */
+export async function fetchCostAnomalies(): Promise<CostAnomalyEntry[]> {
+  const res = await fetch(`${BASE}/cost-anomalies`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load cost anomalies');
+  return ((await res.json()) as { anomalies: CostAnomalyEntry[] }).anomalies;
+}
+
 /** One billed line on an invoice. */
 export interface InvoiceLineItem {
   description: string;

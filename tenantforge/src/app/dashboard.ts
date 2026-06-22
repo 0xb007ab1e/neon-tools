@@ -170,6 +170,16 @@ export function createDashboard(options: DashboardOptions): Hono {
     return c.json(await options.tf.costReport({ from, to }));
   });
 
+  // Cost/margin anomalies for the current month (read-only; default thresholds → unprofitable + unpriced).
+  app.get('/api/cost-anomalies', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'tenant:read')) return c.json({ error: 'forbidden' }, 403);
+    const to = new Date(now());
+    const from = new Date(to.getFullYear(), to.getMonth(), 1);
+    return c.json({ anomalies: await options.tf.scanCostAnomalies({ from, to }) });
+  });
+
   // Fleet invoices panel data (current calendar month → now).
   app.get('/api/invoices', async (c) => {
     const principal = session(c);

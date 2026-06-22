@@ -780,6 +780,47 @@ const complianceReport = defineCommand({
   },
 });
 
+const costScan = defineCommand({
+  meta: {
+    name: 'cost-scan',
+    description:
+      'Scan the fleet for cost/margin anomalies (unprofitable / unpriced / thin-margin / high-cost)',
+  },
+  args: {
+    'min-margin': {
+      type: 'string',
+      description: 'Flag profitable tenants under this margin (USD)',
+    },
+    'max-cost': { type: 'string', description: 'Flag tenants at/above this cost (USD)' },
+    json: { type: 'boolean', description: 'Emit findings as JSON', default: false },
+  },
+  async run({ args }) {
+    const to = new Date();
+    const from = new Date(to.getFullYear(), to.getMonth(), 1);
+    const thresholds = {
+      ...(args['min-margin'] !== undefined ? { minMarginUsd: Number(args['min-margin']) } : {}),
+      ...(args['max-cost'] !== undefined ? { maxCostUsd: Number(args['max-cost']) } : {}),
+    };
+    await withTenantForge(async (tf) => {
+      const findings = await tf.scanCostAnomalies({ from, to }, thresholds);
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
+        return;
+      }
+      if (findings.length === 0) {
+        process.stdout.write('no cost anomalies\n');
+        return;
+      }
+      for (const f of findings) {
+        const margin = f.marginUsd === null ? 'n/a' : `$${f.marginUsd}`;
+        process.stdout.write(`  ${f.kind} ${f.tenantId}: cost $${f.costUsd} margin ${margin}\n`);
+      }
+      // Non-zero exit so a cron / CI FinOps gate can alert on findings.
+      process.exitCode = 1;
+    });
+  },
+});
+
 const costReport = defineCommand({
   meta: {
     name: 'cost-report',
@@ -1446,6 +1487,7 @@ const main = defineCommand({
     audit,
     'audit-scan': auditScan,
     'cost-report': costReport,
+    'cost-scan': costScan,
     invoice,
     'invoice-fleet': invoiceFleet,
     'send-invoice': sendInvoice,

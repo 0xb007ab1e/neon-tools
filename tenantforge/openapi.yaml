@@ -266,6 +266,42 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/cost/anomalies:
+    get:
+      tags: [reports]
+      summary: >
+        Cost/margin anomalies over a period (requires `tenant:read`) — unprofitable + unpriced
+        tenants always, plus opt-in `min-margin` (thin-margin) / `max-cost` (high-cost) flags.
+        Read-only FinOps detection, most-severe-first.
+      parameters:
+        - { $ref: '#/components/parameters/PeriodFrom' }
+        - { $ref: '#/components/parameters/PeriodTo' }
+        - name: min-margin
+          in: query
+          required: false
+          description: Flag profitable tenants under this margin (USD) as `low-margin`.
+          schema: { type: number }
+        - name: max-cost
+          in: query
+          required: false
+          description: Flag tenants at/above this cost (USD) as `high-cost`.
+          schema: { type: number }
+      responses:
+        '200':
+          description: The detected cost anomalies (empty when none).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  anomalies:
+                    type: array
+                    items: { type: object }
+                required: [anomalies]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/invoices:
     get:
       tags: [reports]

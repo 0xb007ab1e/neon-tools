@@ -121,6 +121,11 @@ export {
   type AuditAnomaly,
 } from './audit-anomaly.js';
 export {
+  detectCostAnomalies,
+  type CostAnomalyThresholds,
+  type CostAnomaly,
+} from './cost-anomaly.js';
+export {
   signupTokenStatus,
   assertRedeemable,
   type SignupTokenRecord,

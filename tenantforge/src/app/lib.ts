@@ -27,6 +27,7 @@ import {
   selectRegion,
   normalizeAuditQuery,
   detectAuditAnomalies,
+  detectCostAnomalies,
   signupTokenStatus,
   assertRedeemable,
   type SignupTokenRecord,
@@ -39,6 +40,8 @@ import {
   type AuditQueryInput,
   type AnomalyThresholds,
   type AuditAnomaly,
+  type CostAnomalyThresholds,
+  type CostAnomaly,
   type PlanDefinition,
   type BillingPeriod,
   type Jurisdiction,
@@ -878,6 +881,22 @@ export interface TenantForge {
    * @returns The cost report.
    */
   costReport(period: BillingPeriod): Promise<CostReport>;
+
+  /**
+   * **Scan the fleet for cost/margin anomalies** over `period` — tenants that are unprofitable or
+   * **consuming without a price** (always), plus opt-in thin-margin / high-cost flags. Runs the
+   * cost report then the pure {@link detectCostAnomalies}; read-only, most-severe-first. Operator
+   * FinOps — Neon has no notion of the operator's prices/margins, so this is not a Neon feature.
+   * Requires a usage provider.
+   *
+   * @param period - The billing period to meter.
+   * @param thresholds - Optional `minMarginUsd` (thin-margin) / `maxCostUsd` (high-cost) opt-ins.
+   * @returns The detected cost anomalies (empty when none).
+   */
+  scanCostAnomalies(
+    period: BillingPeriod,
+    thresholds?: CostAnomalyThresholds,
+  ): Promise<CostAnomaly[]>;
 
   /**
    * Generate an **invoice document** for one tenant over `period`: its usage billed at the
@@ -2580,6 +2599,15 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     costReport(period: BillingPeriod): Promise<CostReport> {
       assertPeriod(period);
       return costEngine().report(period);
+    },
+
+    async scanCostAnomalies(
+      period: BillingPeriod,
+      thresholds: CostAnomalyThresholds = {},
+    ): Promise<CostAnomaly[]> {
+      assertPeriod(period);
+      const report = await costEngine().report(period); // fails closed without a usage provider
+      return detectCostAnomalies(report.rows, thresholds);
     },
 
     async invoice(id: string, period: BillingPeriod): Promise<Invoice> {
