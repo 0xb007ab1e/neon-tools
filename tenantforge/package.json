@@ -37,6 +37,7 @@
     "test:watch": "vitest",
     "test:int": "vitest run --config vitest.integration.config.ts",
     "test:dashboard": "vitest run --config dashboard/vitest.config.ts",
+    "mutation": "stryker run",
     "dashboard:dev": "vite --config dashboard/vite.config.ts",
     "dashboard:build": "vite build --config dashboard/vite.config.ts"
   },
@@ -53,6 +54,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@types/node": "^22.10.5",

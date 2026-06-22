@@ -5,6 +5,10 @@ dist
 # Test / coverage artifacts
 coverage
 
+# Mutation testing (Stryker) — generated HTML report + scratch dir
+reports
+.stryker-tmp
+
 # Generated API docs (built in CI / on release — master §1: committing generated HTML is optional)
 docs/api
 
