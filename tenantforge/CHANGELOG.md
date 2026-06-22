@@ -6,6 +6,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Contract tests for the HTTP and MCP surfaces** (master §4: contract tests for every public API).
+  The HTTP control plane is verified against `openapi.yaml` in two directions — a **route-inventory**
+  check (served routes == documented routes, catching shadow/zombie endpoints — OWASP API9) and
+  **response-shape** conformance (representative responses validated with `ajv` against the resolved
+  OpenAPI response schema for that path/method/status, incl. the RFC 9457 problem envelope). The MCP
+  agent surface is checked too: every advertised tool ships a documented, compilable object input
+  schema. Includes a negative meta-assertion proving the validator rejects a non-conforming body.
+  Adds `ajv` as a dev dependency (test-only). Tests only — no runtime/API change.
+
 ## [0.32.0] - 2026-06-22
 
 Strengthens test quality on the highest-risk code. Tooling + tests only — no runtime/API change
