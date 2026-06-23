@@ -42,6 +42,9 @@ import {
   assertRedeemable,
   type SignupTokenRecord,
   type SignupTokenStatus,
+  assertVerifiable,
+  canRevealConnection,
+  type SignupRequestStatus,
   findPlan,
   planAssignment,
   buildComplianceReport,
@@ -142,6 +145,10 @@ import type { EventSink } from '../ports/event-sink.js';
 import type { AuditLogStore } from '../ports/audit-log-store.js';
 import type { ChargeResult, PaymentGateway, RefundResult } from '../ports/payment-gateway.js';
 import { createStripeGateway } from '../adapters/payment/stripe-gateway.js';
+import type { PaymentSetup } from '../ports/payment-setup.js';
+import type { CaptchaVerifier } from '../ports/captcha-verifier.js';
+import type { EmailVerificationStore } from '../ports/email-verification-store.js';
+import type { SignupRequestStore } from '../ports/signup-request-store.js';
 import type { PaymentEvent, PaymentWebhookVerifier } from '../ports/payment-webhook.js';
 import type { Notifier } from '../ports/notifier.js';
 import type { CreditLedger } from '../ports/credit-ledger.js';
@@ -160,7 +167,7 @@ import { createHttpNotifier } from '../adapters/notify/http-notifier.js';
 import type { UsageProvider } from '../ports/usage-provider.js';
 import type { MigrationRunner } from '../ports/migration-runner.js';
 import type { TenantConnection } from '../ports/connection-router.js';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { loadConfig, type Config } from './config.js';
 
 export type { Config } from './config.js';
@@ -437,6 +444,29 @@ export interface TenantForgeDeps {
    */
   signupTokenStore?: SignupTokenStore;
   /**
+   * **Self-serve signup** ports (the public, payment-gated web signup). All four (plus a
+   * {@link notifier} and a {@link signupQueue} producer) must be present for `startSignup` /
+   * `verifyEmail` / `createPaymentSetup` / `completeSignup` / `signupStatus` to work; absent ⇒ they
+   * fail closed. `paymentSetup` onboards a PSP customer + payment method; `captcha` gates bots before
+   * any cost-incurring call; `emailVerificationStore` proves the address; `signupRequestStore` is the
+   * funnel record. None hold secrets.
+   */
+  paymentSetup?: PaymentSetup;
+  /** Captcha verifier gating the public signup (fail-closed). See {@link paymentSetup}. */
+  captcha?: CaptchaVerifier;
+  /** One-time email-verification code store for signup. See {@link paymentSetup}. */
+  emailVerificationStore?: EmailVerificationStore;
+  /** Signup funnel record store. See {@link paymentSetup}. */
+  signupRequestStore?: SignupRequestStore;
+  /**
+   * Producer for the lifecycle queue — `completeSignup` enqueues a `provision` command so the new
+   * tenant is created asynchronously by the worker (Neon project creation is slow). Any queue adapter
+   * (in-memory / Postgres / Pub/Sub) satisfies this. Absent ⇒ signup completion fails closed.
+   */
+  signupQueue?: { enqueue(body: unknown): Promise<string> };
+  /** TTL (ms) for a signup email-verification code. Defaults to 15 minutes. */
+  emailCodeTtlMs?: number;
+  /**
    * Store for managed outbound **webhook subscriptions**. When provided (with a {@link secretStore}),
    * `createWebhookSubscription` / `listWebhookSubscriptions` / `deleteWebhookSubscription` are
    * enabled and matching events fan out to each subscription; absent ⇒ they fail closed / no-op.
@@ -609,6 +639,49 @@ export interface SignupTokenSummary {
   redeemedTenantId?: string;
 }
 
+/** Input to start a self-serve signup: the email to verify + a solved captcha token. */
+export interface StartSignupInput {
+  /** The customer's email (PII — never logged). */
+  email: string;
+  /** The captcha widget token (verified server-side before any cost-incurring step). */
+  captchaToken: string;
+  /** Optional caller IP, passed to the captcha provider for extra signal. */
+  remoteIp?: string;
+}
+
+/** Input to complete a signup once a payment method is saved: the chosen tenant config. */
+export interface CompleteSignupInput {
+  /** Desired tenant slug (validated; must be available). */
+  slug: string;
+  /** Optional explicit region (allow-list checked); else resolved from residency/default. */
+  region?: string;
+  /** Optional residency to route the region (data residency). */
+  residency?: Jurisdiction;
+  /** Optional plan id from the catalog (recorded on the tenant). */
+  planId?: string;
+}
+
+/** A pending payment-method setup handed to the browser (Stripe.js confirms it client-side). */
+export interface SignupPaymentSetup {
+  /** The PSP client secret for the browser SDK to confirm the setup intent. */
+  clientSecret: string;
+  /** The setup-intent id (verified server-side on completion). */
+  setupIntentId: string;
+}
+
+/**
+ * Signup funnel status for the poller. `connectionUri` is present **once** — the single in-app reveal
+ * after the tenant goes active (never emailed/logged; master §5).
+ */
+export interface SignupStatus {
+  /** Current funnel state. */
+  status: SignupRequestStatus;
+  /** The chosen slug, once set. */
+  slug?: string;
+  /** The one-time connection URI (only on the first poll after activation). */
+  connectionUri?: string;
+}
+
 /** The TenantForge control-plane API (library surface). */
 export interface TenantForge {
   /** Apply the control-plane registry migrations idempotently. */
@@ -687,6 +760,58 @@ export interface TenantForge {
    * @returns The token summaries.
    */
   listSignupTokens(limit?: number): Promise<SignupTokenSummary[]>;
+
+  /**
+   * **Self-serve signup — step 1.** Verify the captcha (fail-closed), open a funnel record, and email
+   * a one-time verification code. Returns the opaque signup id (the HTTP layer binds it to a signed,
+   * short-lived session cookie). Requires the signup ports + a notifier; fails closed otherwise.
+   *
+   * @param input - Email + captcha token (+ optional caller IP).
+   * @returns The signup id to carry through the remaining steps.
+   */
+  startSignup(input: StartSignupInput): Promise<{ signupId: string }>;
+
+  /**
+   * **Self-serve signup — step 2.** Verify the emailed code for a signup (single-use, attempt-capped,
+   * timing-safe). Advances the funnel to `email_verified`. Throws on an unknown signup, or an expired /
+   * locked / already-verified / mismatched code.
+   *
+   * @param signupId - The signup id from {@link startSignup}.
+   * @param code - The code the customer received by email.
+   */
+  verifyEmail(signupId: string, code: string): Promise<void>;
+
+  /**
+   * **Self-serve signup — step 3.** Only after the email is verified (card-testing guard): create the
+   * PSP customer + a setup intent and return the client secret for Stripe.js to collect the card
+   * client-side. Idempotent — re-calling reuses the customer. Card data never touches this server.
+   *
+   * @param signupId - The signup id.
+   * @returns The client secret + setup-intent id for the browser SDK.
+   */
+  createPaymentSetup(signupId: string): Promise<SignupPaymentSetup>;
+
+  /**
+   * **Self-serve signup — step 4.** Verify (server-side) that the setup intent succeeded + a payment
+   * method is saved, validate slug/region/plan, then **enqueue** an async `provision` command carrying
+   * the billing metadata. Returns the new funnel status (`provisioning`). Throws on unconfirmed
+   * payment, an unavailable slug (generic — no enumeration), or an unknown plan.
+   *
+   * @param signupId - The signup id.
+   * @param input - Chosen slug + optional region/residency/plan.
+   * @returns The funnel status after completion.
+   */
+  completeSignup(signupId: string, input: CompleteSignupInput): Promise<SignupStatus>;
+
+  /**
+   * **Self-serve signup — status poll.** Returns the funnel status; when the tenant has become active,
+   * reveals the one-time connection URI exactly once (then never again). Bound to the signup's own
+   * slug — a request can only ever see its own tenant.
+   *
+   * @param signupId - The signup id.
+   * @returns The current status (+ the connection URI on the first post-activation poll).
+   */
+  signupStatus(signupId: string): Promise<SignupStatus>;
 
   /**
    * **Create a managed webhook subscription**: an endpoint that receives matching control-plane
@@ -2501,6 +2626,192 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         ...(r.redeemedAt !== undefined ? { redeemedAt: r.redeemedAt } : {}),
         ...(r.redeemedTenantId !== undefined ? { redeemedTenantId: r.redeemedTenantId } : {}),
       }));
+    },
+
+    async startSignup(input: StartSignupInput): Promise<{ signupId: string }> {
+      const sr = deps.signupRequestStore;
+      const ev = deps.emailVerificationStore;
+      const cap = deps.captcha;
+      if (sr === undefined || ev === undefined || cap === undefined || notifier === undefined) {
+        throw new Error('self-serve signup is not configured');
+      }
+      // Verify the captcha BEFORE any cost-incurring work (email send / PSP) — fail closed.
+      const captcha = await cap.verify(input.captchaToken, input.remoteIp);
+      if (!captcha.success) throw new Error('captcha verification failed');
+      const email = input.email.trim().toLowerCase();
+      const signupId = randomUUID();
+      const now = new Date();
+      const nowIso = now.toISOString();
+      await sr.create({
+        id: signupId,
+        email,
+        status: 'started',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+      // 6-digit one-time code; persist only its hash (master §5).
+      const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+      const codeHash = createHash('sha256').update(code).digest('hex');
+      const ttlMs = deps.emailCodeTtlMs ?? 15 * 60 * 1000;
+      await ev.put({
+        email,
+        codeHash,
+        expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+        attempts: 0,
+        createdAt: nowIso,
+      });
+      await notifier.notify({
+        to: email,
+        subject: 'Your TenantForge verification code',
+        body: `Your verification code is ${code}. It expires in ${Math.round(ttlMs / 60000)} minutes.`,
+        idempotencyKey: `signup-verify:${signupId}`,
+      });
+      // Audit without the email or code (PII/secret — master §5).
+      observe('signup.started', { outcome: 'ok', context: { signupId } });
+      return { signupId };
+    },
+
+    async verifyEmail(signupId: string, code: string): Promise<void> {
+      const sr = deps.signupRequestStore;
+      const ev = deps.emailVerificationStore;
+      if (sr === undefined || ev === undefined) {
+        throw new Error('self-serve signup is not configured');
+      }
+      const req = await sr.get(signupId);
+      if (req === null) throw new Error('unknown signup');
+      const rec = await ev.get(req.email);
+      if (rec === null) throw new Error('no verification code; request a new one');
+      assertVerifiable(rec, new Date().toISOString()); // throws expired / locked / already verified
+      const got = createHash('sha256').update(code).digest('hex');
+      const match =
+        got.length === rec.codeHash.length &&
+        timingSafeEqual(Buffer.from(got), Buffer.from(rec.codeHash));
+      if (!match) {
+        const attempts = await ev.recordFailedAttempt(req.email);
+        observe('signup.email_verify', { outcome: 'error', context: { signupId, attempts } });
+        throw new Error('invalid verification code');
+      }
+      const nowIso = new Date().toISOString();
+      await ev.markVerified(req.email, nowIso);
+      await sr.update(signupId, { status: 'email_verified', updatedAt: nowIso });
+      observe('signup.email_verified', { outcome: 'ok', context: { signupId } });
+    },
+
+    async createPaymentSetup(signupId: string): Promise<SignupPaymentSetup> {
+      const sr = deps.signupRequestStore;
+      const ps = deps.paymentSetup;
+      if (sr === undefined || ps === undefined) {
+        throw new Error('self-serve signup is not configured');
+      }
+      const req = await sr.get(signupId);
+      if (req === null) throw new Error('unknown signup');
+      // Card-testing guard: never open a PSP setup intent until the email is proven.
+      if (req.status !== 'email_verified' && req.status !== 'payment_ready') {
+        throw new Error('verify your email before adding a payment method');
+      }
+      let customerRef = req.customerRef;
+      if (customerRef === undefined) {
+        const customer = await ps.createCustomer({
+          email: req.email,
+          idempotencyKey: `signup-customer:${signupId}`,
+          metadata: { signup_id: signupId },
+        });
+        customerRef = customer.customerRef;
+        await sr.update(signupId, { customerRef, updatedAt: new Date().toISOString() });
+      }
+      const intent = await ps.createSetupIntent({
+        customerRef,
+        idempotencyKey: `signup-setup-intent:${signupId}`,
+        metadata: { signup_id: signupId },
+      });
+      await sr.update(signupId, {
+        setupIntentId: intent.setupIntentId,
+        status: 'payment_ready',
+        updatedAt: new Date().toISOString(),
+      });
+      observe('signup.payment_setup', { outcome: 'ok', context: { signupId } });
+      return { clientSecret: intent.clientSecret, setupIntentId: intent.setupIntentId };
+    },
+
+    async completeSignup(signupId: string, input: CompleteSignupInput): Promise<SignupStatus> {
+      const sr = deps.signupRequestStore;
+      const ps = deps.paymentSetup;
+      const q = deps.signupQueue;
+      if (sr === undefined || ps === undefined || q === undefined) {
+        throw new Error('self-serve signup is not configured');
+      }
+      const req = await sr.get(signupId);
+      if (req === null) throw new Error('unknown signup');
+      if (req.customerRef === undefined || req.setupIntentId === undefined) {
+        throw new Error('add a payment method before completing signup');
+      }
+      // Never trust the client: confirm server-side that a payment method was actually saved.
+      const intent = await ps.getSetupIntent(req.setupIntentId);
+      if (intent.status !== 'succeeded' || intent.paymentMethodRef === undefined) {
+        throw new Error('payment method not confirmed');
+      }
+      if (intent.customerRef !== req.customerRef) throw new Error('payment/customer mismatch');
+      const slug = assertSlug(input.slug);
+      const region = resolveRegion(input.region, input.residency);
+      // Generic "unavailable" — never reveal whether the slug belongs to another tenant (no enumeration).
+      const existing = await registry.getBySlug(slug);
+      if (existing !== null) throw new Error('slug unavailable');
+      const catalog = deps.plans ?? [];
+      const plan = input.planId !== undefined ? findPlan(catalog, input.planId) : undefined;
+      if (input.planId !== undefined && plan === undefined) throw new Error('unknown plan');
+      // Billing link + plan recorded on the tenant; the worker's provision applies it (parity with
+      // redeemSignupToken). The connection secret is generated then, never here.
+      const metadata: JsonObject = {
+        billingCustomerRef: req.customerRef,
+        billingEmail: req.email,
+        ...(plan !== undefined ? { planId: plan.id } : {}),
+      };
+      // Enqueue async provision (Neon project creation is slow); the worker runs tf.provision.
+      await q.enqueue({ id: randomUUID(), type: 'provision', slug, region, metadata });
+      const nowIso = new Date().toISOString();
+      await sr.update(signupId, {
+        slug,
+        region,
+        ...(plan !== undefined ? { planId: plan.id } : {}),
+        status: 'provisioning',
+        updatedAt: nowIso,
+      });
+      observe('signup.completed', { outcome: 'ok', context: { signupId, slug, region } });
+      return { status: 'provisioning', slug };
+    },
+
+    async signupStatus(signupId: string): Promise<SignupStatus> {
+      const sr = deps.signupRequestStore;
+      if (sr === undefined) throw new Error('self-serve signup is not configured');
+      const req = await sr.get(signupId);
+      if (req === null) throw new Error('unknown signup');
+      // Has the async provision finished? Resolve by the request's OWN slug (a request sees only its tenant).
+      if (req.status === 'provisioning' && req.slug !== undefined) {
+        const tenant = await registry.getBySlug(req.slug);
+        if (tenant !== null && tenant.status === 'active') {
+          await sr.update(signupId, {
+            status: 'active',
+            tenantId: tenant.id,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
+      const fresh = await sr.get(signupId);
+      if (fresh === null) throw new Error('unknown signup');
+      let connectionUri: string | undefined;
+      // One-time reveal: only when active + not yet revealed; mark revealed so it never shows again.
+      if (canRevealConnection(fresh) && fresh.tenantId !== undefined) {
+        const uri = await secretStore.get(fresh.tenantId);
+        if (uri !== null) {
+          connectionUri = uri;
+          await sr.update(signupId, { connectionRevealedAt: new Date().toISOString() });
+        }
+      }
+      return {
+        status: fresh.status,
+        ...(fresh.slug !== undefined ? { slug: fresh.slug } : {}),
+        ...(connectionUri !== undefined ? { connectionUri } : {}),
+      };
     },
 
     async createWebhookSubscription(input: {

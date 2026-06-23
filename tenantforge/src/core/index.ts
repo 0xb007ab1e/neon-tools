@@ -162,6 +162,19 @@ export {
   type SignupTokenStatus,
 } from './signup-token.js';
 export {
+  emailVerificationStatus,
+  assertVerifiable,
+  MAX_ATTEMPTS as EMAIL_VERIFICATION_MAX_ATTEMPTS,
+  type EmailVerificationRecord,
+  type EmailVerificationStatus,
+} from './email-verification.js';
+export {
+  canRevealConnection,
+  SIGNUP_REQUEST_STATUSES,
+  type SignupRequestRecord,
+  type SignupRequestStatus,
+} from './signup-request.js';
+export {
   buildErasureCertificate,
   type ErasureCertificate,
   type ErasureVerification,
