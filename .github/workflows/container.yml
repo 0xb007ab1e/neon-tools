@@ -1,0 +1,142 @@
+name: Container (tenantforge)
+
+# Build the TenantForge HTTP control-plane image, scan it, and ONLY IF the scan passes (on a release
+# tag) publish it to GHCR with a CycloneDX SBOM + non-falsifiable SLSA build provenance — both
+# attested to the image by digest, keyless via OIDC (std-supplychain, topic-container-k8s). The scan
+# gates the push (build→scan→push), so a vulnerable image is never published. Path-filtered so PRs
+# only build the image when the image or its inputs change.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tenantforge/Dockerfile'
+      - 'tenantforge/Dockerfile.dockerignore'
+      - 'tenantforge/src/**'
+      - 'tenantforge/dashboard/**'
+      - 'tenantforge/migrations/**'
+      - 'tenantforge/package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/container.yml'
+  push:
+    tags: ['tenantforge-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/tenantforge
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to GHCR (tag builds only)
+      id-token: write # OIDC for keyless build-provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # On a release tag, derive the version + push; otherwise build-and-scan only (no push).
+      # Compute the full tag list here so :latest only moves for a FINAL release (X.Y.Z),
+      # never for a prerelease/RC tag (e.g. tenantforge-v1.0.0-rc1 → image :1.0.0-rc1 only).
+      - name: Derive build params
+        id: meta
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#tenantforge-v}"
+            push=true
+          else
+            version="pr-${GITHUB_SHA::12}"
+            push=false
+          fi
+          tags="${IMAGE}:${version}"
+          if printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            tags="${tags}"$'\n'"${IMAGE}:latest"
+          fi
+          {
+            echo "version=${version}"
+            echo "push=${push}"
+            echo "tags<<__TAGS__"
+            echo "${tags}"
+            echo "__TAGS__"
+          } >> "$GITHUB_OUTPUT"
+
+      # Build once into the LOCAL daemon (never pushed yet) so the scan gates publication.
+      # cache-to=gha lets the later push step reuse this exact build (same digest), not rebuild.
+      - name: Build image (load for scan)
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: tenantforge/Dockerfile
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Block on fixable HIGH/CRITICAL. This runs BEFORE any push, so a failing scan
+      # means a vulnerable image is never published (release gate, not a post-publish check).
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      # --- Only past this point (scan passed) do we publish, and only on a release tag. ---
+      - name: Log in to GHCR
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Push the already-built, already-scanned image (cache hit ⇒ identical digest, no rebuild).
+      - name: Push image
+        id: push
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: tenantforge/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+
+      # SBOM + signed provenance attached to the pushed image by DIGEST (keyless OIDC — no stored keys).
+      # The SBOM is both attested to the image AND retained as a run artifact (stored with the build,
+      # not discarded) per std-supplychain / workflow-cicd.
+      - name: Generate image SBOM (CycloneDX)
+        if: steps.meta.outputs.push == 'true'
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.push.outputs.digest }}
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/tenantforge-image.sbom.cdx.json
+          upload-artifact: true
+      - name: Attest image SBOM
+        if: steps.meta.outputs.push == 'true'
+        uses: actions/attest-sbom@10926c72720ffc3f7b666661c8e55b1344e2a365 # v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/tenantforge-image.sbom.cdx.json
+          push-to-registry: true
+      - name: Attest image build provenance
+        if: steps.meta.outputs.push == 'true'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

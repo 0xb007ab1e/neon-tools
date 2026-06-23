@@ -246,8 +246,19 @@ emits a **CycloneDX SBOM** and runs a **Trivy** filesystem vuln + misconfig scan
 HIGH/CRITICAL). On a `tenantforge-v*` tag, the **release** workflow builds the artifact once, attests
 **non-falsifiable SLSA build provenance** (keyless via OIDC — no stored signing keys), and publishes
 a GitHub Release with the tarball + SBOM; verify with `gh attestation verify <tarball> --repo <repo>`.
-All third-party actions are pinned by commit SHA. _(A hardened, scanned + signed container image is a
-deferred follow-up — it needs a registry + deploy-target decision.)_
+All third-party actions are pinned by commit SHA.
+
+**Container image:** the HTTP control plane ships as a hardened image ([`Dockerfile`](./Dockerfile))
+— **multi-stage** (build with dev deps → `pnpm deploy` a prod-only bundle), **distroless** runtime
+(no shell or package manager), **non-root**, base images **pinned by digest**, with a Node-based
+`/health` healthcheck. Build from the repo root (monorepo context):
+`docker build -f tenantforge/Dockerfile -t tenantforge .`; run with the env from
+[`.env.example`](./.env.example) (`-e DATABASE_URL=… -e NEON_API_KEY=… -p 3000:3000`). The
+[**container** workflow](../.github/workflows/container.yml) builds + **Trivy**-scans the image on
+every PR that touches it (blocks on fixable HIGH/CRITICAL) and, on a `tenantforge-v*` tag, publishes
+it to **GHCR** (`ghcr.io/<owner>/neon-tools/tenantforge`) with a CycloneDX SBOM + **signed SLSA build
+provenance** (keyless via OIDC) — verify with
+`gh attestation verify oci://ghcr.io/<owner>/neon-tools/tenantforge:<version> --repo <repo>`.
 
 **Per-tenant observability:** every control-plane operation emits a structured, tenant-scoped JSON
 event (provision / transition / connection-resolved-or-denied / fleet-migration / purge-sweep) to

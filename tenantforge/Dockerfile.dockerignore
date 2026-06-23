@@ -1,0 +1,13 @@
+# Scoped to tenantforge/Dockerfile (BuildKit honours <dockerfile>.dockerignore). Patterns are
+# relative to the build context (the repo root). Keep the context lean + never ship build cruft.
+**/node_modules
+**/dist
+**/.git
+**/.env
+**/.env.*
+**/coverage
+**/reports
+**/.stryker-tmp
+**/.turbo
+**/*.tsbuildinfo
+**/docs/api

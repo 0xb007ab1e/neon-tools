@@ -6,6 +6,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Hardened container image** for the HTTP control plane ([`Dockerfile`](Dockerfile)) — multi-stage
+  (build with dev deps → `pnpm deploy --legacy --prod` a self-contained bundle), **distroless**
+  runtime (no shell/package manager), **non-root**, base images **pinned by digest**, with a
+  Node-based `/health` healthcheck. New **`container` CI workflow**: builds + **Trivy**-scans the
+  image on PRs that touch it (blocks on fixable HIGH/CRITICAL), and on a `tenantforge-v*` tag
+  publishes it to **GHCR** with a CycloneDX SBOM + signed SLSA build provenance (keyless OIDC). All
+  actions SHA-pinned. Closes the last deferred infra item. (Validated by a local build + run.)
+
 ## [0.38.1] - 2026-06-22
 
 Documentation-only patch — adds the architecture decision records.
