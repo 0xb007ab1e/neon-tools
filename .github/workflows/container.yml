@@ -84,6 +84,11 @@ jobs:
 
       # Block on fixable HIGH/CRITICAL. This runs BEFORE any push, so a failing scan
       # means a vulnerable image is never published (release gate, not a post-publish check).
+      # trivyignores carries TIME-BOXED, VEX-backed waivers (tenantforge/.trivyignore.yaml,
+      # each with expired_at → auto-re-blocks on lapse) for base-layer OpenSSL CVEs assessed
+      # not_affected; see tenantforge/security/vex/*.openvex.json. TEMPORARY: a background watch
+      # pins the runtime base to a rebuilt, patched digest as soon as one ships, which removes
+      # both the findings and this waiver. No permanent ignores.
       - name: Scan image (Trivy)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -91,6 +96,7 @@ jobs:
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          trivyignores: tenantforge/.trivyignore.yaml
           exit-code: '1'
 
       # --- Only past this point (scan passed) do we publish, and only on a release tag. ---

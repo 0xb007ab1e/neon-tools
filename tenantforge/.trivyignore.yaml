@@ -1,0 +1,50 @@
+# Time-boxed, VEX-backed waivers for the TenantForge container image scan.
+#
+# Each entry is a documented `not_affected` exploitability assessment (see
+# security/vex/openssl-base-2026-06.openvex.json — OpenVEX, justification
+# vulnerable_code_not_in_execute_path) for OpenSSL/libssl3 CVEs that exist in the
+# distroless runtime base layer but whose vulnerable code paths the application
+# never executes.
+#
+# These are NOT permanent ignores: each `expired_at` auto-expires the waiver and
+# RE-BLOCKS CI (per workflow-cve-management). They are self-limiting anyway — a
+# background watch is pinning the runtime base to a rebuilt digest with patched
+# libssl3 (>= 3.0.20-1~deb12u2) as soon as one is published, which removes the
+# findings and makes this file unnecessary.
+#
+# Owner: 0xb007ab1e (134006168+0xb007ab1e@users.noreply.github.com)
+# Opened: 2026-06-22  ·  Review/expiry: 2026-07-22
+vulnerabilities:
+  - id: CVE-2026-31789
+    statement: >-
+      not_affected (vulnerable_code_not_in_execute_path): 32-bit-only OpenSSL X.509
+      heap overflow; the image is published for 64-bit (amd64/arm64) only. VEX:
+      security/vex/openssl-base-2026-06.openvex.json
+    expired_at: 2026-07-22
+  - id: CVE-2026-28387
+    statement: >-
+      not_affected (vulnerable_code_not_in_execute_path): DANE-TLSA auth UAF; app uses
+      plain outbound HTTPS/Postgres TLS, never DANE/TLSA. VEX:
+      security/vex/openssl-base-2026-06.openvex.json
+    expired_at: 2026-07-22
+  - id: CVE-2026-28388
+    statement: >-
+      not_affected (vulnerable_code_not_in_execute_path): CMS NULL-deref DoS; app never
+      processes CMS. VEX: security/vex/openssl-base-2026-06.openvex.json
+    expired_at: 2026-07-22
+  - id: CVE-2026-28389
+    statement: >-
+      not_affected (vulnerable_code_not_in_execute_path): CMS DoS; app never processes
+      CMS. VEX: security/vex/openssl-base-2026-06.openvex.json
+    expired_at: 2026-07-22
+  - id: CVE-2026-28390
+    statement: >-
+      not_affected (vulnerable_code_not_in_execute_path): CMS NULL-deref DoS; app never
+      processes CMS. VEX: security/vex/openssl-base-2026-06.openvex.json
+    expired_at: 2026-07-22
+  - id: CVE-2026-45447
+    statement: >-
+      not_affected (vulnerable_code_not_in_execute_path): PKCS7_verify() UAF; app never
+      verifies PKCS7/CMS (webhooks use HMAC-SHA, JWTs use jose/WebCrypto). VEX:
+      security/vex/openssl-base-2026-06.openvex.json
+    expired_at: 2026-07-22

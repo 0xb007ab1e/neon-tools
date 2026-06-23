@@ -1,0 +1,119 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/0xb007ab1e/neon-tools/tenantforge/security/vex/openssl-base-2026-06",
+  "author": "0xb007ab1e <134006168+0xb007ab1e@users.noreply.github.com>",
+  "role": "Project Maintainer",
+  "timestamp": "2026-06-22T00:00:00Z",
+  "version": 1,
+  "tooling": "hand-authored; reachability assessed against tenantforge HTTP control-plane source",
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-31789",
+        "description": "OpenSSL heap buffer overflow on 32-bit systems from a large X.509 certificate"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
+          "subcomponents": [
+            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The overflow is specific to 32-bit OpenSSL builds. The TenantForge image is published only for 64-bit platforms (linux/amd64, linux/arm64), where this code path is not present.",
+      "action_statement": "Re-evaluate if a 32-bit image variant is ever published. Superseded once the base image rebuilds with libssl3 >= 3.0.19-1~deb12u2."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-28387",
+        "description": "OpenSSL use-after-free in DANE TLSA authentication"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
+          "subcomponents": [
+            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "TenantForge performs only standard outbound HTTPS/Postgres TLS via Node.js; it never enables or invokes DANE/TLSA certificate authentication, so the vulnerable code path is not executed.",
+      "action_statement": "Superseded once the base image rebuilds with libssl3 >= 3.0.19-1~deb12u2."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-28388",
+        "description": "OpenSSL denial of service via NULL pointer dereference in delta CRL / CMS processing"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
+          "subcomponents": [
+            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "TenantForge does not process CMS messages; the only OpenSSL consumers are TLS client handshakes (Node https / pg) and HMAC/SHA hashing. The CMS code path is not executed.",
+      "action_statement": "Superseded once the base image rebuilds with libssl3 >= 3.0.19-1~deb12u2."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-28389",
+        "description": "OpenSSL denial of service in CMS processing"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
+          "subcomponents": [
+            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "TenantForge does not process CMS messages; the CMS code path is not executed by the application's TLS-client + HMAC/SHA usage.",
+      "action_statement": "Superseded once the base image rebuilds with libssl3 >= 3.0.19-1~deb12u2."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-28390",
+        "description": "OpenSSL denial of service via NULL pointer dereference in CMS"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
+          "subcomponents": [
+            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "TenantForge does not process CMS messages; the CMS code path is not executed.",
+      "action_statement": "Superseded once the base image rebuilds with libssl3 >= 3.0.19-1~deb12u2."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-45447",
+        "description": "OpenSSL heap use-after-free in PKCS7_verify()"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
+          "subcomponents": [
+            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "TenantForge never calls PKCS7_verify(); it does not verify PKCS7/CMS signatures. Webhook authenticity uses HMAC-SHA, JWTs use jose (WebCrypto). The PKCS7 code path is not executed.",
+      "action_statement": "Superseded once the base image rebuilds with libssl3 >= 3.0.20-1~deb12u2."
+    }
+  ]
+}
