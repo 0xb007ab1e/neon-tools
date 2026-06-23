@@ -158,6 +158,13 @@ import { createPgCreditLedger } from '../adapters/neon-pg/credit-ledger.js';
 import { createInMemorySignupTokenStore } from '../adapters/signup-token-store.js';
 import { createPgSignupTokenStore } from '../adapters/neon-pg/signup-token-store.js';
 import type { SignupTokenStore } from '../ports/signup-token-store.js';
+import { createStripeSetup } from '../adapters/payment/stripe-setup.js';
+import { createTurnstileVerifier } from '../adapters/captcha/turnstile-verifier.js';
+import { createInMemoryEmailVerificationStore } from '../adapters/email-verification-store.js';
+import { createPgEmailVerificationStore } from '../adapters/neon-pg/email-verification-store.js';
+import { createInMemorySignupRequestStore } from '../adapters/signup-request-store.js';
+import { createPgSignupRequestStore } from '../adapters/neon-pg/signup-request-store.js';
+import { createPgMessageQueue } from '../adapters/neon-pg/message-queue.js';
 import { createPgWebhookSubscriptionStore } from '../adapters/neon-pg/webhook-subscription-store.js';
 import { createSubscriptionWebhookEventSink } from '../adapters/subscription-webhook-event-sink.js';
 import type { WebhookSubscriptionStore } from '../ports/webhook-subscription-store.js';
@@ -3797,6 +3804,9 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       await (auditLog as { close?: () => Promise<void> } | undefined)?.close?.();
       await (creditLedger as { close?: () => Promise<void> } | undefined)?.close?.();
       await (deps.signupTokenStore as { close?: () => Promise<void> } | undefined)?.close?.();
+      await (deps.emailVerificationStore as { close?: () => Promise<void> } | undefined)?.close?.();
+      await (deps.signupRequestStore as { close?: () => Promise<void> } | undefined)?.close?.();
+      await (deps.signupQueue as { close?: () => Promise<void> } | undefined)?.close?.();
       await (
         deps.webhookSubscriptionStore as { close?: () => Promise<void> } | undefined
       )?.close?.();
@@ -3915,6 +3925,41 @@ export function tenantForgeFromConfig(
       : config.signupTokenStore === 'memory'
         ? createInMemorySignupTokenStore()
         : undefined;
+  // Self-serve signup (public, payment-gated). Wired only when enabled (a signup secret is set);
+  // config validation guarantees Stripe + a captcha + a notifier are present. The lifecycle queue
+  // producer enqueues the async `provision` command the worker then runs.
+  const signupEnabled = config.signupSecret !== undefined;
+  const usePgSignupStore = config.signupStore === 'pg';
+  const paymentSetup = signupEnabled
+    ? createStripeSetup({
+        secretKey: config.stripeSecretKey!,
+        allowInsecure: allowInsecureUrls,
+        ...(config.stripeApiBaseUrl !== undefined ? { baseUrl: config.stripeApiBaseUrl } : {}),
+      })
+    : undefined;
+  const captcha =
+    signupEnabled && config.captcha.provider === 'turnstile'
+      ? createTurnstileVerifier({ secretKey: config.captcha.secret! })
+      : undefined;
+  const emailVerificationStore = signupEnabled
+    ? usePgSignupStore
+      ? createPgEmailVerificationStore({
+          connectionString: config.databaseUrl,
+          allowInsecure: allowInsecureDb,
+        })
+      : createInMemoryEmailVerificationStore()
+    : undefined;
+  const signupRequestStore = signupEnabled
+    ? usePgSignupStore
+      ? createPgSignupRequestStore({
+          connectionString: config.databaseUrl,
+          allowInsecure: allowInsecureDb,
+        })
+      : createInMemorySignupRequestStore()
+    : undefined;
+  const signupQueue = signupEnabled
+    ? createPgMessageQueue({ connectionString: config.databaseUrl, allowInsecure: allowInsecureDb })
+    : undefined;
   return createTenantForge({
     registry,
     provisioning,
@@ -3924,6 +3969,12 @@ export function tenantForgeFromConfig(
     eventSink,
     ...(creditLedger !== undefined ? { creditLedger } : {}),
     ...(signupTokenStore !== undefined ? { signupTokenStore } : {}),
+    ...(paymentSetup !== undefined ? { paymentSetup } : {}),
+    ...(captcha !== undefined ? { captcha } : {}),
+    ...(emailVerificationStore !== undefined ? { emailVerificationStore } : {}),
+    ...(signupRequestStore !== undefined ? { signupRequestStore } : {}),
+    ...(signupQueue !== undefined ? { signupQueue } : {}),
+    emailCodeTtlMs: config.emailCodeTtlMs,
     webhookSubscriptionStore,
     allowInsecureWebhookUrl: allowInsecureUrls,
     ...(auditLog !== undefined ? { auditLog } : {}),

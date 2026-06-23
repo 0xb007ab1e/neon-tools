@@ -273,6 +273,24 @@ const EnvSchema = z
     TENANTFORGE_NOTIFIER_SECRET: z.string().min(1).optional(),
     // Ops recipient for the operator alert digest (operatorDigest({ notify: true })); needs a notifier.
     TENANTFORGE_OPERATOR_EMAIL: z.string().min(1).optional(),
+    // --- Self-serve signup (public, payment-gated web onboarding) ---
+    // HMAC key for the signup-session cookie; **set ⇒ self-serve signup is enabled** and (enforced
+    // below) requires Stripe, a captcha provider, and a notifier. A secret; never committed/logged.
+    TENANTFORGE_SIGNUP_SECRET: z.string().min(1).optional(),
+    // Backend for the signup stores (email-verification + funnel): `pg` (durable) or `memory` (dev).
+    TENANTFORGE_SIGNUP_STORE: z.enum(['memory', 'pg']).default('pg'),
+    // TTL (ms) for an emailed verification code. Default 15 minutes.
+    TENANTFORGE_EMAIL_CODE_TTL_MS: z.coerce.number().int().positive().default(900_000),
+    // Stripe **publishable** key (pk_…) — public, ships to the browser for Stripe.js. Required when
+    // signup is enabled. Not a secret, but kept in config for symmetry.
+    STRIPE_PUBLISHABLE_KEY: z.string().min(1).optional(),
+    // Captcha provider gating the public signup: `none` (off) or `turnstile` (Cloudflare). When signup
+    // is enabled it must be a real provider (enforced below).
+    TENANTFORGE_CAPTCHA_PROVIDER: z.enum(['none', 'turnstile']).default('none'),
+    // Captcha **secret** key (server-side siteverify) — required when the provider is set. A secret.
+    TENANTFORGE_CAPTCHA_SECRET: z.string().min(1).optional(),
+    // Captcha **site** key — public, ships to the browser widget. Required with a provider.
+    TENANTFORGE_CAPTCHA_SITE_KEY: z.string().min(1).optional(),
     // Outbound lifecycle webhook (optional): HMAC-signed POST of each event to an external endpoint.
     TENANTFORGE_WEBHOOK_URL: z.string().url().optional(),
     TENANTFORGE_WEBHOOK_SECRET: z.string().min(1).optional(),
@@ -509,6 +527,16 @@ export interface Config {
   notifierHttp?: { url: string; secret?: string };
   /** Ops recipient for the operator alert digest (when set with a notifier). */
   operatorEmail?: string;
+  /** HMAC key for the signup-session cookie; set ⇒ self-serve signup is enabled. */
+  signupSecret?: string;
+  /** Backend for the signup stores (email-verification + funnel). */
+  signupStore: 'memory' | 'pg';
+  /** TTL (ms) for an emailed verification code. */
+  emailCodeTtlMs: number;
+  /** Stripe publishable key (public; for Stripe.js) — present when signup is enabled. */
+  stripePublishableKey?: string;
+  /** Captcha config for the public signup. */
+  captcha: { provider: 'none' | 'turnstile'; secret?: string; siteKey?: string };
   /** Port for the HTTP entrypoint. */
   port: number;
 }
@@ -546,6 +574,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     usageAlertThresholds: parsed.TENANTFORGE_USAGE_ALERT_THRESHOLDS,
     paymentGateway: parsed.TENANTFORGE_PAYMENT_GATEWAY,
     notifier: parsed.TENANTFORGE_NOTIFIER,
+    signupStore: parsed.TENANTFORGE_SIGNUP_STORE,
+    emailCodeTtlMs: parsed.TENANTFORGE_EMAIL_CODE_TTL_MS,
+    captcha: {
+      provider: parsed.TENANTFORGE_CAPTCHA_PROVIDER,
+      ...(parsed.TENANTFORGE_CAPTCHA_SECRET !== undefined
+        ? { secret: parsed.TENANTFORGE_CAPTCHA_SECRET }
+        : {}),
+      ...(parsed.TENANTFORGE_CAPTCHA_SITE_KEY !== undefined
+        ? { siteKey: parsed.TENANTFORGE_CAPTCHA_SITE_KEY }
+        : {}),
+    },
+    ...(parsed.TENANTFORGE_SIGNUP_SECRET !== undefined
+      ? { signupSecret: parsed.TENANTFORGE_SIGNUP_SECRET }
+      : {}),
+    ...(parsed.STRIPE_PUBLISHABLE_KEY !== undefined
+      ? { stripePublishableKey: parsed.STRIPE_PUBLISHABLE_KEY }
+      : {}),
     ...(parsed.STRIPE_SECRET_KEY !== undefined
       ? { stripeSecretKey: parsed.STRIPE_SECRET_KEY }
       : {}),
@@ -604,6 +649,38 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (parsed.TENANTFORGE_PAYMENT_GATEWAY === 'stripe' && parsed.STRIPE_SECRET_KEY === undefined) {
     throw new Error('STRIPE_SECRET_KEY is required when TENANTFORGE_PAYMENT_GATEWAY=stripe');
+  }
+  // A captcha provider needs both keys (server secret + public site key).
+  if (
+    parsed.TENANTFORGE_CAPTCHA_PROVIDER !== 'none' &&
+    parsed.TENANTFORGE_CAPTCHA_SECRET === undefined
+  ) {
+    throw new Error(
+      'TENANTFORGE_CAPTCHA_SECRET is required when TENANTFORGE_CAPTCHA_PROVIDER is set',
+    );
+  }
+  // Self-serve signup (enabled by TENANTFORGE_SIGNUP_SECRET) is payment-gated + abuse-gated: it
+  // fails closed at config time unless Stripe, a captcha, and a notifier are all configured.
+  if (parsed.TENANTFORGE_SIGNUP_SECRET !== undefined) {
+    if (parsed.TENANTFORGE_PAYMENT_GATEWAY !== 'stripe') {
+      throw new Error('self-serve signup requires TENANTFORGE_PAYMENT_GATEWAY=stripe');
+    }
+    if (parsed.STRIPE_PUBLISHABLE_KEY === undefined) {
+      throw new Error('self-serve signup requires STRIPE_PUBLISHABLE_KEY (for Stripe.js)');
+    }
+    if (
+      parsed.TENANTFORGE_CAPTCHA_PROVIDER === 'none' ||
+      parsed.TENANTFORGE_CAPTCHA_SITE_KEY === undefined
+    ) {
+      throw new Error(
+        'self-serve signup requires a captcha (TENANTFORGE_CAPTCHA_PROVIDER + _SECRET + _SITE_KEY)',
+      );
+    }
+    if (parsed.TENANTFORGE_NOTIFIER === 'none') {
+      throw new Error(
+        'self-serve signup requires a notifier (TENANTFORGE_NOTIFIER=log|http) for email verification',
+      );
+    }
   }
   if (parsed.TENANTFORGE_AUTH_MODE === 'oidc') {
     // superRefine guarantees issuer/audience/jwksUri are present for this mode.
