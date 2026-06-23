@@ -15,9 +15,7 @@
       "products": [
         {
           "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
-          "subcomponents": [
-            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
-          ]
+          "subcomponents": [{ "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }]
         }
       ],
       "status": "not_affected",
@@ -33,9 +31,7 @@
       "products": [
         {
           "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
-          "subcomponents": [
-            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
-          ]
+          "subcomponents": [{ "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }]
         }
       ],
       "status": "not_affected",
@@ -51,9 +47,7 @@
       "products": [
         {
           "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
-          "subcomponents": [
-            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
-          ]
+          "subcomponents": [{ "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }]
         }
       ],
       "status": "not_affected",
@@ -69,9 +63,7 @@
       "products": [
         {
           "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
-          "subcomponents": [
-            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
-          ]
+          "subcomponents": [{ "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }]
         }
       ],
       "status": "not_affected",
@@ -87,9 +79,7 @@
       "products": [
         {
           "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
-          "subcomponents": [
-            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
-          ]
+          "subcomponents": [{ "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }]
         }
       ],
       "status": "not_affected",
@@ -105,9 +95,7 @@
       "products": [
         {
           "@id": "pkg:oci/tenantforge?repository_url=ghcr.io/0xb007ab1e/neon-tools/tenantforge",
-          "subcomponents": [
-            { "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }
-          ]
+          "subcomponents": [{ "@id": "pkg:deb/debian/libssl3@3.0.18-1~deb12u2?distro=debian-12" }]
         }
       ],
       "status": "not_affected",
