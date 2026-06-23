@@ -11,8 +11,11 @@ allowBuilds:
 # - vitest  ^3.2.6   GHSA-5xrq-8626-4rwp (critical)
 # - vite    ^8.0.16  GHSA-fx2h-pf6j-xcff / GHSA-4w7w-66w2-5vf9 / GHSA-v6wh-96g9-6wx3
 # - esbuild ^0.28.1  GHSA-gv7w-rqvm-qjhr / GHSA-67mh-4wv8-2f99
+# - qs      >=6.15.2 GHSA-q8mj-m7cp-5q26 / CVE-2026-8723 (stringify DoS; dev-only via
+#                    @stryker-mutator → typed-rest-client; runtime path was already 6.15.2)
 overrides:
   vitest: '^3.2.6'
   '@vitest/coverage-v8': '^3.2.6'
   vite: '^8.0.16'
   esbuild: '^0.28.1'
+  qs: '>=6.15.2'
