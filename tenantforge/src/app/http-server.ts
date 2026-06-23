@@ -26,6 +26,7 @@ import { runWithActor } from './actor-context.js';
 import { currentTrace, withOperationSpan } from './trace-context.js';
 import { createDashboard } from './dashboard.js';
 import { createPortal } from './portal.js';
+import { createSignup } from './signup.js';
 import type { TenantAuthenticator } from '../ports/tenant-authenticator.js';
 
 // Re-export the auth types so existing importers (config) keep their import path.
@@ -77,6 +78,18 @@ export interface HttpServerOptions {
    * webhook verifier is configured on the service.
    */
   paymentWebhooks?: boolean;
+  /**
+   * When set (with the public Stripe + captcha keys), mount the public, payment-gated **self-serve
+   * signup** sub-app at `/signup` (HMAC session key). Unauthenticated + per-IP rate-limited; the
+   * service must have the signup ports configured (else its endpoints fail closed).
+   */
+  signupSecret?: string;
+  /** Stripe publishable key (public) for the signup SPA; required to mount `/signup`. */
+  signupPublishableKey?: string;
+  /** Captcha site key (public) for the signup widget; required to mount `/signup`. */
+  signupCaptchaSiteKey?: string;
+  /** Path to the built signup SPA (`signup/dist`); when set, the signup sub-app serves the front-end. */
+  signupStaticRoot?: string;
 }
 
 /** Hono Variables: the resolved principal, set by the auth middleware. */
@@ -262,6 +275,27 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
         tf,
         authenticator: options.tenantAuthenticator,
         sessionSecret: options.portalSecret,
+        now: () => now(),
+      }),
+    );
+  }
+
+  // Public, payment-gated self-serve signup (its own short-lived cookie session, per-IP rate-limited)
+  // — mounted only when the signup secret + public Stripe/captcha keys are configured.
+  if (
+    options.signupSecret !== undefined &&
+    options.signupPublishableKey !== undefined &&
+    options.signupCaptchaSiteKey !== undefined
+  ) {
+    app.route(
+      '/signup',
+      createSignup({
+        tf,
+        sessionSecret: options.signupSecret,
+        publishableKey: options.signupPublishableKey,
+        captchaSiteKey: options.signupCaptchaSiteKey,
+        ...(options.rateLimitStore !== undefined ? { rateLimitStore: options.rateLimitStore } : {}),
+        ...(options.signupStaticRoot !== undefined ? { staticRoot: options.signupStaticRoot } : {}),
         now: () => now(),
       }),
     );

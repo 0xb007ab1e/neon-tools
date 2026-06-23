@@ -121,6 +121,17 @@ function main(): void {
     ...(config.portalSecret !== undefined && tenantAuthenticator !== undefined
       ? { portalSecret: config.portalSecret, tenantAuthenticator }
       : {}),
+    // Public self-serve signup — mounted when enabled (signup secret + the public Stripe/captcha keys).
+    // Config validation guarantees these are present together when TENANTFORGE_SIGNUP_SECRET is set.
+    ...(config.signupSecret !== undefined &&
+    config.stripePublishableKey !== undefined &&
+    config.captcha.siteKey !== undefined
+      ? {
+          signupSecret: config.signupSecret,
+          signupPublishableKey: config.stripePublishableKey,
+          signupCaptchaSiteKey: config.captcha.siteKey,
+        }
+      : {}),
     metrics: () => metrics.render(),
   });
 
