@@ -205,6 +205,9 @@ const EnvSchema = z
     // Path to the built SPA (`dashboard/dist`); when set, the dashboard also serves the front-end,
     // so a production deploy needs no separate static web server. Unset = JSON API only.
     TENANTFORGE_DASHBOARD_DIST: z.string().min(1).optional(),
+    // Path to the built signup SPA (`signup/dist`); when set (with signup enabled), the /signup
+    // sub-app also serves the front-end.
+    TENANTFORGE_SIGNUP_DIST: z.string().min(1).optional(),
     // Customer-facing self-serve portal: when set (with PORTAL_CREDENTIALS), mount the tenant portal
     // at /portal. The value is the HMAC key that signs portal session cookies (a secret).
     TENANTFORGE_PORTAL_SECRET: z.string().min(1).optional(),
@@ -482,6 +485,8 @@ export interface Config {
   dashboardSecret?: string;
   /** Path to the built SPA (`dashboard/dist`); set ⇒ the dashboard also serves the front-end. */
   dashboardDist?: string;
+  /** Path to the built signup SPA (`signup/dist`); when set, the signup sub-app serves the front-end. */
+  signupDist?: string;
   /** Directory of ordered migration `.sql` files; set ⇒ the dashboard can execute a reconcile. */
   migrationsDir?: string;
   /** Portal session-cookie HMAC key; set (with `portalCredentials`) ⇒ the /portal is mounted. */
@@ -612,6 +617,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       : {}),
     ...(parsed.TENANTFORGE_DASHBOARD_DIST !== undefined
       ? { dashboardDist: parsed.TENANTFORGE_DASHBOARD_DIST }
+      : {}),
+    ...(parsed.TENANTFORGE_SIGNUP_DIST !== undefined
+      ? { signupDist: parsed.TENANTFORGE_SIGNUP_DIST }
       : {}),
     ...(parsed.TENANTFORGE_PORTAL_SECRET !== undefined
       ? { portalSecret: parsed.TENANTFORGE_PORTAL_SECRET }

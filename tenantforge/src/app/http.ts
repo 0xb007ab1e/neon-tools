@@ -130,6 +130,7 @@ function main(): void {
           signupSecret: config.signupSecret,
           signupPublishableKey: config.stripePublishableKey,
           signupCaptchaSiteKey: config.captcha.siteKey,
+          ...(config.signupDist !== undefined ? { signupStaticRoot: config.signupDist } : {}),
         }
       : {}),
     metrics: () => metrics.render(),

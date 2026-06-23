@@ -14,6 +14,7 @@ export default tseslint.config(
       'coverage/**',
       'docs/api/**',
       'dashboard/dist/**',
+      'signup/dist/**',
       'eslint.config.js',
       'stryker.config.mjs',
       '.stryker-tmp/**',
