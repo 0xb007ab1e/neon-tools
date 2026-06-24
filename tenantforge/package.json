@@ -22,14 +22,14 @@
     "migrations"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && pnpm dashboard:build",
+    "build": "tsc -p tsconfig.build.json && pnpm dashboard:build && pnpm signup:build",
     "version:check": "node scripts/check-version.mjs",
     "cli": "node --env-file-if-exists=.env --import tsx src/app/cli.ts",
     "http": "node --env-file-if-exists=.env --import tsx src/app/http.ts",
     "mcp": "node --env-file-if-exists=.env --import tsx src/app/mcp.ts",
     "worker": "node --env-file-if-exists=.env --import tsx src/app/worker.ts",
     "load": "node --import tsx src/app/load.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p dashboard/tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p dashboard/tsconfig.json --noEmit && tsc -p signup/tsconfig.json --noEmit",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "docs": "typedoc",
@@ -39,7 +39,9 @@
     "test:dashboard": "vitest run --config dashboard/vitest.config.ts",
     "mutation": "stryker run",
     "dashboard:dev": "vite --config dashboard/vite.config.ts",
-    "dashboard:build": "vite build --config dashboard/vite.config.ts"
+    "dashboard:build": "vite build --config dashboard/vite.config.ts",
+    "signup:dev": "vite --config signup/vite.config.ts",
+    "signup:build": "vite build --config signup/vite.config.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.5",
