@@ -102,6 +102,7 @@ function fakePaymentSetup(
         ...(setupStatus === 'succeeded' ? { paymentMethodRef: 'pm_1' } : {}),
         provider: 'fake',
       }),
+    setDefaultPaymentMethod: () => Promise.resolve(),
   };
 }
 

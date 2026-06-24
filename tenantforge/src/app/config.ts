@@ -222,6 +222,22 @@ const EnvSchema = z
     TENANTFORGE_PORTAL_OIDC_JWKS_URI: z.string().url().optional(),
     // The JWT claim carrying the tenant id. Defaults to `tenant`.
     TENANTFORGE_PORTAL_OIDC_TENANT_CLAIM: z.string().min(1).default('tenant'),
+    // Self-serve portal write surface (ADR-0010 / threat-model B8w). The destructive pair
+    // (cancel + erasure) ships behind a feature flag that is OFF by default (red-team F6); the
+    // payment/plan/invoice reads + writes are always available when the portal is mounted.
+    TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
+    // TTL (ms) for a portal step-up second-factor code (cancel/erasure). Default 10 minutes.
+    TENANTFORGE_PORTAL_STEPUP_TTL_MS: z.coerce.number().int().positive().default(600_000),
+    // Mandatory erasure undo window (ms) — how long a tenant may cancel a scheduled erasure.
+    // Default 48h; window + execution must stay within the statutory erasure SLA (B8w).
+    TENANTFORGE_PORTAL_ERASURE_UNDO_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(48 * 60 * 60 * 1000),
     // Directory of ordered migration `.sql` files (the catalog). When set, the dashboard can EXECUTE
     // a fleet reconcile (tenant:provision-gated) — the server loads the SQL from here. Unset =
     // reconcile is preview-only in the browser (execution stays a CLI op).
@@ -495,6 +511,12 @@ export interface Config {
   portalCredentials?: { tenantId: string; token: string }[];
   /** Portal auth mode: static `token` map or `oidc` (verify a customer-IdP JWT's tenant claim). */
   portalAuthMode: 'token' | 'oidc';
+  /** Enable the portal's destructive self-serve actions (cancel + erasure). Default false (ADR-0010 / red-team F6). */
+  portalSelfServeDestructive: boolean;
+  /** TTL (ms) for a portal step-up second-factor code. */
+  stepUpCodeTtlMs: number;
+  /** Mandatory erasure undo window (ms) — how long a tenant may cancel a scheduled erasure. */
+  erasureUndoWindowMs: number;
   /** Portal OIDC settings, set when `portalAuthMode` is `oidc`. */
   portalOidc?: {
     /** Expected token issuer (`iss`). */
@@ -608,6 +630,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     connectionCacheTtlMs: parsed.TENANTFORGE_CONNECTION_CACHE_TTL_MS,
     authMode: parsed.TENANTFORGE_AUTH_MODE,
     portalAuthMode: parsed.TENANTFORGE_PORTAL_AUTH_MODE,
+    portalSelfServeDestructive: parsed.TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE,
+    stepUpCodeTtlMs: parsed.TENANTFORGE_PORTAL_STEPUP_TTL_MS,
+    erasureUndoWindowMs: parsed.TENANTFORGE_PORTAL_ERASURE_UNDO_WINDOW_MS,
     port: parsed.TENANTFORGE_PORT,
     ...(parsed.TENANTFORGE_DASHBOARD_SECRET !== undefined
       ? { dashboardSecret: parsed.TENANTFORGE_DASHBOARD_SECRET }

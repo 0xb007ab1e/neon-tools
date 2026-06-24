@@ -152,6 +152,8 @@ import type { SignupRequestStore } from '../ports/signup-request-store.js';
 import type { PaymentEvent, PaymentWebhookVerifier } from '../ports/payment-webhook.js';
 import type { Notifier } from '../ports/notifier.js';
 import type { CreditLedger } from '../ports/credit-ledger.js';
+import type { OneTimeCodeStore } from '../ports/one-time-code-store.js';
+import type { PendingErasureRecord, PendingErasureStore } from '../ports/pending-erasure-store.js';
 import { createStripeWebhookVerifier } from '../adapters/payment/stripe-webhook.js';
 import { createInMemoryCreditLedger } from '../adapters/credit-ledger.js';
 import { createPgCreditLedger } from '../adapters/neon-pg/credit-ledger.js';
@@ -164,6 +166,8 @@ import { createInMemoryEmailVerificationStore } from '../adapters/email-verifica
 import { createPgEmailVerificationStore } from '../adapters/neon-pg/email-verification-store.js';
 import { createInMemorySignupRequestStore } from '../adapters/signup-request-store.js';
 import { createPgSignupRequestStore } from '../adapters/neon-pg/signup-request-store.js';
+import { createInMemoryOneTimeCodeStore } from '../adapters/one-time-code-store.js';
+import { createInMemoryPendingErasureStore } from '../adapters/pending-erasure-store.js';
 import { createPgMessageQueue } from '../adapters/neon-pg/message-queue.js';
 import { createPgWebhookSubscriptionStore } from '../adapters/neon-pg/webhook-subscription-store.js';
 import { createSubscriptionWebhookEventSink } from '../adapters/subscription-webhook-event-sink.js';
@@ -474,6 +478,27 @@ export interface TenantForgeDeps {
   /** TTL (ms) for a signup email-verification code. Defaults to 15 minutes. */
   emailCodeTtlMs?: number;
   /**
+   * **Self-serve portal** step-up second-factor store (threat-model B8w / red-team F1). When provided
+   * (with a {@link notifier}), `requestTenantStepUp` mints a single-use email code and
+   * `verifyTenantStepUp` checks it — the control-plane-owned factor that gates the destructive portal
+   * actions (cancel, erasure), independent of the OIDC token. Absent ⇒ those actions fail closed.
+   */
+  oneTimeCodeStore?: OneTimeCodeStore;
+  /** TTL (ms) for a portal step-up code. Defaults to 10 minutes. */
+  stepUpCodeTtlMs?: number;
+  /** Max failed step-up attempts before the code locks. Defaults to 5. */
+  stepUpMaxAttempts?: number;
+  /**
+   * **Self-serve portal** pending-erasure store (the mandatory undo window — threat-model B8w /
+   * red-team F2). When provided (with an exporter for the verified-erasure engine),
+   * `requestTenantErasure` schedules a cancellable erasure, `cancelTenantErasure` cancels it, and
+   * `executePendingErasure` runs it after the window via a single atomic conditional flip. Absent ⇒
+   * self-serve erasure fails closed.
+   */
+  pendingErasureStore?: PendingErasureStore;
+  /** Erasure undo window (ms): how long a tenant may cancel a scheduled erasure. Defaults to 48h. */
+  erasureUndoWindowMs?: number;
+  /**
    * Store for managed outbound **webhook subscriptions**. When provided (with a {@link secretStore}),
    * `createWebhookSubscription` / `listWebhookSubscriptions` / `deleteWebhookSubscription` are
    * enabled and matching events fan out to each subscription; absent ⇒ they fail closed / no-op.
@@ -674,6 +699,51 @@ export interface SignupPaymentSetup {
   clientSecret: string;
   /** The setup-intent id (verified server-side on completion). */
   setupIntentId: string;
+}
+
+/** The result of confirming + setting a tenant's default payment method (no card data; safe to show). */
+export interface TenantPaymentMethodResult {
+  /** The tenant the method was set for (the session tenant). */
+  tenantId: string;
+  /** Whether a default payment method is now on file. */
+  hasDefault: true;
+  /** The PSP setup-intent id that was verified (a reference, not card data). */
+  setupIntentId: string;
+}
+
+/** A safe-projection view of a tenant's scheduled (cancellable) erasure for the portal. */
+export interface PendingErasureView {
+  /** ISO-8601 when the erasure was requested. */
+  requestedAt: string;
+  /** ISO-8601 after which the erasure executes — the customer can cancel until then. */
+  executeAt: string;
+  /** Current status (the undo-window state). */
+  status: PendingErasureRecord['status'];
+}
+
+/** The outcome of a self-serve cancel (offboard) — includes the reversibility deadline to surface. */
+export interface TenantCancelResult {
+  /** The tenant id (the session tenant). */
+  tenantId: string;
+  /** The tenant's status after cancel (`offboarding`). */
+  status: string;
+  /**
+   * ISO-8601 deadline after which the cancel is no longer self-/operator-reversible (the project is
+   * eligible for purge) — `offboardedAt + retentionDays`. Surfaced so the customer knows the window.
+   */
+  reversibleUntil: string;
+}
+
+/** The outcome of scheduling a self-serve erasure (the undo window is now open). */
+export interface TenantErasureRequestResult {
+  /** The tenant id (the session tenant). */
+  tenantId: string;
+  /** ISO-8601 when the erasure was requested. */
+  requestedAt: string;
+  /** ISO-8601 after which it executes (request + undo window) — the customer can cancel until then. */
+  executeAt: string;
+  /** The undo-window state (`pending`). */
+  status: PendingErasureRecord['status'];
 }
 
 /**
@@ -1523,6 +1593,134 @@ export interface TenantForge {
   changePlan(id: string, newPriceUsd: number, opts?: PlanChangeOptions): Promise<PlanChangeReport>;
 
   /**
+   * **Begin a payment-method setup for an existing tenant** (the self-serve portal's "update card").
+   * Mints a PSP SetupIntent for the **tenant's own** `billingCustomerRef` (read from the registry by
+   * the server-derived tenant id — never client input) and hands the browser a client secret so
+   * Stripe.js can collect + confirm the card client-side (PAN never touches this server). Fails closed
+   * when the tenant has no billing customer (red-team F5). Mirrors the signup
+   * {@link TenantForge.createPaymentSetup} pattern for an already-provisioned tenant.
+   *
+   * @param tenantId - The tenant's own id (from the authenticated portal session).
+   * @returns The client secret + setup-intent id.
+   * @throws If self-serve payment isn't configured or the tenant has no billing customer.
+   */
+  tenantPaymentSetup(tenantId: string): Promise<SignupPaymentSetup>;
+
+  /**
+   * **Verify a confirmed SetupIntent and set it as the tenant's default payment method.** Never trusts
+   * the client's "card saved" claim: reads the intent back server-side, requires `status === succeeded`
+   * with a saved payment method, and checks `intent.customerRef === tenant.billingCustomerRef` so a
+   * SetupIntent for customer X can't be applied to tenant Y (PSP-side BOLA — red-team F5). Records the
+   * default in metadata and emits `tenant.payment_method_updated`.
+   *
+   * @param tenantId - The tenant's own id (server-derived).
+   * @param setupIntentId - The SetupIntent the browser confirmed.
+   * @returns A safe confirmation (no card data).
+   * @throws If unconfigured, the tenant has no billing customer, or verification/ownership fails.
+   */
+  confirmTenantPaymentMethod(
+    tenantId: string,
+    setupIntentId: string,
+  ): Promise<TenantPaymentMethodResult>;
+
+  /**
+   * A tenant's **recent invoices** for the portal — generated on demand for the current month and the
+   * preceding `months - 1` months (invoices are generated, not stored). Requires a usage provider.
+   *
+   * @param tenantId - The tenant's own id (server-derived).
+   * @param months - How many trailing months to include (1–12). Defaults to 3.
+   * @returns Invoices, newest period first.
+   */
+  tenantInvoices(tenantId: string, months?: number): Promise<Invoice[]>;
+
+  /**
+   * **Request a control-plane step-up second factor** for a destructive portal action (cancel /
+   * erasure). Mints a single-use, short-TTL code, persists only its hash, and delivers it to the
+   * tenant's verified billing email — independent of the OIDC token (red-team F1). Fails closed
+   * without a one-time-code store + notifier.
+   *
+   * @param tenantId - The tenant's own id (server-derived).
+   * @param action - The action the code authorizes (`cancel` | `erasure`).
+   * @throws If step-up isn't configured or the tenant has no billing email.
+   */
+  requestTenantStepUp(tenantId: string, action: 'cancel' | 'erasure'): Promise<void>;
+
+  /**
+   * **Verify a presented step-up code** for a tenant + action (single-use, constant-time, attempt-
+   * locked). Returns true only on an exact, unexpired, unconsumed match bound to that action.
+   *
+   * @param tenantId - The tenant's own id (server-derived).
+   * @param action - The action the code must be bound to.
+   * @param code - The presented code.
+   * @returns Whether the code verified (and was consumed).
+   */
+  verifyTenantStepUp(
+    tenantId: string,
+    action: 'cancel' | 'erasure',
+    code: string,
+  ): Promise<boolean>;
+
+  /**
+   * **Self-serve cancel** — offboard the **session tenant's own** account (project retained, scaled to
+   * zero; reversible until purge — **never** `purge`). Excludes the tenant from billing/dunning sweeps
+   * (they filter to `active`). Emits `tenant.offboarded` and alerts operator + the tenant's email.
+   * Returns the reversibility deadline so the customer knows the window.
+   *
+   * @param tenantId - The tenant's own id (server-derived).
+   * @returns The cancel outcome incl. `reversibleUntil`.
+   */
+  cancelTenant(tenantId: string): Promise<TenantCancelResult>;
+
+  /**
+   * **Schedule a self-serve erasure** with a mandatory undo window (red-team F2): creates a `pending`
+   * record (request + window); the tenant **keeps serving** until the window elapses, when the executor
+   * runs the verified-erasure engine — only if it wins an atomic flip. The customer may
+   * {@link TenantForge.cancelTenantErasure} until then. Emits `tenant.erasure_requested` and alerts.
+   *
+   * @param tenantId - The tenant's own id (server-derived).
+   * @param reason - Audit reason carried into the certificate (no secrets).
+   * @returns The schedule (incl. `executeAt`).
+   * @throws If self-serve erasure isn't configured or an erasure is already in flight.
+   */
+  requestTenantErasure(tenantId: string, reason: string): Promise<TenantErasureRequestResult>;
+
+  /**
+   * **Cancel a pending self-serve erasure** within the undo window (atomic `pending → cancelled`).
+   * Returns true only if it won the flip (the executor hadn't already claimed it).
+   *
+   * @param tenantId - The tenant's own id (server-derived).
+   * @returns Whether a pending erasure was cancelled.
+   */
+  cancelTenantErasure(tenantId: string): Promise<boolean>;
+
+  /**
+   * The tenant's **active pending erasure** (for the portal to show the undo deadline), or `null`.
+   *
+   * @param tenantId - The tenant's own id (server-derived).
+   * @returns The safe pending-erasure view, or `null`.
+   */
+  pendingErasure(tenantId: string): Promise<PendingErasureView | null>;
+
+  /**
+   * **Execute a due pending erasure** (the scheduled executor / queue consumer). Wins an atomic
+   * `pending → processing` flip before destroying anything; a lost flip (cancelled / redelivered)
+   * acks and exits without erasing — idempotent across at-least-once delivery (red-team F2). Runs the
+   * verified-erasure engine on the winner, marks the record `done`, and alerts operator + tenant.
+   *
+   * @param id - The pending-erasure request id.
+   * @returns The erasure certificate when this call ran the erasure, else `null` (lost the flip).
+   */
+  executePendingErasure(id: string): Promise<ErasureCertificate | null>;
+
+  /**
+   * Pending erasures whose window has elapsed and are still `pending` — the executor's work queue.
+   *
+   * @param limit - Max records. Defaults to 100.
+   * @returns Due pending-erasure ids + tenant ids.
+   */
+  duePendingErasures(limit?: number): Promise<{ id: string; tenantId: string }[]>;
+
+  /**
    * **Set a tenant's included usage allowances** (`metadata.includedUsage`) — the per-period usage
    * its plan covers before any **overage** is billed. Usage within an allowance is free; only the
    * excess is billed (at the configured billing rates) on the tenant's next invoice/charge. This is
@@ -1892,6 +2090,55 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const billingEmail = (metadata: JsonObject): string | undefined => {
     const v = metadata['billingEmail'];
     return typeof v === 'string' && v.length > 0 ? v : undefined;
+  };
+
+  /** Best-effort operator alert (no PII in the body). Never throws (topic-notifications). */
+  const alertOperator = async (body: string): Promise<void> => {
+    const to = deps.operatorEmail;
+    if (notifier === undefined || to === undefined) return;
+    try {
+      await notifier.notify({
+        to,
+        subject: '[TenantForge] self-serve account action',
+        body,
+        idempotencyKey: `operator-alert:${createHash('sha256').update(body).digest('hex')}`,
+      });
+    } catch {
+      // An alert send must never break the action it reports on.
+    }
+  };
+
+  /**
+   * Griefing tripwire / wrong-account safety net (red-team F7): on a self-serve destructive action
+   * (cancel / erasure) alert **both** the operator and the tenant's verified email — best-effort, so a
+   * notifier failure never blocks the action. The tenant slug (not PII) identifies the account.
+   */
+  const alertSelfServeDestructive = async (
+    tenant: TenantRecord,
+    action: 'cancel' | 'erasure',
+    detail: { reversibleUntil?: string; executeAt?: string },
+  ): Promise<void> => {
+    if (notifier === undefined) return;
+    const when =
+      detail.reversibleUntil !== undefined
+        ? `Reversible until ${detail.reversibleUntil}.`
+        : detail.executeAt !== undefined
+          ? `Scheduled to execute at ${detail.executeAt}; you can cancel until then.`
+          : '';
+    await alertOperator(`Self-serve ${action} requested for tenant ${tenant.slug}. ${when}`.trim());
+    const to = billingEmail(tenant.metadata);
+    if (to === undefined) return;
+    try {
+      await notifier.notify({
+        to,
+        subject: `Your TenantForge account ${action} request`,
+        body: `A ${action} was requested for your account (${tenant.slug}). ${when} If you did not request this, contact support immediately.`,
+        idempotencyKey: `selfserve-${action}:${tenant.id}:${detail.executeAt ?? detail.reversibleUntil ?? ''}`,
+        metadata: { tenant_id: tenant.id },
+      });
+    } catch {
+      // Best-effort — never block the destructive action on a notification failure.
+    }
   };
 
   /**
@@ -3668,6 +3915,243 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return auditLog.query({ events: ['tenant.plan_changed'], limit });
     },
 
+    async tenantPaymentSetup(tenantId: string): Promise<SignupPaymentSetup> {
+      const ps = deps.paymentSetup;
+      if (ps === undefined) throw new Error('self-serve payment is not configured');
+      const tenant = await requireTenant(tenantId);
+      // Read the tenant's PSP customer from its OWN metadata (server-derived id) — fail closed when
+      // it has none, so a SetupIntent is never opened against a missing/foreign customer (red-team F5).
+      const customerRef = billingCustomerRef(tenant.metadata);
+      if (customerRef === undefined) {
+        throw new Error('no billing customer on file; cannot add a payment method');
+      }
+      const intent = await ps.createSetupIntent({
+        customerRef,
+        idempotencyKey: `tenant-setup-intent:${tenantId}`,
+        metadata: { tenant_id: tenantId },
+      });
+      observe('tenant.payment_setup', { tenantId, outcome: 'ok' });
+      return { clientSecret: intent.clientSecret, setupIntentId: intent.setupIntentId };
+    },
+
+    async confirmTenantPaymentMethod(
+      tenantId: string,
+      setupIntentId: string,
+    ): Promise<TenantPaymentMethodResult> {
+      const ps = deps.paymentSetup;
+      if (ps === undefined) throw new Error('self-serve payment is not configured');
+      const tenant = await requireTenant(tenantId);
+      const customerRef = billingCustomerRef(tenant.metadata);
+      if (customerRef === undefined) {
+        throw new Error('no billing customer on file; cannot set a payment method');
+      }
+      // Never trust the client's "card saved": read the intent back server-side.
+      const intent = await ps.getSetupIntent(setupIntentId);
+      if (intent.status !== 'succeeded' || intent.paymentMethodRef === undefined) {
+        throw new Error('payment method not confirmed');
+      }
+      // PSP-side BOLA: the intent's customer MUST be THIS tenant's billing customer — a SetupIntent
+      // for customer X cannot be applied to tenant Y (red-team F5; mirrors completeSignup).
+      if (intent.customerRef !== customerRef) throw new Error('payment/customer mismatch');
+      // Make it the PSP default FIRST — this is the step the off-session charge path actually reads
+      // (the gateway charges the customer's invoice_settings.default_payment_method). Fail closed: if
+      // the PSP set-default throws, do NOT write local metadata or report success — otherwise the
+      // customer sees "card updated" while future charges keep using the old default (review M1).
+      await ps.setDefaultPaymentMethod(customerRef, intent.paymentMethodRef);
+      // Mirror the default reference locally for display/audit only (the PSP is the source of truth).
+      await registry.updateMetadata(tenantId, { defaultPaymentMethodRef: intent.paymentMethodRef });
+      invalidateConnection(tenantId);
+      // Audit with a reference only — never the PAN/card data (master §5).
+      observe('tenant.payment_method_updated', {
+        tenantId,
+        outcome: 'ok',
+        context: { setupIntentId },
+      });
+      return { tenantId, hasDefault: true, setupIntentId };
+    },
+
+    async tenantInvoices(tenantId: string, months = 3): Promise<Invoice[]> {
+      // Bound the trailing window (1..12) — an unbounded range is both slow and a DoS lever.
+      const count = Math.min(12, Math.max(1, Math.floor(months)));
+      const engine = invoiceEngine(); // fails closed without a usage provider
+      await requireTenant(tenantId); // 404s a stale session naming a gone tenant
+      const ref = new Date();
+      const invoices: Invoice[] = [];
+      for (let i = 0; i < count; i += 1) {
+        const from = new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth() - i, 1));
+        // The current month runs to "now"; prior months run to their last instant.
+        const to =
+          i === 0
+            ? ref
+            : new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth() - i + 1, 1) - 1);
+        invoices.push(await engine.invoice(tenantId, { from, to }));
+      }
+      return invoices; // newest period first
+    },
+
+    async requestTenantStepUp(tenantId: string, action: 'cancel' | 'erasure'): Promise<void> {
+      const store = deps.oneTimeCodeStore;
+      if (store === undefined || notifier === undefined) {
+        throw new Error('step-up is not configured');
+      }
+      const tenant = await requireTenant(tenantId);
+      const to = billingEmail(tenant.metadata);
+      if (to === undefined) throw new Error('no verified email on file for step-up');
+      // A 6-digit single-use code; persist only its hash (master §5). Independent of the OIDC token.
+      const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+      const codeHash = createHash('sha256').update(code).digest('hex');
+      const ttlMs = deps.stepUpCodeTtlMs ?? 10 * 60 * 1000;
+      await store.put({
+        tenantId,
+        action,
+        codeHash,
+        expiresAtMs: Date.now() + ttlMs,
+        attempts: 0,
+      });
+      await notifier.notify({
+        to,
+        subject: `Confirm your TenantForge ${action} request`,
+        body: `Your confirmation code for the requested ${action} is ${code}. It expires in ${Math.round(ttlMs / 60000)} minutes. If you did not request this, ignore this email and review your account.`,
+        idempotencyKey: `stepup:${tenantId}:${action}:${codeHash}`,
+      });
+      // Audit the REQUEST without the code or email (PII/secret — master §5).
+      observe('tenant.stepup_requested', { tenantId, outcome: 'ok', context: { action } });
+    },
+
+    async verifyTenantStepUp(
+      tenantId: string,
+      action: 'cancel' | 'erasure',
+      code: string,
+    ): Promise<boolean> {
+      const store = deps.oneTimeCodeStore;
+      if (store === undefined) throw new Error('step-up is not configured');
+      const codeHash = createHash('sha256').update(code).digest('hex');
+      const maxAttempts = deps.stepUpMaxAttempts ?? 5;
+      const result = await store.verify(tenantId, action, codeHash, maxAttempts, Date.now());
+      observe('tenant.stepup_verified', {
+        tenantId,
+        outcome: result.outcome === 'ok' ? 'ok' : 'error',
+        context: { action, result: result.outcome },
+      });
+      return result.outcome === 'ok';
+    },
+
+    async cancelTenant(tenantId: string): Promise<TenantCancelResult> {
+      const tenant = await requireTenant(tenantId);
+      // Self-serve cancel = offboard (project RETAINED, scaled to zero) — reversible until purge,
+      // NEVER purge. `offboarding` tenants are excluded from billing/dunning sweeps (they filter to
+      // `active`), so a cancelled tenant isn't charged or dunned (red-team F3c).
+      const offboarding = await transition(tenant, 'offboarding');
+      const retentionDays = deps.retentionDays ?? DEFAULT_RETENTION_DAYS;
+      const reversibleUntil = new Date(
+        offboarding.updatedAt.getTime() + retentionDays * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      observe('tenant.offboarded', {
+        tenantId,
+        outcome: 'ok',
+        context: { selfServe: true, reversibleUntil },
+      });
+      // Griefing tripwire / wrong-account safety net: alert the operator and the tenant (best-effort).
+      await alertSelfServeDestructive(tenant, 'cancel', { reversibleUntil });
+      return { tenantId, status: offboarding.status, reversibleUntil };
+    },
+
+    async requestTenantErasure(
+      tenantId: string,
+      reason: string,
+    ): Promise<TenantErasureRequestResult> {
+      const store = deps.pendingErasureStore;
+      if (store === undefined) throw new Error('self-serve erasure is not configured');
+      const tenant = await requireTenant(tenantId);
+      const windowMs = deps.erasureUndoWindowMs ?? 48 * 60 * 60 * 1000;
+      const requestedAt = new Date();
+      const executeAt = new Date(requestedAt.getTime() + windowMs);
+      const created = await store.create({
+        id: randomUUID(),
+        tenantId,
+        requestedAt: requestedAt.toISOString(),
+        executeAt: executeAt.toISOString(),
+        status: 'pending',
+        reason,
+      });
+      // One in-flight erasure per tenant — a second request while one is active is rejected.
+      if (created === null) throw new Error('an erasure is already in progress for this tenant');
+      // The tenant KEEPS SERVING during the window (no suspend — avoids a timer-delayed self-DoS,
+      // red-team F2). Schedule only; the executor runs after executeAt if it wins the atomic flip.
+      observe('tenant.erasure_requested', {
+        tenantId,
+        outcome: 'ok',
+        context: { executeAt: created.executeAt },
+      });
+      await alertSelfServeDestructive(tenant, 'erasure', { executeAt: created.executeAt });
+      return {
+        tenantId,
+        requestedAt: created.requestedAt,
+        executeAt: created.executeAt,
+        status: created.status,
+      };
+    },
+
+    async cancelTenantErasure(tenantId: string): Promise<boolean> {
+      const store = deps.pendingErasureStore;
+      if (store === undefined) throw new Error('self-serve erasure is not configured');
+      await requireTenant(tenantId);
+      // Atomic flip pending → cancelled. Wins only if the executor hadn't already claimed it.
+      const cancelled = await store.cancel(tenantId, Date.now());
+      observe('tenant.erasure_cancelled', {
+        tenantId,
+        outcome: cancelled !== null ? 'ok' : 'error',
+      });
+      return cancelled !== null;
+    },
+
+    async pendingErasure(tenantId: string): Promise<PendingErasureView | null> {
+      const store = deps.pendingErasureStore;
+      if (store === undefined) return null;
+      const rec = await store.getActive(tenantId);
+      if (rec === null) return null;
+      // Safe projection — no id/reason leaked to the client.
+      return { requestedAt: rec.requestedAt, executeAt: rec.executeAt, status: rec.status };
+    },
+
+    async executePendingErasure(id: string): Promise<ErasureCertificate | null> {
+      const store = deps.pendingErasureStore;
+      if (store === undefined) throw new Error('self-serve erasure is not configured');
+      // The SINGLE point that gates destruction: win pending → processing or do nothing. A lost flip
+      // (cancelled, or an at-least-once redelivery of a non-pending record) acks and exits WITHOUT
+      // erasing — idempotent across redelivery, and a cancel that raced us already won (red-team F2).
+      const claimed = await store.claimForProcessing(id);
+      if (claimed === null) return null;
+      const engine = createErasureEngine({
+        registry,
+        provisioning,
+        secretStore,
+        ...(exporter ? { exporter } : {}),
+        emit: (event) => eventSink.emit(event),
+      });
+      const certificate = await engine.erase(claimed.tenantId, { reason: claimed.reason });
+      invalidateConnection(claimed.tenantId);
+      await store.markDone(id);
+      // Alert operator + tenant that the erasure executed (best-effort; the tenant record is now gone,
+      // so read the email before erasure would be ideal — here we alert the operator deterministically).
+      observe('tenant.erased', {
+        tenantId: claimed.tenantId,
+        outcome: certificate.verified ? 'ok' : 'error',
+        context: { verified: certificate.verified },
+      });
+      await alertOperator(
+        `Self-serve erasure executed for tenant ${claimed.tenantId} (verified: ${certificate.verified}).`,
+      );
+      return certificate;
+    },
+
+    async duePendingErasures(limit = 100): Promise<{ id: string; tenantId: string }[]> {
+      const store = deps.pendingErasureStore;
+      if (store === undefined) return [];
+      const due = await store.listDue(Date.now(), limit);
+      return due.map((r) => ({ id: r.id, tenantId: r.tenantId }));
+    },
+
     async setIncludedUsage(id: string, allowance: IncludedUsage): Promise<TenantRecord> {
       const tenant = await registry.getById(id);
       if (!tenant) throw new Error(`tenant ${id} not found`);
@@ -4050,6 +4534,15 @@ export function tenantForgeFromConfig(
             keyPrefix: 'archives',
           }),
         }
+      : {}),
+    // Self-serve portal step-up + erasure-undo stores (no external deps; in-memory by default —
+    // single-instance correct, swap a Postgres-backed adapter for multi-replica). The portal's
+    // destructive actions ship behind a feature flag (ADR-0010 / red-team F6) regardless.
+    oneTimeCodeStore: createInMemoryOneTimeCodeStore(),
+    pendingErasureStore: createInMemoryPendingErasureStore(),
+    ...(config.stepUpCodeTtlMs !== undefined ? { stepUpCodeTtlMs: config.stepUpCodeTtlMs } : {}),
+    ...(config.erasureUndoWindowMs !== undefined
+      ? { erasureUndoWindowMs: config.erasureUndoWindowMs }
       : {}),
   });
 }

@@ -6,6 +6,38 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Customer self-serve portal write surface (Phase 1 — backend).** The customer portal
+  (`/portal`) gains self-serve **own-account** JSON endpoints alongside its read-only page
+  (ADR-0010 amends ADR-0004; threat-model **B8w**). MINOR — additive.
+  - **Live (no flag):** `GET /api/plan`, `POST /api/plan/preview`, `POST /api/plan/change`
+    (endpoint-level idempotent); `POST /api/payment-method/setup-intent` +
+    `POST /api/payment-method/set-default` (server-verifies the SetupIntent and that its
+    `customerRef` matches the tenant's billing customer — F5 — then sets the **PSP** default via the
+    new `PaymentSetup.setDefaultPaymentMethod`, the field the off-session charge path reads, so an
+    "update card" actually takes effect — M1); `GET /api/invoices`, `GET /api/credit-balance`;
+    `GET /api/csrf` (issues the signed, session-bound CSRF token).
+  - **Flag-gated OFF by default** (`TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE`, red-team F6):
+    `POST /api/step-up`, `POST /api/cancel` (reversible offboard — never purge),
+    `POST /api/data-export`, `POST /api/erasure`, `POST /api/erasure/cancel`, `GET /api/erasure`.
+  - **Controls:** the tenant id is always session-derived (no route accepts a `tenantId` — BOLA
+    invariant); every mutation requires a **signed, session-bound CSRF token** (`X-TF-CSRF`, bound to
+    the session's expiry so it rotates with the cookie and dies on logout/expiry — L1) +
+    `Origin`/`Sec-Fetch-Site` allow-list (F4), is rate-limited, and emits a redacted audit event
+    with the tenant principal as actor. Cancel + erasure require a **control-plane second-factor**
+    (single-use emailed code, independent of the OIDC token — F1). Erasure has a **mandatory undo
+    window** (default 48h, `TENANTFORGE_PORTAL_ERASURE_UNDO_WINDOW_MS`): scheduled, not synchronous;
+    the tenant keeps serving; cancel/execute is a single atomic conditional flip and the executor is
+    idempotent across redelivery (F2). Cancelled (`offboarding`) tenants are excluded from
+    billing/dunning sweeps (F3c).
+  - **New facade methods** on `TenantForge`: `tenantPaymentSetup`, `confirmTenantPaymentMethod`,
+    `tenantInvoices`, `requestTenantStepUp`, `verifyTenantStepUp`, `cancelTenant`,
+    `requestTenantErasure`, `cancelTenantErasure`, `pendingErasure`, `executePendingErasure`,
+    `duePendingErasures`. **New ports + in-memory adapters:** `OneTimeCodeStore`,
+    `PendingErasureStore`. **New OpenAPI doc:** `openapi.portal.yaml` (with a contract test).
+  - Phase 2 (the React SPA) and Phase 3 (a11y + the customer cancel/erasure runbook) land next.
+
 ## [0.38.1] - 2026-06-22
 
 Documentation-only patch — adds the architecture decision records.

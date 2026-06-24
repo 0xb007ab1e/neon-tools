@@ -21,3 +21,4 @@ Consequences. New ADRs take the next number; set Status to `Proposed`, then `Acc
 | [0007](0007-neon-api-as-untrusted-upstream.md)                    | The Neon API is treated as an untrusted upstream                        | Accepted |
 | [0008](0008-dep-light-opentelemetry.md)                           | Dep-light OpenTelemetry (the instrumented-library pattern)              | Accepted |
 | [0009](0009-four-entrypoints.md)                                  | One core, four entrypoints (library / CLI / HTTP / MCP)                 | Accepted |
+| [0010](0010-self-scoped-customer-portal-write-surface.md)         | Self-scoped customer-portal write surface (amends 0004)                 | Proposed |

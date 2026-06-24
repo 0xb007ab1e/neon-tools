@@ -122,6 +122,67 @@ data). No tenant content is stored in the control plane.
   stay on the operator/CLI surfaces (gated). **D:** the portal inherits the API's edge controls (TLS
   at the proxy, rate limiting); rendered output is HTML-escaped (XSS defence in depth).
 
+### B8w — Tenant self-serve portal **write surface** — Phase 1 backend SHIPPED (2026-06-24)
+
+> **Status: backend landed (Phase 1); destructive pair flag-gated OFF.** Implements the portal-SPA +
+> self-serve feature backend (`docs/research/portal-spa-plan.md`). This **supersedes B8's "read-only"
+> mitigation** for the listed actions: the portal is now a _write_ surface for a tenant's **own**
+> account only (payment-method, plan change, cancel, data-export, erasure) via JSON `/portal/api/*`
+> endpoints (`src/app/portal.ts`). It is a **deliberate relaxation of ADR-0004** (money/lifecycle off
+> the customer surface), scoped to self and gated per action below. Cancel + erasure ship behind
+> `TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE` (OFF) until security-reviewed (F6). All B8w abuse cases
+> below are now pinned by tests (`test/app/portal-selfserve*.test.ts`,
+> `test/adapters/{one-time-code,pending-erasure}-store.test.ts`). Phase 2 (SPA) + Phase 3 (a11y/docs)
+> follow; promote B8w into B8 proper once the destructive flag flips on.
+
+- **S (spoofing):** login via the **OIDC** `TenantAuthenticator` (decision #2) — Bearer JWT verified
+  with `jose` (signature + `iss`/`aud`/`exp`, asymmetric-alg allow-list, tenant id from the claim
+  **server-side**), exchanged for the existing signed, HttpOnly, `SameSite=Strict` session cookie.
+  Pin the OIDC `state`+`nonce` **server-side** and verify at the login callback (the login POST is
+  itself CSRF-able). **Step-up = a control-plane-owned second factor** for the two destructive
+  actions (cancel, erasure): a single-use, short-TTL **email/TOTP code** verified server-side —
+  **not** IdP `auth_time`/`iat` (a standard IdP can mint a fresh token via silent refresh /
+  `prompt=none` with no human present — red-team F1). A stale session alone cannot trigger destruction.
+- **T (tampering):** all state-changing requests are `zod`-validated **and CSRF-protected** — a
+  **signed, session-bound CSRF token required in a custom header** (`X-TF-CSRF`), signed over
+  `csrf:{tenantId}:{session-exp}` and verified against the **live** session, so it rotates with the
+  cookie and **dies on expiry/logout** — a leaked token is not a forever-valid bypass (review L1); it
+  is not a bare double-submit a subdomain/cookie-injection could forge, plus an
+  `Origin`/`Sec-Fetch-Site` allow-list as defense-in-depth; `SameSite=Strict` is a backstop, not the
+  control (red-team F4). Tampered/expired session → fail closed (HMAC + `exp`).
+- **R (repudiation):** every mutation emits a tenant-scoped audit event via `observe(...)` with the
+  **tenant principal as actor** (`tenant.plan_changed`, `tenant.payment_method_updated`,
+  `tenant.offboarded` (self-serve), `tenant.export_requested`, `tenant.erasure_requested` /
+  `tenant.erased`), secrets redacted.
+- **I (disclosure):** responses keep the **safe projection** (no `billingCustomerRef`, infra ids, or
+  connection URIs). Card capture uses **Stripe Elements** — the PAN never touches our server (PCI
+  scope reduction); the server **verifies the SetupIntent** before setting a default, never trusting
+  a client "success", **and checks `intent.customerRef === tenant.billingCustomerRef`** (read from the
+  session tenant) so a SetupIntent for customer X can't be applied to tenant Y (PSP-side BOLA — red-
+  team F5); fails closed when the tenant has no billing customer. The default is then set **at the
+  PSP** (`PaymentSetup.setDefaultPaymentMethod` → Stripe `invoice_settings.default_payment_method`) —
+  the field the off-session charge path actually reads — so an "update card" genuinely takes effect;
+  success is reported only once the PSP set-default succeeds (review M1).
+- **D (abuse-prone flows, API6):** **per-session + per-IP rate limits** on every mutation (reuse
+  `RateLimitStore`), and **idempotency keys** on money ops (reuse `idempotency-store`) so retries
+  can't double-charge / double-apply.
+- **E (EoP / BOLA — still the key threat):** the tenant id is **still derived only from the
+  session, never request input** — a mutation can only ever affect the **session tenant's own**
+  account; no route accepts a `tenantId`. Money/lifecycle are now permitted **but self-scoped**.
+  Cancel calls `offboard` (project **retained**, reversible) — **never** `purge`.
+- **Irreversibility (erasure) — HARD REQUIREMENT:** a **mandatory undo window**. The erasure request
+  is **scheduled, not executed synchronously**; the project is deleted only after the window elapses,
+  and the customer can **cancel the pending request** until then. Typed confirmation + second-factor
+  gate the _request_; the undo window guards the _execution_. **The tenant keeps serving during the
+  window** (pending-erasure does **not** suspend routing — avoids a timer-delayed self-serve DoS,
+  red-team F2). Cancel and execute are a **single atomic conditional update**
+  (`UPDATE … SET status='processing' WHERE id=? AND status='pending'`); only the winner proceeds, so a
+  cancel that races the executor cannot lose data, and an at-least-once redelivery of a non-`pending`
+  record acks and exits (no re-export/re-delete). Default window 48h (config); window + execution ≤
+  the statutory erasure SLA. Winner → verified-erasure engine → signed certificate; **operator + the
+  tenant's verified email are alerted** on schedule and on execution (griefing tripwire / wrong-account
+  safety net).
+
 ## Residual risks (tracked)
 
 - **R1 — closed.** Per-operator credentials + RBAC are in-app (admin/readonly, constant-time compare),
@@ -152,19 +213,26 @@ the next review (not promotion blockers).
 
 Each boundary's key threat is pinned by a negative/abuse test (master §4, `@rules/topic-multi-tenancy.md`):
 
-| Threat                            | Test                                                                                                                              |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| BOLA / cross-tenant bleed (B3/B4) | `getConnection(A)` returns A's project/URI, never B's (two tenants)                                                               |
-| Fail-closed routing (B3)          | every non-`active` status is non-routable; active-but-no-secret fails closed                                                      |
-| Illegal lifecycle transition (B3) | exhaustive transition matrix — every disallowed `(from,to)` rejected                                                              |
-| Excessive agency (B2)             | the MCP tool set exposes **no** `purge`/`purge-expired`                                                                           |
-| Spoofing (B1)                     | HTTP returns 401 on a missing/incorrect bearer token                                                                              |
-| Broken function authZ (B1, API5)  | a `readonly` operator gets 403 on a mutating route; `admin` may mutate                                                            |
-| DoS / rate limit (B1)             | over-limit requests get 429 + `Retry-After`; the window refills                                                                   |
-| Untrusted payload (B6)            | invalid queue payload is dead-lettered, never handled                                                                             |
-| Residency (B7)                    | provisioning fails closed outside the region allow-list / required jurisdiction                                                   |
-| Secret disclosure (B7)            | connection URI never appears in events/registry records                                                                           |
-| Cross-tenant portal read (B8)     | `tenant{Charges,Refunds}(A)` never return B's; portal reads no tenant id from the request; `tenantSummary` omits metadata/secrets |
+| Threat                                    | Test                                                                                                                                                                                                                 |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BOLA / cross-tenant bleed (B3/B4)         | `getConnection(A)` returns A's project/URI, never B's (two tenants)                                                                                                                                                  |
+| Fail-closed routing (B3)                  | every non-`active` status is non-routable; active-but-no-secret fails closed                                                                                                                                         |
+| Illegal lifecycle transition (B3)         | exhaustive transition matrix — every disallowed `(from,to)` rejected                                                                                                                                                 |
+| Excessive agency (B2)                     | the MCP tool set exposes **no** `purge`/`purge-expired`                                                                                                                                                              |
+| Spoofing (B1)                             | HTTP returns 401 on a missing/incorrect bearer token                                                                                                                                                                 |
+| Broken function authZ (B1, API5)          | a `readonly` operator gets 403 on a mutating route; `admin` may mutate                                                                                                                                               |
+| DoS / rate limit (B1)                     | over-limit requests get 429 + `Retry-After`; the window refills                                                                                                                                                      |
+| Untrusted payload (B6)                    | invalid queue payload is dead-lettered, never handled                                                                                                                                                                |
+| Residency (B7)                            | provisioning fails closed outside the region allow-list / required jurisdiction                                                                                                                                      |
+| Secret disclosure (B7)                    | connection URI never appears in events/registry records                                                                                                                                                              |
+| Cross-tenant portal read (B8)             | `tenant{Charges,Refunds}(A)` never return B's; portal reads no tenant id from the request; `tenantSummary` omits metadata/secrets                                                                                    |
+| Cross-tenant portal **mutation** (B8w)    | a session for A cannot change B's plan / payment method / cancel / erase B; no route accepts a `tenantId` (`portal-selfserve.test.ts`)                                                                               |
+| CSRF on mutations (B8w)                   | a state-changing POST without a valid signed CSRF token, with another tenant's token, or cross-site is rejected (`portal-selfserve.test.ts`)                                                                         |
+| Step-up bypass (B8w)                      | cancel / erasure without a verifying control-plane second factor is rejected; a code is single-use + action-bound (`portal-selfserve*.test.ts`)                                                                      |
+| Idempotency replay (B8w)                  | a duplicate plan-change with the same `Idempotency-Key` applies **once** (replays the response) (`portal-selfserve.test.ts`)                                                                                         |
+| Erasure undo window (B8w)                 | cancel before the window → project intact; after → erased + certificate; a cancel-vs-execute race can't double-delete; redelivery is idempotent (`portal-selfserve-facade.test.ts`, `pending-erasure-store.test.ts`) |
+| Unverified / cross-customer payment (B8w) | a client's "card saved" without a server-verified SetupIntent is rejected, and a SetupIntent whose `customerRef` ≠ the tenant's is rejected (F5) (`portal-selfserve*.test.ts`)                                       |
+| Cancel billing exclusion (B8w)            | a cancelled (`offboarding`) tenant is absent from the active set the billing/dunning sweeps charge (`portal-selfserve-facade.test.ts`)                                                                               |
 
 ---
 
