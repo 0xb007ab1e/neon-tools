@@ -451,3 +451,93 @@ describe('portal App — flag-gated Danger zone', () => {
     await waitFor(() => expect(screen.queryByText(/Erasure scheduled\./)).not.toBeInTheDocument());
   });
 });
+
+// Every screen AND every modal carries an automated axe pass (master §4 / topic-accessibility): the
+// auth + Overview + Billing + Danger-zone screens are covered above; this block fills the gaps —
+// the Plan and Payment-method screens, and each Danger-zone modal in its OPEN (dialog) state, where
+// the focus-trapped confirmation flow lives. axe catches ~30–40%; the manual keyboard + NVDA/VoiceOver
+// pass (docs/a11y/portal-manual-test-plan.md) is the human complement.
+describe('portal App — a11y coverage of every screen + modal (axe)', () => {
+  it('Plan screen has no a11y violations (form + preview confirm-box)', async () => {
+    const { container } = render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Plan' }));
+    await screen.findByLabelText(/New plan price/);
+    expect((await axe(container)).violations).toEqual([]);
+    // Also axe the open confirm-box state (the prorated-charge confirmation).
+    fireEvent.change(await screen.findByLabelText(/New plan price/), { target: { value: '99' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview change' }));
+    await screen.findByRole('button', { name: 'Confirm change' });
+    expect((await axe(container)).violations).toEqual([]);
+  });
+
+  it('Payment method screen has no a11y violations (Stripe Elements mounted)', async () => {
+    const { container } = render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Payment method' }));
+    await screen.findByRole('button', { name: 'Save card' });
+    expect((await axe(container)).violations).toEqual([]);
+  });
+
+  it('Payment method screen has no a11y violations in the error state (no gateway)', async () => {
+    paymentSetupFails = true;
+    const { container } = render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Payment method' }));
+    await screen.findByRole('alert');
+    expect((await axe(container)).violations).toEqual([]);
+  });
+
+  it('Cancel modal (open dialog) has no a11y violations — code-entry step', async () => {
+    destructive = true;
+    const { container } = render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Danger zone' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel workspace…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Confirm cancellation' });
+    // Initial (request-code) state.
+    expect((await axe(container)).violations).toEqual([]);
+    // After requesting the code, the code-entry form is shown — axe it too.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Email me a code' }));
+    await within(dialog).findByLabelText('Confirmation code');
+    expect((await axe(container)).violations).toEqual([]);
+  });
+
+  it('Erasure modal (open dialog) has no a11y violations — typed-confirm + code-entry steps', async () => {
+    destructive = true;
+    const { container } = render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Danger zone' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Erase workspace…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Permanently erase workspace' });
+    // Typed-confirm state.
+    expect((await axe(container)).violations).toEqual([]);
+    // Code-entry state (after typing ERASE + requesting a code).
+    fireEvent.change(within(dialog).getByLabelText('Type ERASE to confirm'), {
+      target: { value: 'ERASE' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Email me a code' }));
+    await within(dialog).findByLabelText('Confirmation code');
+    expect((await axe(container)).violations).toEqual([]);
+  });
+
+  it('Danger zone with a pending erasure (undo-window status) has no a11y violations', async () => {
+    destructive = true;
+    const { container } = render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Danger zone' }));
+    // Schedule an erasure so the pending-status confirm-box renders, then axe that state.
+    fireEvent.click(await screen.findByRole('button', { name: 'Erase workspace…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Permanently erase workspace' });
+    fireEvent.change(within(dialog).getByLabelText('Type ERASE to confirm'), {
+      target: { value: 'ERASE' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Email me a code' }));
+    fireEvent.change(await within(dialog).findByLabelText('Confirmation code'), {
+      target: { value: '654321' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Schedule erasure' }));
+    await screen.findByText(/Erasure scheduled\./);
+    expect((await axe(container)).violations).toEqual([]);
+  });
+});

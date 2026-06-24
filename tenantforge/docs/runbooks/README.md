@@ -8,6 +8,7 @@ can execute them under pressure (`@rules/workflow-runbooks.md`). Linked from ale
 | --------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | [deploy](./deploy.md)                                     | Release the control-plane service (build once, promote; registry migration).      |
 | [billing-run](./billing-run.md)                           | The scheduled billing run: charge the fleet, then dun failures (cron).            |
+| [portal-self-serve](./portal-self-serve.md)               | Customer self-serve **cancel** + **erasure** (undo window, executor sweep, flag). |
 | [rollback](./rollback.md)                                 | Revert a bad control-plane release.                                               |
 | [fleet-migration-rollback](./fleet-migration-rollback.md) | Halt / revert a tenant **fleet** schema migration.                                |
 | [incident-response](./incident-response.md)               | Security incident or outage (cross-tenant leak / Neon API key compromise = SEV1). |
