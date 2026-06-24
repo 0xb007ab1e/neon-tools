@@ -12,9 +12,11 @@ export default tseslint.config(
     ignores: [
       'dist/**',
       'coverage/**',
+      '**/coverage/**',
       'docs/api/**',
       'dashboard/dist/**',
       'signup/dist/**',
+      'portal/dist/**',
       'eslint.config.js',
       'stryker.config.mjs',
       '.stryker-tmp/**',
@@ -59,9 +61,9 @@ export default tseslint.config(
     },
   },
   {
-    // Dashboard SPA (React 19 + Vite): React + hooks + jsx-a11y on top of the type-checked base.
+    // Browser SPAs (React 19 + Vite): React + hooks + jsx-a11y on top of the type-checked base.
     // a11y is a non-negotiable mandate (master §1) — lint it, don't just hand-verify.
-    files: ['dashboard/**/*.{ts,tsx}'],
+    files: ['dashboard/**/*.{ts,tsx}', 'portal/**/*.{ts,tsx}'],
     plugins: { react, 'react-hooks': reactHooks, 'jsx-a11y': jsxA11y },
     languageOptions: {
       globals: globals.browser,
@@ -78,7 +80,13 @@ export default tseslint.config(
   },
   {
     // Tests and config files: relax the unsafe-* family (mocks/fakes use loose typing).
-    files: ['test/**/*.ts', 'dashboard/test/**/*.{ts,tsx}', '*.config.ts', '*.config.js'],
+    files: [
+      'test/**/*.ts',
+      'dashboard/test/**/*.{ts,tsx}',
+      'portal/test/**/*.{ts,tsx}',
+      '*.config.ts',
+      '*.config.js',
+    ],
     rules: {
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',

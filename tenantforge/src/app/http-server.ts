@@ -28,6 +28,7 @@ import { createDashboard } from './dashboard.js';
 import { createPortal } from './portal.js';
 import { createSignup } from './signup.js';
 import type { TenantAuthenticator } from '../ports/tenant-authenticator.js';
+import type { OidcCodeFlow } from '../ports/oidc-code-flow.js';
 
 // Re-export the auth types so existing importers (config) keep their import path.
 export type { HttpRole, HttpCredential, Principal, Authenticator } from '../ports/authenticator.js';
@@ -64,10 +65,16 @@ export interface HttpServerOptions {
   portalSecret?: string;
   /** Resolves a portal token to a tenant; required to mount the portal. */
   tenantAuthenticator?: TenantAuthenticator;
+  /** Server-side OIDC Authorization Code + PKCE flow for the portal SPA login (H1/H2). */
+  portalCodeFlow?: OidcCodeFlow;
   /** Enable the portal's destructive self-serve actions (cancel + erasure). Default false (ADR-0010 / red-team F6). */
   portalSelfServeDestructive?: boolean;
   /** Allowed browser origins for portal mutations (CSRF defense in depth — red-team F4). */
   portalAllowedOrigins?: string[];
+  /** Stripe publishable key (public) for the portal SPA's Stripe Elements payment-method view. */
+  portalPublishableKey?: string;
+  /** Path to the built portal SPA (`portal/dist`); when set, the portal also serves the front-end. */
+  portalStaticRoot?: string;
   /** Injectable clock (ms) for rate limiting — defaults to `Date.now`. */
   now?: () => number;
   /**
@@ -278,6 +285,7 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
       createPortal({
         tf,
         authenticator: options.tenantAuthenticator,
+        ...(options.portalCodeFlow !== undefined ? { codeFlow: options.portalCodeFlow } : {}),
         sessionSecret: options.portalSecret,
         now: () => now(),
         // Share the same rate-limit + idempotency stores as the main API (global across replicas
@@ -290,6 +298,10 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
         ...(options.portalAllowedOrigins !== undefined
           ? { allowedOrigins: options.portalAllowedOrigins }
           : {}),
+        ...(options.portalPublishableKey !== undefined
+          ? { publishableKey: options.portalPublishableKey }
+          : {}),
+        ...(options.portalStaticRoot !== undefined ? { staticRoot: options.portalStaticRoot } : {}),
       }),
     );
   }

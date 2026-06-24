@@ -1,11 +1,14 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
-import type { Context } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { bodyLimit } from 'hono/body-limit';
+import { secureHeaders } from 'hono/secure-headers';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { z } from 'zod';
 import type { TenantForge, TenantSummary } from './lib.js';
 import type { TenantAuthenticator } from '../ports/tenant-authenticator.js';
+import type { OidcCodeFlow } from '../ports/oidc-code-flow.js';
 import type { TenantEvent, TenantUsage } from '../core/index.js';
 import type { RateLimitStore } from '../ports/rate-limit-store.js';
 import type { IdempotencyStore, IdempotentResponse } from '../ports/idempotency-store.js';
@@ -14,8 +17,12 @@ import { createInMemoryIdempotencyStore } from '../adapters/idempotency-store.js
 
 /** Portal session cookie name (scoped to the portal path). */
 const COOKIE = 'tf_portal';
+/** Transient OIDC login cookie: pins `state`/`nonce`/`codeVerifier` between start + callback. */
+const LOGIN_COOKIE = 'tf_portal_login';
 /** Default portal session lifetime: 1 hour (customer-facing → shorter than the operator dashboard). */
 const DEFAULT_TTL_MS = 60 * 60 * 1000;
+/** OIDC login flow lifetime: 10 minutes (the user redirects to the IdP and back well within this). */
+const LOGIN_TTL_MS = 10 * 60 * 1000;
 /** Portal API request bodies are tiny — cap hard (DoS / `std-owasp-api` API4). */
 const MAX_BODY = 8 * 1024;
 /** The custom header carrying the signed per-session CSRF token (red-team F4). */
@@ -25,8 +32,15 @@ const CSRF_HEADER = 'x-tf-csrf';
 export interface PortalOptions {
   /** The TenantForge service the portal reads (tenant-scoped reads only). */
   tf: TenantForge;
-  /** Resolves a portal token to the tenant it authenticates as. */
+  /** Resolves a portal token to the tenant it authenticates as (static/dev token mode). */
   authenticator: TenantAuthenticator;
+  /**
+   * Server-side OIDC Authorization Code + PKCE flow. When set, the SPA logs in via the code flow
+   * (`GET /api/login/start` → IdP → `POST /api/session {code,state}`): the SPA never handles a raw
+   * token, and `state`/`nonce`/`code_verifier` are pinned server-side (defeats login-CSRF + replay —
+   * H1/H2). Unset ⇒ only the static/dev-token path (`POST /api/session {token}`) is available.
+   */
+  codeFlow?: OidcCodeFlow;
   /** HMAC key signing the session cookie (a secret; required). */
   sessionSecret: string;
   /** Session lifetime in ms. Defaults to 1h. */
@@ -49,11 +63,31 @@ export interface PortalOptions {
    * (ADR-0010 / red-team F6). Payment / plan / invoices are unaffected by this flag.
    */
   enableDestructiveActions?: boolean;
+  /**
+   * Stripe **publishable** key (public; handed to the browser for Stripe Elements). Surfaced via
+   * `GET /api/config` and on the setup-intent response so the SPA can load Stripe.js with it. Optional:
+   * when unset, the payment-method view degrades gracefully (the server still fails closed on the
+   * setup-intent call if a gateway isn't configured).
+   */
+  publishableKey?: string;
+  /**
+   * Filesystem path to the built portal SPA (`portal/dist`); serves the front-end + a scoped CSP that
+   * allows Stripe.js (mirrors {@link import('./signup.js').createSignup}) when set. Unset = JSON API
+   * only (the SPA is served by Vite in dev). The server-rendered no-JS page stays at `/portal`.
+   */
+  staticRoot?: string;
 }
 
 /** Sign a payload with the session secret (base64url HMAC-SHA256). */
 function sign(payload: string, secret: string): string {
   return createHmac('sha256', secret).update(payload).digest('base64url');
+}
+
+/** Best-effort client IP (X-Forwarded-For first hop), for rate-limiting the unauthenticated login. */
+function clientIp(c: Context): string {
+  const xff = c.req.header('x-forwarded-for');
+  if (xff !== undefined && xff.length > 0) return xff.split(',')[0]!.trim();
+  return c.req.header('x-real-ip') ?? 'unknown';
 }
 
 /** Encode a signed, expiring session for a tenant. */
@@ -87,6 +121,47 @@ function decodeSession(value: string, secret: string, nowMs: number): Session | 
     if (typeof p.exp !== 'number' || p.exp < nowMs) return null;
     if (typeof p.tenantId !== 'string' || p.tenantId === '') return null;
     return { tenantId: p.tenantId, exp: p.exp };
+  } catch {
+    return null;
+  }
+}
+
+/** The transient, server-pinned OIDC login flow params carried in the signed login cookie. */
+interface LoginFlow {
+  /** Anti-CSRF state the callback must echo back exactly. */
+  state: string;
+  /** Nonce bound into the request; the id_token's `nonce` claim must equal it (replay defence). */
+  nonce: string;
+  /** The PKCE code verifier (kept server-side; never sent to the SPA). */
+  codeVerifier: string;
+  /** Absolute expiry (epoch ms) — a short window for the IdP round-trip. */
+  exp: number;
+}
+
+/** Encode a signed, short-TTL login cookie pinning the flow's state/nonce/verifier server-side. */
+function encodeLogin(flow: LoginFlow, secret: string): string {
+  const body = Buffer.from(JSON.stringify(flow), 'utf8').toString('base64url');
+  return `${body}.${sign(body, secret)}`;
+}
+
+/** Verify + decode the login cookie; null if missing/tampered/expired (fail closed). */
+function decodeLogin(value: string, secret: string, nowMs: number): LoginFlow | null {
+  const dot = value.indexOf('.');
+  if (dot <= 0) return null;
+  const body = value.slice(0, dot);
+  const got = Buffer.from(value.slice(dot + 1));
+  const want = Buffer.from(sign(body, secret));
+  if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
+  try {
+    const p = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Record<
+      string,
+      unknown
+    >;
+    if (typeof p.exp !== 'number' || p.exp < nowMs) return null;
+    if (typeof p.state !== 'string' || p.state === '') return null;
+    if (typeof p.nonce !== 'string' || p.nonce === '') return null;
+    if (typeof p.codeVerifier !== 'string' || p.codeVerifier === '') return null;
+    return { state: p.state, nonce: p.nonce, codeVerifier: p.codeVerifier, exp: p.exp };
   } catch {
     return null;
   }
@@ -128,6 +203,20 @@ const ErasureSchema = z.object({
 });
 /** Cancel request: the step-up code (cancel is reversible but still second-factor gated — F1). */
 const CancelSchema = z.object({ code: z.string().min(1).max(16) });
+/**
+ * Portal login body for `POST /api/session`, one of two shapes:
+ * - `{ code, state }` — the OIDC Authorization Code callback (the SPA never handles a token; the
+ *   server exchanges the code + pinned verifier at the IdP and verifies the id_token + nonce — H1/H2).
+ * - `{ token }` — the static/dev token path (token mode / local dev without a real IdP).
+ * Bounded sizes (a code/state are short; a dev token is a small opaque value).
+ */
+const LoginSchema = z.union([
+  z.object({
+    code: z.string().min(1).max(4096),
+    state: z.string().min(1).max(512),
+  }),
+  z.object({ token: z.string().min(1).max(8192) }),
+]);
 
 /** Map a facade error message to a safe HTTP status (the message is user-actionable, never internal). */
 function statusFor(message: string): number {
@@ -363,26 +452,31 @@ export function createPortal(options: PortalOptions): Hono {
     return c.redirect('/portal', 303);
   });
 
-  // The portal home: the login page when signed out, the tenant's own account page when signed in.
-  app.get('/', async (c) => {
-    const tenantId = session(c);
-    if (tenantId === null) return c.html(loginPage());
-    const summary = await options.tf.tenantSummary(tenantId);
-    if (summary === null) {
-      // The session names a tenant that no longer exists — clear it and show login.
-      deleteCookie(c, COOKIE, { path: '/portal' });
-      return c.html(loginPage('Your session has expired.'), 401);
-    }
-    // Usage is best-effort: if metering isn't configured (no usage provider) or the upstream is
-    // down, the account page still renders — usage is just omitted, not a 500.
-    const [charges, refunds, receipts, usage] = await Promise.all([
-      options.tf.tenantCharges(tenantId),
-      options.tf.tenantRefunds(tenantId),
-      options.tf.tenantNotifications(tenantId),
-      options.tf.usage(tenantId, currentMonth()).catch(() => null),
-    ]);
-    return c.html(dashboardPage(summary, usage, charges, refunds, receipts));
-  });
+  // The portal home: when no SPA is built (`staticRoot` unset), serve the server-rendered no-JS page —
+  // the login page when signed out, the tenant's own account page when signed in. When the SPA IS
+  // built, the static handler below serves the React app at `/` instead (the SPA is the primary UI;
+  // the server-rendered page remains available only when `staticRoot` is unset, e.g. JSON-API/dev).
+  if (options.staticRoot === undefined) {
+    app.get('/', async (c) => {
+      const tenantId = session(c);
+      if (tenantId === null) return c.html(loginPage());
+      const summary = await options.tf.tenantSummary(tenantId);
+      if (summary === null) {
+        // The session names a tenant that no longer exists — clear it and show login.
+        deleteCookie(c, COOKIE, { path: '/portal' });
+        return c.html(loginPage('Your session has expired.'), 401);
+      }
+      // Usage is best-effort: if metering isn't configured (no usage provider) or the upstream is
+      // down, the account page still renders — usage is just omitted, not a 500.
+      const [charges, refunds, receipts, usage] = await Promise.all([
+        options.tf.tenantCharges(tenantId),
+        options.tf.tenantRefunds(tenantId),
+        options.tf.tenantNotifications(tenantId),
+        options.tf.usage(tenantId, currentMonth()).catch(() => null),
+      ]);
+      return c.html(dashboardPage(summary, usage, charges, refunds, receipts));
+    });
+  }
 
   /** Guard a JSON endpoint on a valid session; returns the tenant id or sends 401. */
   const requireTenant = (c: Context): string | null => {
@@ -515,6 +609,124 @@ export function createPortal(options: PortalOptions): Hono {
     return res;
   };
 
+  // Whether the destructive self-serve actions (cancel + erasure) are advertised to the SPA. Equal to
+  // the feature flag (OFF by default — ADR-0010 / red-team F6); the routes themselves only exist when
+  // it's true, so an SPA that respects this never renders a button that would 404. This advertises the
+  // capability — it does NOT change any gating: the server still flag-gates the routes independently.
+  const destructiveActions = options.enableDestructiveActions === true;
+
+  /** Mint the session cookie + return the SPA's session view (shared by both login paths). */
+  const grantSession = (c: Context, tenantId: string): Response => {
+    setCookie(c, COOKIE, encodeSession(tenantId, secret, now() + ttlMs), {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Strict',
+      path: '/portal',
+      maxAge: Math.floor(ttlMs / 1000),
+    });
+    return c.json({ tenantId, features: { destructiveActions } });
+  };
+
+  // Public SPA config: the Stripe publishable key (public), advertised capabilities, and which login
+  // mode is active (`oidc` ⇒ the SPA uses the code flow; else the dev/token form). Read before login
+  // so the SPA can size its UI; exposes only public values, never the tenant or any secret.
+  app.get('/api/config', (c) =>
+    c.json({
+      ...(options.publishableKey !== undefined ? { publishableKey: options.publishableKey } : {}),
+      features: { destructiveActions },
+      auth: { mode: options.codeFlow !== undefined ? 'oidc' : 'token' },
+    }),
+  );
+
+  // Begin OIDC login (Authorization Code + PKCE): the SERVER generates state/nonce/code_verifier,
+  // pins them in a short-TTL signed HttpOnly cookie (never handed to the SPA), and returns the IdP
+  // authorize URL for the SPA to redirect to. This is what makes the callback unforgeable (H1/H2).
+  app.get('/api/login/start', async (c) => {
+    if (options.codeFlow === undefined) {
+      return c.json({ error: 'OIDC login is not configured' }, 404);
+    }
+    if (await limited(c, 'login-start', clientIp(c), 20)) {
+      return c.json({ error: 'too many requests' }, 429);
+    }
+    const flow = await options.codeFlow.start();
+    setCookie(
+      c,
+      LOGIN_COOKIE,
+      encodeLogin(
+        {
+          state: flow.state,
+          nonce: flow.nonce,
+          codeVerifier: flow.codeVerifier,
+          exp: now() + LOGIN_TTL_MS,
+        },
+        secret,
+      ),
+      {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'Lax', // Lax so the cookie survives the top-level redirect back from the IdP.
+        path: '/portal',
+        maxAge: Math.floor(LOGIN_TTL_MS / 1000),
+      },
+    );
+    return c.json({ authorizeUrl: flow.authorizeUrl });
+  });
+
+  // Login: mint a session cookie. Two paths (the body shape selects):
+  //  - { code, state }  → OIDC Authorization Code callback: read the pinned login cookie, verify the
+  //    `state` matches (login-CSRF defence), exchange code + verifier at the IdP token endpoint, and
+  //    verify the id_token + its `nonce` (replay defence) — all server-side; the SPA never sees a
+  //    token. The login cookie is single-use (cleared on every attempt — success OR failure).
+  //  - { token }        → static/dev token path (token mode / local dev without a real IdP).
+  // The tenant id is derived ONLY from the verified principal, never from request input (no BOLA).
+  app.post('/api/session', async (c) => {
+    if (await limited(c, 'login', clientIp(c), 20)) {
+      return c.json({ error: 'too many requests' }, 429);
+    }
+    const parsed = await read(c, LoginSchema);
+    if (!parsed.ok) return parsed.res;
+    const data = parsed.data;
+
+    if ('code' in data) {
+      if (options.codeFlow === undefined) {
+        return c.json({ error: 'OIDC login is not configured' }, 404);
+      }
+      // Read + immediately invalidate the pinned login cookie (single-use; cleared on any outcome).
+      const rawLogin = getCookie(c, LOGIN_COOKIE);
+      deleteCookie(c, LOGIN_COOKIE, { path: '/portal' });
+      const flow = rawLogin === undefined ? null : decodeLogin(rawLogin, secret, now());
+      // No started flow, or the callback's state doesn't match the pinned one → login-CSRF / replay.
+      if (flow === null) return c.json({ error: 'invalid login state' }, 401);
+      const got = Buffer.from(data.state);
+      const want = Buffer.from(flow.state);
+      if (got.length !== want.length || !timingSafeEqual(got, want)) {
+        return c.json({ error: 'invalid login state' }, 401);
+      }
+      const principal = await options.codeFlow.exchange(data.code, flow.codeVerifier, flow.nonce);
+      if (principal === null) return c.json({ error: 'login failed' }, 401);
+      return grantSession(c, principal.tenantId);
+    }
+
+    // Static / dev token path.
+    const principal = await options.authenticator.authenticate(data.token);
+    if (principal === null) return c.json({ error: 'invalid token' }, 401);
+    return grantSession(c, principal.tenantId);
+  });
+
+  // Who am I (the SPA checks this on load) — 401 without a valid session; carries the capability flag.
+  app.get('/api/session', (c) => {
+    const tenantId = session(c);
+    return tenantId === null
+      ? c.json({ error: 'not authenticated' }, 401)
+      : c.json({ tenantId, features: { destructiveActions } });
+  });
+
+  // Logout (SPA): clear the session cookie.
+  app.delete('/api/session', (c) => {
+    deleteCookie(c, COOKIE, { path: '/portal' });
+    return c.body(null, 204);
+  });
+
   // Issue the session-bound CSRF token (the SPA reads this then echoes it in the CSRF header). It is
   // minted from the live session's expiry, so it rotates with the cookie and dies on expiry/logout.
   app.get('/api/csrf', (c) => {
@@ -634,8 +846,14 @@ export function createPortal(options: PortalOptions): Hono {
     const csrf = csrfRejected(c, tenantId);
     if (csrf !== null) return csrf;
     try {
-      // Mints a SetupIntent for THIS tenant's billingCustomerRef (fails closed if none — F5).
-      return c.json(await options.tf.tenantPaymentSetup(tenantId));
+      // Mints a SetupIntent for THIS tenant's billingCustomerRef (fails closed if none — F5). The
+      // publishable key (public) rides along so the browser can load Stripe.js with it (PAN never
+      // touches this server — the card is collected + confirmed client-side via Stripe Elements).
+      const setup = await options.tf.tenantPaymentSetup(tenantId);
+      return c.json({
+        ...setup,
+        ...(options.publishableKey !== undefined ? { publishableKey: options.publishableKey } : {}),
+      });
     } catch (e) {
       return fail(c, e);
     }
@@ -797,6 +1015,28 @@ export function createPortal(options: PortalOptions): Hono {
       if (tenantId === null) return c.json({ error: 'not authenticated' });
       return c.json({ pending: await options.tf.pendingErasure(tenantId) });
     });
+  }
+
+  // Serve the portal SPA when built. Scoped CSP allows Stripe.js / Elements (the strict default CSP
+  // would block them); applied only on this sub-app's static routes, not the rest of the server
+  // (mirrors createSignup). The `index.html` fallback lets the SPA own client-side routing.
+  if (options.staticRoot !== undefined) {
+    const root = options.staticRoot;
+    const rewriteRequestPath = (p: string): string => p.replace(/^\/portal/, '') || '/';
+    const csp: MiddlewareHandler = secureHeaders({
+      contentSecurityPolicy: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", 'https://js.stripe.com'],
+        frameSrc: ['https://js.stripe.com', 'https://hooks.stripe.com'],
+        connectSrc: ["'self'", 'https://api.stripe.com'],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:'],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    });
+    app.get('/*', csp, serveStatic({ root, rewriteRequestPath }));
+    app.get('/*', csp, serveStatic({ path: 'index.html', root }));
   }
 
   return app;

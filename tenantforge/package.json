@@ -19,29 +19,33 @@
   "files": [
     "dist",
     "dashboard/dist",
+    "portal/dist",
     "migrations"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && pnpm dashboard:build && pnpm signup:build",
+    "build": "tsc -p tsconfig.build.json && pnpm dashboard:build && pnpm signup:build && pnpm portal:build",
     "version:check": "node scripts/check-version.mjs",
     "cli": "node --env-file-if-exists=.env --import tsx src/app/cli.ts",
     "http": "node --env-file-if-exists=.env --import tsx src/app/http.ts",
     "mcp": "node --env-file-if-exists=.env --import tsx src/app/mcp.ts",
     "worker": "node --env-file-if-exists=.env --import tsx src/app/worker.ts",
     "load": "node --import tsx src/app/load.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p dashboard/tsconfig.json --noEmit && tsc -p signup/tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p dashboard/tsconfig.json --noEmit && tsc -p signup/tsconfig.json --noEmit && tsc -p portal/tsconfig.json --noEmit",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "docs": "typedoc",
-    "test": "vitest run --coverage && pnpm test:dashboard",
+    "test": "vitest run --coverage && pnpm test:dashboard && pnpm test:portal",
     "test:watch": "vitest",
     "test:int": "vitest run --config vitest.integration.config.ts",
     "test:dashboard": "vitest run --config dashboard/vitest.config.ts",
+    "test:portal": "vitest run --coverage --config portal/vitest.config.ts",
     "mutation": "stryker run",
     "dashboard:dev": "vite --config dashboard/vite.config.ts",
     "dashboard:build": "vite build --config dashboard/vite.config.ts",
     "signup:dev": "vite --config signup/vite.config.ts",
-    "signup:build": "vite build --config signup/vite.config.ts"
+    "signup:build": "vite build --config signup/vite.config.ts",
+    "portal:dev": "vite --config portal/vite.config.ts",
+    "portal:build": "vite build --config portal/vite.config.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.5",
