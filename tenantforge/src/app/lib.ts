@@ -541,6 +541,21 @@ export interface PurgeSweepReport {
   failed: { tenantId: string; error: string }[];
 }
 
+/** The result of an erasure-executor sweep (drains due, window-elapsed pending erasures). */
+export interface ErasureSweepReport {
+  /** Number of due pending-erasure records the sweep examined this run. */
+  scanned: number;
+  /** Request ids whose erasure this sweep executed (won the atomic `pending → processing` flip). */
+  processed: string[];
+  /**
+   * Request ids skipped because they lost the atomic flip — already cancelled by the tenant, or an
+   * at-least-once redelivery / concurrent sweep claimed them. A no-op, not an error.
+   */
+  skipped: string[];
+  /** Records whose erasure errored (isolated — one tenant's failure never blocks the rest; retried). */
+  failed: { id: string; tenantId: string; error: string }[];
+}
+
 /** The result of offboarding (archiving) a tenant. */
 export interface OffboardOutcome {
   /** The tenant record (now `offboarding` — retained, pending purge; reversible until purged). */
@@ -1721,6 +1736,25 @@ export interface TenantForge {
   duePendingErasures(limit?: number): Promise<{ id: string; tenantId: string }[]>;
 
   /**
+   * **Erasure-executor sweep** — drain every **due** (window-elapsed, still-`pending`) self-serve
+   * erasure and execute it: {@link duePendingErasures} → {@link executePendingErasure} per record.
+   * The scheduled job that actually runs scheduled erasures (run by the worker poll loop / a cron),
+   * mirroring {@link purgeExpired}. **Without it, nothing drains the pending-erasure queue and a
+   * scheduled GDPR Art. 17 erasure never executes** (SLA unmeetable). **Failure-isolated** (one
+   * tenant's failure never blocks the rest), bounded by `limit`, and **idempotent across redelivery /
+   * concurrent sweeps**: each erasure is gated by the store's atomic `pending → processing` flip, so a
+   * record claimed by a cancel or a racing sweep is reported `skipped`, never double-deleted. No-op
+   * (empty report) when no pending-erasure store is wired or nothing is due. Safe to **always run**:
+   * it can only act on records the (flag-gated) destructive request endpoint scheduled — while the
+   * `TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE` flag is off nothing is ever scheduled, so the sweep
+   * no-ops.
+   *
+   * @param options - Optional cap on records processed this run (defaults to 100).
+   * @returns Per-record sweep report (scanned / processed / skipped / failed).
+   */
+  erasureSweep(options?: { limit?: number }): Promise<ErasureSweepReport>;
+
+  /**
    * **Set a tenant's included usage allowances** (`metadata.includedUsage`) — the per-period usage
    * its plan covers before any **overage** is billed. Usage within an allowance is free; only the
    * excess is billed (at the configured billing rates) on the tenant's next invoice/charge. This is
@@ -2138,6 +2172,39 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       });
     } catch {
       // Best-effort — never block the destructive action on a notification failure.
+    }
+  };
+
+  /**
+   * Best-effort send the tenant the **erasure-completion** notice (review L2 / threat-model B8w: "the
+   * tenant's verified email is alerted on execution"). The tenant record is erased by execution time,
+   * so the address is the one captured at request time + carried on the pending-erasure record — it
+   * cannot be read from the registry now. References the {@link ErasureCertificate} (its `verified`
+   * flag + `erasedAt`) — booleans/references only, no secrets. Fully swallows its own errors: a
+   * notifier failure must NEVER fail or roll back the erasure (the data is already gone).
+   */
+  const alertTenantErased = async (
+    tenantEmail: string | undefined,
+    certificate: ErasureCertificate,
+  ): Promise<void> => {
+    if (notifier === undefined || tenantEmail === undefined) return;
+    try {
+      await notifier.notify({
+        to: tenantEmail,
+        subject: 'Your TenantForge account has been erased',
+        body:
+          `Your requested account erasure has completed (${certificate.erasedAt}). ` +
+          `Your data has been permanently deleted` +
+          (certificate.verified
+            ? ' and the deletion was verified.'
+            : '; verification is pending — our team has been alerted.') +
+          ` Erasure certificate reference: ${certificate.tenantId}@${certificate.erasedAt}.`,
+        // Stable key (tenant id + completion instant) so an at-least-once retry never double-notifies.
+        idempotencyKey: `selfserve-erased:${certificate.tenantId}:${certificate.erasedAt}`,
+        metadata: { tenant_id: certificate.tenantId },
+      });
+    } catch {
+      // Best-effort — never block / roll back the completed erasure on a notification failure.
     }
   };
 
@@ -4066,6 +4133,10 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       const windowMs = deps.erasureUndoWindowMs ?? 48 * 60 * 60 * 1000;
       const requestedAt = new Date();
       const executeAt = new Date(requestedAt.getTime() + windowMs);
+      // Capture the tenant's verified email NOW (review L2): by execution time the tenant record is
+      // erased, so the address can't be read then to send the completion notice. Stored on the record
+      // (PII — never logged/audited). Absent here ⇒ no tenant email on file ⇒ operator-only on execute.
+      const tenantEmail = billingEmail(tenant.metadata);
       const created = await store.create({
         id: randomUUID(),
         tenantId,
@@ -4073,6 +4144,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         executeAt: executeAt.toISOString(),
         status: 'pending',
         reason,
+        ...(tenantEmail !== undefined ? { tenantEmail } : {}),
       });
       // One in-flight erasure per tenant — a second request while one is active is rejected.
       if (created === null) throw new Error('an erasure is already in progress for this tenant');
@@ -4129,19 +4201,26 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         ...(exporter ? { exporter } : {}),
         emit: (event) => eventSink.emit(event),
       });
-      const certificate = await engine.erase(claimed.tenantId, { reason: claimed.reason });
+      // A claimed (formerly `pending`) record always carries the reason set at request time; the `??`
+      // is a type-level guard now that `reason` is optional (cleared only on the terminal transition).
+      const certificate = await engine.erase(claimed.tenantId, {
+        reason: claimed.reason ?? 'self-serve erasure',
+      });
       invalidateConnection(claimed.tenantId);
       await store.markDone(id);
-      // Alert operator + tenant that the erasure executed (best-effort; the tenant record is now gone,
-      // so read the email before erasure would be ideal — here we alert the operator deterministically).
       observe('tenant.erased', {
         tenantId: claimed.tenantId,
         outcome: certificate.verified ? 'ok' : 'error',
         context: { verified: certificate.verified },
       });
+      // Alert operator AND the tenant that the erasure executed (threat-model B8w: both alerted on
+      // execution). The tenant record is now gone, so the tenant notice uses the email CAPTURED at
+      // request time (`claimed.tenantEmail`) — review L2. Both are best-effort and never throw, so a
+      // notifier failure cannot fail/roll back the already-completed erasure.
       await alertOperator(
         `Self-serve erasure executed for tenant ${claimed.tenantId} (verified: ${certificate.verified}).`,
       );
+      await alertTenantErased(claimed.tenantEmail, certificate);
       return certificate;
     },
 
@@ -4150,6 +4229,44 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       if (store === undefined) return [];
       const due = await store.listDue(Date.now(), limit);
       return due.map((r) => ({ id: r.id, tenantId: r.tenantId }));
+    },
+
+    async erasureSweep(options: { limit?: number } = {}): Promise<ErasureSweepReport> {
+      const store = deps.pendingErasureStore;
+      // No store wired ⇒ nothing can ever be scheduled ⇒ a clean no-op report (fail soft).
+      if (store === undefined) return { scanned: 0, processed: [], skipped: [], failed: [] };
+      const limit = options.limit ?? 100;
+      const due = await store.listDue(Date.now(), limit);
+      const processed: string[] = [];
+      const skipped: string[] = [];
+      const failed: { id: string; tenantId: string; error: string }[] = [];
+      // Sequential + failure-isolated: one tenant's erasure failure never blocks the rest of the
+      // sweep (mirrors purgeExpired). Each call wins-or-loses the atomic `pending → processing` flip
+      // inside executePendingErasure, so a cancel / redelivery / concurrent sweep that already claimed
+      // a record returns null → recorded as `skipped`, never re-deleted (idempotent — red-team F2).
+      for (const rec of due) {
+        try {
+          const certificate = await this.executePendingErasure(rec.id);
+          if (certificate === null) skipped.push(rec.id);
+          else processed.push(rec.id);
+        } catch (error) {
+          failed.push({
+            id: rec.id,
+            tenantId: rec.tenantId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      observe('tenant.erasure_sweep', {
+        outcome: failed.length > 0 ? 'error' : 'ok',
+        context: {
+          scanned: due.length,
+          processed: processed.length,
+          skipped: skipped.length,
+          failed: failed.length,
+        },
+      });
+      return { scanned: due.length, processed, skipped, failed };
     },
 
     async setIncludedUsage(id: string, allowance: IncludedUsage): Promise<TenantRecord> {

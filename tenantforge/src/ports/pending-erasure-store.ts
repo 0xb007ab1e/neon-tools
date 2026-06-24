@@ -13,8 +13,22 @@ export interface PendingErasureRecord {
   executeAt: string;
   /** Current status — transitions are atomic, conditional updates (no cancel/execute race). */
   status: PendingErasureStatus;
-  /** Audit reason carried into the erasure certificate (no secrets). */
-  reason: string;
+  /**
+   * Audit reason carried into the erasure certificate (no secrets). Present on an **active**
+   * (`pending`/`processing`) record; **cleared on the terminal transition** (`done`/`cancelled`) along
+   * with {@link tenantEmail} so the record retains no purpose-spent data once its request resolves
+   * (review L3 — data minimization, master §5). The executor reads it from the *claimed* snapshot
+   * before {@link PendingErasureStore.markDone}, so clearing it on the stored record is safe.
+   */
+  reason?: string;
+  /**
+   * The tenant's billing email captured **at request time** (PII — never logged/audited; master §5).
+   * Stored so the executor can send the tenant a completion notice: by execution the tenant record is
+   * already erased, so its email cannot be read then (review L2). Optional — absent when the tenant had
+   * no `metadata.billingEmail` on file at request time, in which case only the operator is alerted.
+   * **Cleared on the terminal transition** (`done`/`cancelled`) — see {@link reason}.
+   */
+  tenantEmail?: string;
 }
 
 /**

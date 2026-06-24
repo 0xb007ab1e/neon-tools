@@ -383,3 +383,243 @@ describe('portal self-serve facade — erasure undo window (F2)', () => {
     await expect(tf.requestTenantErasure('t-a', 'r')).rejects.toThrow(/already in progress/);
   });
 });
+
+describe('portal self-serve facade — erasure-completion alert (L2)', () => {
+  /** Seed a tenant (optionally with a billing email) + a notifier/exporter and a zero undo window. */
+  const seed = (opts: { email?: string; notifier?: ReturnType<typeof fakeNotifier> } = {}) => {
+    const registry = fakeRegistry();
+    registry.seed({
+      id: 't-a',
+      metadata: opts.email !== undefined ? { billingEmail: opts.email } : {},
+    });
+    const provisioning = fakeProvisioning();
+    const store = createInMemoryPendingErasureStore();
+    const notifier = opts.notifier ?? fakeNotifier();
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      allowedRegions: ['aws-us-east-1'],
+      exporter: fakeExporter(),
+      pendingErasureStore: store,
+      erasureUndoWindowMs: 0,
+      operatorEmail: 'ops@operator.example',
+      notifier,
+    });
+    return { tf, registry, provisioning, store, notifier };
+  };
+
+  it('captures the tenant email at request time and stores it on the pending record', async () => {
+    const { tf, store } = seed({ email: 'a@example.com' });
+    await tf.requestTenantErasure('t-a', 'r');
+    const active = await store.getActive('t-a');
+    expect(active?.tenantEmail).toBe('a@example.com');
+  });
+
+  it('on execution alerts BOTH the operator and the tenant (using the captured email)', async () => {
+    const { tf, notifier } = seed({ email: 'a@example.com' });
+    await tf.requestTenantErasure('t-a', 'r');
+    notifier.sent.length = 0; // ignore the request-time schedule alerts; assert only execution alerts
+    const due = await tf.duePendingErasures();
+    const cert = await tf.executePendingErasure(due[0]!.id);
+    expect(cert).not.toBeNull();
+    // Operator alert (operations address, no PII) AND the tenant completion notice (captured email).
+    expect(notifier.sent.some((n) => n.to === 'ops@operator.example')).toBe(true);
+    const tenantNote = notifier.sent.find((n) => n.to === 'a@example.com');
+    expect(tenantNote).toBeDefined();
+    expect(tenantNote!.subject).toMatch(/erased/i);
+    // References the certificate (its completion instant) — booleans/refs only, never a secret.
+    expect(tenantNote!.body).toContain(cert!.erasedAt);
+  });
+
+  it('alerts only the operator when no tenant email was on file at request time', async () => {
+    const { tf, notifier } = seed({}); // no billingEmail
+    await tf.requestTenantErasure('t-a', 'r');
+    notifier.sent.length = 0;
+    const due = await tf.duePendingErasures();
+    await tf.executePendingErasure(due[0]!.id);
+    expect(notifier.sent.some((n) => n.to === 'ops@operator.example')).toBe(true);
+    expect(notifier.sent.some((n) => n.to.includes('@example.com'))).toBe(false);
+  });
+
+  it('a notifier failure on the tenant alert never fails or rolls back the erasure', async () => {
+    // Notifier throws on the tenant completion notice → the erasure must still succeed (data is gone).
+    const throwingNotifier: ReturnType<typeof fakeNotifier> = {
+      provider: 'fake',
+      sent: [],
+      notify: (n) => {
+        throwingNotifier.sent.push(n);
+        return Promise.reject(new Error('smtp 500'));
+      },
+    };
+    const { tf, provisioning } = seed({ email: 'a@example.com', notifier: throwingNotifier });
+    await tf.requestTenantErasure('t-a', 'r');
+    const due = await tf.duePendingErasures();
+    const cert = await tf.executePendingErasure(due[0]!.id);
+    expect(cert).not.toBeNull(); // erasure completed despite the alert failure
+    expect(provisioning.deleted).toContain('proj-1');
+  });
+});
+
+describe('portal self-serve facade — erasure-executor sweep (M2)', () => {
+  const seedSweep = (over: Partial<TenantForgeDeps> = {}) => {
+    const registry = fakeRegistry();
+    const provisioning = fakeProvisioning();
+    const store = createInMemoryPendingErasureStore();
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      allowedRegions: ['aws-us-east-1'],
+      exporter: fakeExporter(),
+      pendingErasureStore: store,
+      erasureUndoWindowMs: 0,
+      ...over,
+    });
+    return { tf, registry, provisioning, store };
+  };
+
+  it('empty store → no-op report (nothing due)', async () => {
+    const { tf, provisioning } = seedSweep();
+    const report = await tf.erasureSweep();
+    expect(report).toEqual({ scanned: 0, processed: [], skipped: [], failed: [] });
+    expect(provisioning.deleted).toHaveLength(0);
+  });
+
+  it('no pending-erasure store wired → no-op report', async () => {
+    const registry = fakeRegistry();
+    const tf = createTenantForge({
+      registry,
+      provisioning: fakeProvisioning(),
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      allowedRegions: ['aws-us-east-1'],
+    });
+    expect(await tf.erasureSweep()).toEqual({
+      scanned: 0,
+      processed: [],
+      skipped: [],
+      failed: [],
+    });
+  });
+
+  it('executes due records and reports them processed', async () => {
+    const { tf, registry, provisioning } = seedSweep();
+    registry.seed({ id: 't-a' });
+    await tf.requestTenantErasure('t-a', 'r');
+    const report = await tf.erasureSweep();
+    expect(report.scanned).toBe(1);
+    expect(report.processed).toHaveLength(1);
+    expect(report.skipped).toHaveLength(0);
+    expect(report.failed).toHaveLength(0);
+    expect(provisioning.deleted).toContain('proj-1');
+  });
+
+  it('does NOT execute not-yet-due records (window not elapsed)', async () => {
+    const { tf, registry, provisioning } = seedSweep({ erasureUndoWindowMs: 60_000 });
+    registry.seed({ id: 't-a' });
+    await tf.requestTenantErasure('t-a', 'r');
+    const report = await tf.erasureSweep();
+    expect(report.scanned).toBe(0); // listDue excludes the future executeAt
+    expect(report.processed).toHaveLength(0);
+    expect(provisioning.deleted).toHaveLength(0);
+  });
+
+  it('is failure-isolated — one tenant failing does not stop the others', async () => {
+    // Provisioning deletes proj-a fine but throws for proj-b. Both are due; the sweep must process
+    // the healthy one and isolate the failure (mirrors purgeExpired).
+    const registry = fakeRegistry();
+    registry.seed({ id: 't-a', neonProjectId: 'proj-a' });
+    registry.seed({ id: 't-b', neonProjectId: 'proj-b' });
+    const deleted: string[] = [];
+    const provisioning: ProvisioningProvider & { deleted: string[] } = {
+      deleted,
+      createTenantProject: () =>
+        Promise.resolve({ neonProjectId: 'proj', connectionUri: 'postgresql://s@h/db' }),
+      deleteTenantProject: (pid: string) => {
+        if (pid === 'proj-b') return Promise.reject(new Error('neon 500 deleting proj-b'));
+        deleted.push(pid);
+        return Promise.resolve();
+      },
+      rotateTenantCredential: () => Promise.resolve({ connectionUri: 'postgresql://r@h/db' }),
+    };
+    const store = createInMemoryPendingErasureStore();
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      allowedRegions: ['aws-us-east-1'],
+      exporter: fakeExporter(),
+      pendingErasureStore: store,
+      erasureUndoWindowMs: 0,
+    });
+    await tf.requestTenantErasure('t-a', 'r');
+    await tf.requestTenantErasure('t-b', 'r');
+    const report = await tf.erasureSweep();
+    expect(report.scanned).toBe(2);
+    // The healthy tenant was erased; the failing one is isolated in `failed`, never blocking it.
+    expect(report.processed).toHaveLength(1);
+    expect(report.failed).toHaveLength(1);
+    expect(report.failed[0]!.tenantId).toBe('t-b');
+    expect(deleted).toEqual(['proj-a']);
+  });
+
+  it('idempotent across redelivery / concurrent sweeps — a second run double-deletes nothing', async () => {
+    const { tf, registry, provisioning, store } = seedSweep();
+    registry.seed({ id: 't-a' });
+    await tf.requestTenantErasure('t-a', 'r');
+    const first = await tf.erasureSweep();
+    expect(first.processed).toHaveLength(1);
+    // The record is now `done`, not `pending` → listDue returns nothing on a second run.
+    const second = await tf.erasureSweep();
+    expect(second.scanned).toBe(0);
+    expect(second.processed).toHaveLength(0);
+    expect(provisioning.deleted).toHaveLength(1); // never deleted twice
+    expect(await store.getActive('t-a')).toBeNull();
+  });
+
+  it('a record that lost the atomic flip (cancel / concurrent sweep) is reported skipped, not deleted', async () => {
+    // Model a race: the sweep's `listDue` still sees the record as pending, but by the time it calls
+    // executePendingErasure another actor (a cancel, or a concurrent sweep) has already claimed it, so
+    // the atomic `claimForProcessing` flip loses → executePendingErasure returns null → `skipped`,
+    // never a second delete (red-team F2). A thin store decorator injects that lost race deterministically.
+    const registry = fakeRegistry();
+    registry.seed({ id: 't-a' });
+    const provisioning = fakeProvisioning();
+    const inner = createInMemoryPendingErasureStore();
+    let cancelledOnce = false;
+    const racingStore: typeof inner = {
+      ...inner,
+      // listDue reports the record as due (pending)…
+      listDue: (nowMs, limit) => inner.listDue(nowMs, limit),
+      // …but the executor's claim loses the very first time (a racing actor won the flip first).
+      claimForProcessing: async (id) => {
+        if (!cancelledOnce) {
+          cancelledOnce = true;
+          await inner.cancel('t-a', Date.now()); // a cancel wins the flip first
+        }
+        return inner.claimForProcessing(id);
+      },
+    };
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore: createInMemorySecretStore(),
+      defaultRegion: 'aws-us-east-1',
+      allowedRegions: ['aws-us-east-1'],
+      exporter: fakeExporter(),
+      pendingErasureStore: racingStore,
+      erasureUndoWindowMs: 0,
+    });
+    await tf.requestTenantErasure('t-a', 'r');
+    const report = await tf.erasureSweep();
+    expect(report.scanned).toBe(1);
+    expect(report.processed).toHaveLength(0);
+    expect(report.skipped).toHaveLength(1); // lost the flip → skipped, not failed
+    expect(report.failed).toHaveLength(0);
+    expect(provisioning.deleted).toHaveLength(0); // no delete after losing the race
+  });
+});

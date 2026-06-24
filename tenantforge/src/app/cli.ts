@@ -501,6 +501,40 @@ const purgeExpired = defineCommand({
   },
 });
 
+const erasureSweep = defineCommand({
+  meta: {
+    name: 'erasure-sweep',
+    description:
+      'Execute due self-serve erasures past their undo window (the scheduled erasure executor)',
+  },
+  args: {
+    limit: { type: 'string', description: 'Max due erasures to process this run (default 100)' },
+    yes: { type: 'boolean', description: 'Confirm the irreversible erasures', default: false },
+  },
+  async run({ args }) {
+    if (!args.yes) {
+      // Each processed record IRREVERSIBLY deletes a tenant DB + crypto-shreds its secret — gate it,
+      // mirroring purge-expired (the undo window already elapsed; this is the final, unrecoverable step).
+      process.stdout.write('refusing to sweep without --yes (this erases tenant DBs)\n');
+      process.exitCode = 1;
+      return;
+    }
+    await withTenantForge(async (tf) => {
+      const report = await tf.erasureSweep(
+        args.limit !== undefined ? { limit: Number(args.limit) } : {},
+      );
+      process.stdout.write(
+        `erasure sweep: ${report.processed.length} erased, ${report.skipped.length} skipped, ` +
+          `${report.failed.length} failed of ${report.scanned} due erasure(s)\n`,
+      );
+      for (const f of report.failed) {
+        process.stdout.write(`  FAILED ${f.id} (tenant ${f.tenantId}): ${f.error}\n`);
+      }
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+  },
+});
+
 const retentionReport = defineCommand({
   meta: {
     name: 'retention-report',
@@ -1685,6 +1719,7 @@ const main = defineCommand({
     enqueue,
     purge,
     'purge-expired': purgeExpired,
+    'erasure-sweep': erasureSweep,
     'retention-report': retentionReport,
     'migrate-fleet': migrateFleet,
     'reconcile-fleet': reconcileFleet,
