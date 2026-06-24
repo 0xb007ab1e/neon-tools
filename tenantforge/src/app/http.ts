@@ -12,6 +12,7 @@ import { loadConfig } from './config.js';
 import { createHttpServer } from './http-server.js';
 import { createTokenTenantAuthenticator } from '../adapters/auth/tenant-token-authenticator.js';
 import { createOidcTenantAuthenticator } from '../adapters/auth/oidc-tenant-authenticator.js';
+import { createOidcCodeFlow } from '../adapters/auth/oidc-code-flow.js';
 import { tenantForgeFromConfig } from './lib.js';
 
 /** Read an ordered migration catalog from a directory of `*.sql` files (sorted by filename). */
@@ -100,6 +101,26 @@ function main(): void {
       : config.portalCredentials !== undefined
         ? createTokenTenantAuthenticator(config.portalCredentials)
         : undefined;
+  // Server-side Authorization Code + PKCE for the portal SPA login (H1/H2) — built only in OIDC mode.
+  // The SPA never handles a raw token: the server pins state/nonce/verifier and exchanges the code.
+  const portalCodeFlow =
+    config.portalOidc !== undefined
+      ? createOidcCodeFlow({
+          authorizeUrl: config.portalOidc.authorizeUrl,
+          tokenUrl: config.portalOidc.tokenUrl,
+          issuer: config.portalOidc.issuer,
+          audience: config.portalOidc.audience,
+          clientId: config.portalOidc.clientId,
+          redirectUri: config.portalOidc.redirectUri,
+          scope: config.portalOidc.scope,
+          jwksUri: config.portalOidc.jwksUri,
+          tenantClaim: config.portalOidc.tenantClaim,
+          allowInsecure: config.allowInsecureUrls,
+          ...(config.portalOidc.clientSecret !== undefined
+            ? { clientSecret: config.portalOidc.clientSecret }
+            : {}),
+        })
+      : undefined;
   const app = createHttpServer(tf, {
     ...(authenticator !== undefined ? { authenticator } : {}),
     ...(config.httpCredentials !== undefined ? { credentials: config.httpCredentials } : {}),
@@ -122,8 +143,16 @@ function main(): void {
       ? {
           portalSecret: config.portalSecret,
           tenantAuthenticator,
+          // Server-side OIDC code flow for the SPA login (H1/H2) — present only in OIDC mode.
+          ...(portalCodeFlow !== undefined ? { portalCodeFlow } : {}),
           // Destructive self-serve actions (cancel + erasure) ship OFF until proven (ADR-0010 / F6).
           portalSelfServeDestructive: config.portalSelfServeDestructive,
+          // Stripe publishable key (public) for the portal SPA's Elements payment-method view.
+          ...(config.stripePublishableKey !== undefined
+            ? { portalPublishableKey: config.stripePublishableKey }
+            : {}),
+          // When set, the /portal sub-app also serves the built portal SPA (no separate web server).
+          ...(config.portalDist !== undefined ? { portalStaticRoot: config.portalDist } : {}),
         }
       : {}),
     // Public self-serve signup — mounted when enabled (signup secret + the public Stripe/captcha keys).

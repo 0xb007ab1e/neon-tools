@@ -208,6 +208,9 @@ const EnvSchema = z
     // Path to the built signup SPA (`signup/dist`); when set (with signup enabled), the /signup
     // sub-app also serves the front-end.
     TENANTFORGE_SIGNUP_DIST: z.string().min(1).optional(),
+    // Path to the built portal SPA (`portal/dist`); when set (with the portal mounted), the /portal
+    // sub-app also serves the customer-facing front-end (scoped CSP allows Stripe.js).
+    TENANTFORGE_PORTAL_DIST: z.string().min(1).optional(),
     // Customer-facing self-serve portal: when set (with PORTAL_CREDENTIALS), mount the tenant portal
     // at /portal. The value is the HMAC key that signs portal session cookies (a secret).
     TENANTFORGE_PORTAL_SECRET: z.string().min(1).optional(),
@@ -222,6 +225,20 @@ const EnvSchema = z
     TENANTFORGE_PORTAL_OIDC_JWKS_URI: z.string().url().optional(),
     // The JWT claim carrying the tenant id. Defaults to `tenant`.
     TENANTFORGE_PORTAL_OIDC_TENANT_CLAIM: z.string().min(1).default('tenant'),
+    // Server-side Authorization Code + PKCE for the portal SPA (H1/H2). When the authorize + token
+    // endpoints + redirect URI are set, the SPA logs in via the code flow (server-pinned state/nonce/
+    // verifier; the SPA never handles a raw token). Required together for `oidc` mode.
+    TENANTFORGE_PORTAL_OIDC_AUTHORIZE_URL: z.string().url().optional(),
+    TENANTFORGE_PORTAL_OIDC_TOKEN_URL: z.string().url().optional(),
+    // The redirect URI registered with the IdP (the portal callback, e.g. https://host/portal/).
+    TENANTFORGE_PORTAL_OIDC_REDIRECT_URI: z.string().url().optional(),
+    // OAuth client id; defaults to the audience when unset.
+    TENANTFORGE_PORTAL_OIDC_CLIENT_ID: z.string().min(1).optional(),
+    // OAuth scope; defaults to `openid`.
+    TENANTFORGE_PORTAL_OIDC_SCOPE: z.string().min(1).default('openid'),
+    // Optional OAuth client secret (confidential client) — a secret from env/secret manager; never
+    // committed or logged. Omit for a public client (PKCE alone authenticates the exchange).
+    TENANTFORGE_PORTAL_OIDC_CLIENT_SECRET: z.string().min(1).optional(),
     // Self-serve portal write surface (ADR-0010 / threat-model B8w). The destructive pair
     // (cancel + erasure) ships behind a feature flag that is OFF by default (red-team F6); the
     // payment/plan/invoice reads + writes are always available when the portal is mounted.
@@ -387,12 +404,16 @@ const EnvSchema = z
         });
       }
     }
-    // Portal OIDC mode needs its issuer/audience/JWKS (the static credentials aren't used then).
+    // Portal OIDC mode needs its issuer/audience/JWKS plus the code-flow endpoints + redirect URI
+    // (the SPA logs in via server-side Authorization Code + PKCE — H1/H2; static creds aren't used).
     if (env.TENANTFORGE_PORTAL_AUTH_MODE === 'oidc') {
       for (const key of [
         'TENANTFORGE_PORTAL_OIDC_ISSUER',
         'TENANTFORGE_PORTAL_OIDC_AUDIENCE',
         'TENANTFORGE_PORTAL_OIDC_JWKS_URI',
+        'TENANTFORGE_PORTAL_OIDC_AUTHORIZE_URL',
+        'TENANTFORGE_PORTAL_OIDC_TOKEN_URL',
+        'TENANTFORGE_PORTAL_OIDC_REDIRECT_URI',
       ] as const) {
         if (env[key] === undefined) {
           ctx.addIssue({
@@ -503,6 +524,8 @@ export interface Config {
   dashboardDist?: string;
   /** Path to the built signup SPA (`signup/dist`); when set, the signup sub-app serves the front-end. */
   signupDist?: string;
+  /** Path to the built portal SPA (`portal/dist`); when set, the portal sub-app serves the front-end. */
+  portalDist?: string;
   /** Directory of ordered migration `.sql` files; set ⇒ the dashboard can execute a reconcile. */
   migrationsDir?: string;
   /** Portal session-cookie HMAC key; set (with `portalCredentials`) ⇒ the /portal is mounted. */
@@ -527,6 +550,18 @@ export interface Config {
     jwksUri: string;
     /** The claim carrying the tenant id. */
     tenantClaim: string;
+    /** The IdP `authorization_endpoint` (server-side Authorization Code + PKCE — H1/H2). */
+    authorizeUrl: string;
+    /** The IdP `token_endpoint` (server-to-server code exchange). */
+    tokenUrl: string;
+    /** The redirect URI registered with the IdP (the portal callback). */
+    redirectUri: string;
+    /** OAuth client id (defaults to the audience). */
+    clientId: string;
+    /** OAuth scope (defaults to `openid`). */
+    scope: string;
+    /** Optional OAuth client secret (confidential client); a secret — never logged. */
+    clientSecret?: string;
   };
   /** Unit cost rates (USD) for the cost/margin report; absent ⇒ zero cost. */
   costRates?: CostRates;
@@ -646,6 +681,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(parsed.TENANTFORGE_SIGNUP_DIST !== undefined
       ? { signupDist: parsed.TENANTFORGE_SIGNUP_DIST }
       : {}),
+    ...(parsed.TENANTFORGE_PORTAL_DIST !== undefined
+      ? { portalDist: parsed.TENANTFORGE_PORTAL_DIST }
+      : {}),
     ...(parsed.TENANTFORGE_PORTAL_SECRET !== undefined
       ? { portalSecret: parsed.TENANTFORGE_PORTAL_SECRET }
       : {}),
@@ -749,12 +787,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     config.operatorEmail = parsed.TENANTFORGE_OPERATOR_EMAIL;
   }
   if (parsed.TENANTFORGE_PORTAL_AUTH_MODE === 'oidc') {
-    // superRefine guarantees issuer/audience/jwks are present for this mode.
+    // superRefine guarantees issuer/audience/jwks + the code-flow endpoints are present for this mode.
     config.portalOidc = {
       issuer: parsed.TENANTFORGE_PORTAL_OIDC_ISSUER!,
       audience: parsed.TENANTFORGE_PORTAL_OIDC_AUDIENCE!,
       jwksUri: parsed.TENANTFORGE_PORTAL_OIDC_JWKS_URI!,
       tenantClaim: parsed.TENANTFORGE_PORTAL_OIDC_TENANT_CLAIM,
+      authorizeUrl: parsed.TENANTFORGE_PORTAL_OIDC_AUTHORIZE_URL!,
+      tokenUrl: parsed.TENANTFORGE_PORTAL_OIDC_TOKEN_URL!,
+      redirectUri: parsed.TENANTFORGE_PORTAL_OIDC_REDIRECT_URI!,
+      clientId:
+        parsed.TENANTFORGE_PORTAL_OIDC_CLIENT_ID ?? parsed.TENANTFORGE_PORTAL_OIDC_AUDIENCE!,
+      scope: parsed.TENANTFORGE_PORTAL_OIDC_SCOPE,
+      ...(parsed.TENANTFORGE_PORTAL_OIDC_CLIENT_SECRET !== undefined
+        ? { clientSecret: parsed.TENANTFORGE_PORTAL_OIDC_CLIENT_SECRET }
+        : {}),
     };
   }
   if (parsed.TENANTFORGE_SECRET_KEY !== undefined) {
