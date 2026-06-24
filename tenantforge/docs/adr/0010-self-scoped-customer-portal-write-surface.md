@@ -69,3 +69,16 @@ customer portal only.
   every feature). Cross-tenant **mutation** attempts join the abuse-test suite (threat-model B8w).
 - Revisit if the portal ever needs to act beyond the calling tenant (it must not) or if a customer
   action gains operator-level blast radius (it must not).
+
+## Dashboard parity (per-feature web-view rule)
+
+The project's "web dashboard per feature" rule (`CLAUDE.md`) requires every new feature to ship a
+**browser view** of its output, in addition to the CLI/HTTP/MCP surfaces. For these self-serve
+features the **customer portal SPA is that web view** — and the correct one: the features are
+_customer-facing_, so the human-facing window is the **customer portal**, not the operator dashboard.
+Putting customer self-serve cancel/erasure/payment on the **operator** dashboard would reintroduce the
+exact ADR-0004 concern this ADR carefully scopes around (money/lifecycle off the operator surface).
+So parity is satisfied as: payment-method, plan, invoices/billing, usage, cancel, export, and erasure
+(incl. the undo-window status) each have a portal SPA view (`tenantforge/portal/`); the operator
+dashboard stays **read-only** per ADR-0004. The CLI/HTTP/MCP automation surfaces remain as before
+(the destructive sweep executor is CLI/worker-only — `erasure-sweep`).

@@ -34,9 +34,55 @@ All notable changes to TenantForge are documented here. The format follows
   - **New facade methods** on `TenantForge`: `tenantPaymentSetup`, `confirmTenantPaymentMethod`,
     `tenantInvoices`, `requestTenantStepUp`, `verifyTenantStepUp`, `cancelTenant`,
     `requestTenantErasure`, `cancelTenantErasure`, `pendingErasure`, `executePendingErasure`,
-    `duePendingErasures`. **New ports + in-memory adapters:** `OneTimeCodeStore`,
-    `PendingErasureStore`. **New OpenAPI doc:** `openapi.portal.yaml` (with a contract test).
-  - Phase 2 (the React SPA) and Phase 3 (a11y + the customer cancel/erasure runbook) land next.
+    `duePendingErasures`, `erasureSweep`. **New ports + in-memory adapters:** `OneTimeCodeStore`,
+    `PendingErasureStore`. **New OpenAPI doc:** `openapi.portal.yaml` (with a bidirectional contract
+    test — documented↔routed parity over the full surface, incl. config/login/session/reads).
+
+- **Erasure executor + self-serve-destructive alerts (the scheduled executor).** The mandatory
+  erasure undo window needs something to run the erasure **after** the window elapses; this adds that
+  executor and the operator/tenant alerting (B8w F2/F7).
+  - `executePendingErasure(id)` runs the verified-erasure engine for a single record **only if it
+    wins the single atomic `pending → processing` flip** (`claimForProcessing`) — a cancelled record,
+    or an at-least-once redelivery of a non-`pending` record, acks and exits **without** erasing
+    (idempotent; no TOCTOU double-delete). `erasureSweep({ limit? })` processes all records past
+    `execute-at`, **failure-isolated** (one tenant's failure never blocks the rest) and idempotent
+    across re-runs; returns `{ scanned, processed, skipped, failed }` and emits `tenant.erasure_sweep`.
+  - **Surfaces:** the **worker loop** (`runWorkerCycle` → `erasureSweep()` each poll cycle, wrapped so
+    a sweep error can never crash the worker) and the **CLI `erasure-sweep [--limit N] --yes`**
+    (`--yes`-gated — it irreversibly deletes tenant DBs; non-zero exit on any failure). The sweep is
+    **always run** (not flag-gated), but with the destructive flag OFF nothing is ever scheduled so it
+    no-ops. **Alerts:** on schedule and on execution, the **operator and the tenant's verified email**
+    are notified (griefing tripwire / wrong-account safety net); the tenant email is **captured at
+    request time** (the record is gone by execution — review L2). Alerts are best-effort and never
+    fail/roll back the erasure. New `docs/runbooks/portal-self-serve.md` documents the operator flow.
+
+- **Customer portal React SPA + server-side OIDC login.** The portal's primary UI becomes a React
+  SPA (`tenantforge/portal/`, mirroring the signup/dashboard SPAs) served from
+  `createPortal({ staticRoot })` behind a **scoped CSP that allows Stripe.js/Elements**; the
+  server-rendered no-JS page remains the fallback when `staticRoot` is unset. The JSON `/portal/api/*`
+  surface is unchanged.
+  - **Views:** Overview (account + usage), Billing (invoices / charges / refunds / receipts / credit),
+    Plan (preview → confirm → idempotent change), Payment method (Stripe Elements — PAN never touches
+    the server), and a flag-gated **Danger zone** (data-export, cancel, erasure with the undo-window
+    status + cancel-erasure). The Danger zone (and its nav entry) is **hidden when
+    `features.destructiveActions` is OFF** — no dead buttons; deep-linking `#/danger` falls back to
+    Overview.
+  - **Server-side OIDC Authorization Code + PKCE login** for the SPA: `GET /api/login/start` mints +
+    **pins `state`/`nonce`/`code_verifier` server-side** in a short-TTL signed HttpOnly cookie and
+    returns the IdP authorize URL; the callback POSTs `{ code, state }` to `POST /api/session`, which
+    verifies `state`, exchanges the code, and verifies the id_token + `nonce` — **the SPA never
+    handles a raw token** (defeats login-CSRF + replay — H1/H2). A `{ token }` dev/token path remains
+    for local dev. `GET /api/config` advertises the publishable key + login mode + capabilities;
+    `GET /api/csrf` issues the session-bound CSRF token; `GET`/`DELETE /api/session` are who-am-I /
+    logout. New `OidcCodeFlow` port. (See 0.13.0 for the JWT-verifying `TenantAuthenticator` adapter.)
+  - **Accessibility (WCAG 2.2 AA):** semantic HTML + landmarks, a skip link, focus moved to the
+    section heading on each route change, an accessible modal (focus trap + restore, Escape, labelled
+    by heading), `prefers-reduced-motion` / `prefers-color-scheme` honored with a persisted
+    light/dark toggle, no meaning by color alone. **axe-core** assertions cover **every screen and
+    every Danger-zone modal**; a manual keyboard + screen-reader (NVDA/VoiceOver) test plan ships at
+    `docs/a11y/portal-manual-test-plan.md` (the manual SR pass is an outstanding human task).
+  - **Dashboard parity:** the customer portal is the customer-facing window onto these self-serve
+    features (the per-feature web-view rule); the operator dashboard remains read-only (ADR-0004).
 
 ## [0.38.1] - 2026-06-22
 

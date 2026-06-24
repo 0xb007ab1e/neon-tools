@@ -43,6 +43,226 @@ components:
 security:
   - portalSession: []
 paths:
+  /api/config:
+    get:
+      tags: [session]
+      summary: >
+        Public SPA config (no secrets): the Stripe **publishable** key (when configured), advertised
+        capabilities, and the login mode. Read before login; unauthenticated.
+      security: []
+      responses:
+        '200':
+          description: Public config.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  publishableKey: { type: string }
+                  features:
+                    type: object
+                    properties:
+                      destructiveActions: { type: boolean }
+                    required: [destructiveActions]
+                  auth:
+                    type: object
+                    properties:
+                      mode: { type: string, enum: [oidc, token] }
+                    required: [mode]
+                required: [features, auth]
+  /api/login/start:
+    get:
+      tags: [session]
+      summary: >
+        Begin server-driven OIDC Authorization Code + PKCE login: the server mints and pins
+        `state`/`nonce`/`code_verifier` in a short-TTL signed HttpOnly cookie and returns the IdP
+        authorize URL for the SPA to redirect to (defeats login-CSRF + replay — H1/H2). 404 when
+        OIDC is not configured (token-mode deploys).
+      security: []
+      responses:
+        '200':
+          description: The IdP authorize URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorizeUrl: { type: string }
+                required: [authorizeUrl]
+        '404': { description: OIDC login is not configured. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/session:
+    get:
+      tags: [session]
+      summary: Who am I — the session tenant id + capabilities, or 401 when unauthenticated.
+      responses:
+        '200':
+          description: The authenticated session.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenantId: { type: string }
+                  features:
+                    type: object
+                    properties:
+                      destructiveActions: { type: boolean }
+                    required: [destructiveActions]
+                required: [tenantId, features]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [session]
+      summary: >
+        Log in and mint the session cookie. Body is one of two shapes: `{ code, state }` (the OIDC
+        Authorization Code callback — exchanged + verified server-side, the SPA never sees a token)
+        or `{ token }` (the static/dev token path). The tenant id is derived **only** from the
+        verified principal, never from request input.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  properties:
+                    code: { type: string }
+                    state: { type: string }
+                  required: [code, state]
+                - type: object
+                  properties:
+                    token: { type: string }
+                  required: [token]
+      responses:
+        '200':
+          description: Signed in; the session cookie is set.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenantId: { type: string }
+                  features:
+                    type: object
+                    properties:
+                      destructiveActions: { type: boolean }
+                    required: [destructiveActions]
+                required: [tenantId, features]
+        '400': { description: Invalid login body. }
+        '401': { description: Invalid token / invalid login state / login failed. }
+        '404': { description: OIDC login is not configured (code-flow body sent in token mode). }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [session]
+      summary: Log out — clear the session cookie.
+      responses:
+        '204': { description: Signed out. }
+  /api/me:
+    get:
+      tags: [session]
+      summary: >
+        The tenant's own account summary (safe projection — id/slug/region/status/plan only; never
+        metadata, `billingCustomerRef`, or infra ids).
+      responses:
+        '200':
+          description: The account summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  slug: { type: string }
+                  region: { type: string }
+                  status: { type: string }
+                  createdAt: { type: string }
+                  planPriceUsd: { type: number }
+                required: [id, slug, region, status, createdAt]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: The session tenant no longer exists. }
+  /api/usage:
+    get:
+      tags: [session]
+      summary: >
+        The tenant's metered consumption for the current period. Projects away the internal Neon
+        project id — only the period + consumption are returned.
+      responses:
+        '200':
+          description: The current-period usage.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenantId: { type: string }
+                  period:
+                    type: object
+                    properties:
+                      from: { type: string }
+                      to: { type: string }
+                    required: [from, to]
+                  consumption:
+                    type: object
+                    properties:
+                      computeTimeSeconds: { type: number }
+                      activeTimeSeconds: { type: number }
+                      writtenDataBytes: { type: number }
+                      syntheticStorageBytes: { type: number }
+                    required:
+                      [
+                        computeTimeSeconds,
+                        activeTimeSeconds,
+                        writtenDataBytes,
+                        syntheticStorageBytes,
+                      ]
+                required: [tenantId, period, consumption]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/charges:
+    get:
+      tags: [billing]
+      summary: The tenant's own recent charge events (redacted; no card data).
+      responses:
+        '200':
+          description: Recent charges.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  charges: { type: array, items: { type: object } }
+                required: [charges]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/refunds:
+    get:
+      tags: [billing]
+      summary: The tenant's own recent refund events (redacted).
+      responses:
+        '200':
+          description: Recent refunds.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  refunds: { type: array, items: { type: object } }
+                required: [refunds]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/receipts:
+    get:
+      tags: [billing]
+      summary: The tenant's own recent receipt notifications (no recipient address recorded).
+      responses:
+        '200':
+          description: Recent receipts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  receipts: { type: array, items: { type: object } }
+                required: [receipts]
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /api/csrf:
     get:
       tags: [session]
