@@ -92,4 +92,21 @@ export interface PaymentSetup {
    * @returns The normalized setup-intent state.
    */
   getSetupIntent(setupIntentId: string): Promise<SetupIntentState>;
+
+  /**
+   * Set `paymentMethodRef` as the customer's **default** payment method for future off-session
+   * charges. This is the step that makes a customer's "update card" actually take effect: the charge
+   * path (`PaymentGateway.charge`) sends `customer` + `off_session` with **no** explicit method, so
+   * Stripe uses the customer's `invoice_settings.default_payment_method` — which only this call
+   * updates. Without it a saved card is verified but never used (the old default keeps being charged).
+   *
+   * Must be called **only after** the caller has verified server-side that the method belongs to this
+   * customer (the SetupIntent succeeded and `customerRef` matches the tenant's billing customer); the
+   * adapter does not re-authorize. Throws on a non-2xx upstream response (fail closed — the caller
+   * must not report success if this throws). No card data is sent or returned — only references.
+   *
+   * @param customerRef - The PSP customer (from {@link CreateCustomerResult}); the tenant's own.
+   * @param paymentMethodRef - The verified payment-method reference to make default.
+   */
+  setDefaultPaymentMethod(customerRef: string, paymentMethodRef: string): Promise<void>;
 }

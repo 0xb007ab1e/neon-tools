@@ -64,6 +64,10 @@ export interface HttpServerOptions {
   portalSecret?: string;
   /** Resolves a portal token to a tenant; required to mount the portal. */
   tenantAuthenticator?: TenantAuthenticator;
+  /** Enable the portal's destructive self-serve actions (cancel + erasure). Default false (ADR-0010 / red-team F6). */
+  portalSelfServeDestructive?: boolean;
+  /** Allowed browser origins for portal mutations (CSRF defense in depth — red-team F4). */
+  portalAllowedOrigins?: string[];
   /** Injectable clock (ms) for rate limiting — defaults to `Date.now`. */
   now?: () => number;
   /**
@@ -276,6 +280,16 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
         authenticator: options.tenantAuthenticator,
         sessionSecret: options.portalSecret,
         now: () => now(),
+        // Share the same rate-limit + idempotency stores as the main API (global across replicas
+        // when a Postgres-backed store is configured — threat-model R2 / red-team F3a).
+        rateLimitStore,
+        idempotencyStore,
+        ...(options.portalSelfServeDestructive !== undefined
+          ? { enableDestructiveActions: options.portalSelfServeDestructive }
+          : {}),
+        ...(options.portalAllowedOrigins !== undefined
+          ? { allowedOrigins: options.portalAllowedOrigins }
+          : {}),
       }),
     );
   }

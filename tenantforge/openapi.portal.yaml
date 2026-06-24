@@ -1,0 +1,267 @@
+openapi: 3.1.0
+info:
+  title: TenantForge Customer Self-Serve Portal API
+  version: 0.1.0
+  description: >
+    The customer-facing self-serve portal JSON API (mounted under `/portal`), distinct from the
+    operator admin API (`openapi.yaml`). Authenticated by a signed, HttpOnly, `SameSite=Strict`
+    **portal session cookie** (not a bearer token); the tenant id is derived **only** from that
+    server-side session and is never read from request input — so every route acts on the calling
+    tenant's **own** account (no BOLA / cross-tenant access — ADR-0010, threat-model B8w).
+
+    Every mutation requires a **signed per-session CSRF token** in the `X-TF-CSRF` header
+    (obtained from `GET /api/csrf`) plus an `Origin`/`Sec-Fetch-Site` allow-list. Money operations
+    (`/api/plan/change`, `/api/payment-method/set-default`) accept an `Idempotency-Key` and are
+    endpoint-level idempotent. The destructive actions (`/api/cancel`, `/api/data-export`,
+    `/api/erasure*`) ship behind a feature flag (OFF by default) and require a control-plane
+    second-factor (`/api/step-up`). All paths are relative to the `/portal` mount.
+servers:
+  - url: /portal
+tags:
+  - name: session
+  - name: plan
+  - name: payment
+  - name: billing
+  - name: lifecycle
+components:
+  securitySchemes:
+    portalSession:
+      type: apiKey
+      in: cookie
+      name: tf_portal
+  headers:
+    CsrfToken:
+      description: Signed per-session CSRF token from `GET /api/csrf`.
+      schema: { type: string }
+  responses:
+    Unauthorized:
+      description: No / invalid portal session.
+    Forbidden:
+      description: Missing/invalid CSRF token, disallowed origin, or failed step-up.
+    TooManyRequests:
+      description: Rate limit exceeded (a `Retry-After` header is set).
+security:
+  - portalSession: []
+paths:
+  /api/csrf:
+    get:
+      tags: [session]
+      summary: Issue the signed per-session CSRF token (echo it in `X-TF-CSRF` on mutations).
+      responses:
+        '200':
+          description: The CSRF token.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  csrfToken: { type: string }
+                required: [csrfToken]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/plan:
+    get:
+      tags: [plan]
+      summary: The tenant's current plan price and the available plan catalog.
+      responses:
+        '200':
+          description: Current + available plans.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current: { type: [number, 'null'] }
+                  available:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        priceUsd: { type: number }
+                required: [current, available]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: The session tenant no longer exists. }
+  /api/plan/preview:
+    post:
+      tags: [plan]
+      summary: Preview the prorated settlement of a plan-price change (pure quote, no money).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                newPriceUsd: { type: number, minimum: 0 }
+              required: [newPriceUsd]
+      responses:
+        '200': { description: The prorated quote. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/plan/change:
+    post:
+      tags: [plan]
+      summary: Apply a plan-price change and settle the prorated delta (idempotent).
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                newPriceUsd: { type: number, minimum: 0 }
+              required: [newPriceUsd]
+      responses:
+        '200': { description: The plan-change report (quote + settlement). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Idempotency key reused with a different body / in flight. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/payment-method/setup-intent:
+    post:
+      tags: [payment]
+      summary: Begin a PSP SetupIntent for the tenant's billing customer (card collected client-side).
+      responses:
+        '200': { description: The client secret + setup-intent id. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: The tenant has no billing customer on file. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/payment-method/set-default:
+    post:
+      tags: [payment]
+      summary: Verify a confirmed SetupIntent (server-side) and set it as the default payment method.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                setupIntentId: { type: string }
+              required: [setupIntentId]
+      responses:
+        '200': { description: The default payment method was set. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Unconfirmed intent, no billing customer, or customer mismatch. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/invoices:
+    get:
+      tags: [billing]
+      summary: The tenant's recent invoices (generated on demand for trailing months).
+      responses:
+        '200': { description: Recent invoices, newest period first. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/credit-balance:
+    get:
+      tags: [billing]
+      summary: The tenant's available credit balance (minor units).
+      responses:
+        '200':
+          description: The balance.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balanceMinor: { type: integer }
+                  currency: { type: string }
+                required: [balanceMinor, currency]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/step-up:
+    post:
+      tags: [lifecycle]
+      summary: >
+        Request a single-use control-plane second-factor code (emailed) for a destructive action.
+        Flag-gated. Always 204 (never reveals whether an email was on file).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action: { type: string, enum: [cancel, erasure] }
+              required: [action]
+      responses:
+        '204': { description: Accepted (a code is sent if an email is on file). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/cancel:
+    post:
+      tags: [lifecycle]
+      summary: >
+        Self-serve cancel (offboard — reversible; never purge). Requires a step-up code. Flag-gated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string }
+              required: [code]
+      responses:
+        '200': { description: Cancelled; includes `reversibleUntil`. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/data-export:
+    post:
+      tags: [lifecycle]
+      summary: Request a data export (DSAR). Rate-limited + per-tenant cooldown. Flag-gated.
+      responses:
+        '200': { description: Export reference (location + size). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/erasure:
+    get:
+      tags: [lifecycle]
+      summary: The tenant's active pending-erasure status (undo deadline), or null. Flag-gated.
+      responses:
+        '200': { description: The pending erasure (or null). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [lifecycle]
+      summary: >
+        Schedule an irreversible erasure (typed confirm + step-up code gate the request; a mandatory
+        undo window guards execution — the tenant keeps serving until it elapses). Flag-gated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string }
+                confirm: { type: string, enum: [ERASE] }
+              required: [code, confirm]
+      responses:
+        '200': { description: Scheduled; includes `executeAt`. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/erasure/cancel:
+    post:
+      tags: [lifecycle]
+      summary: Cancel a pending erasure within the undo window (atomic). Flag-gated.
+      responses:
+        '200': { description: Cancelled. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: No pending erasure to cancel. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }

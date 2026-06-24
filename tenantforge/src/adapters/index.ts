@@ -26,6 +26,24 @@ export {
   type PgRateLimitStoreOptions,
 } from './neon-pg/rate-limit-store.js';
 export type { RateLimitStore, RateLimitHit } from '../ports/rate-limit-store.js';
+export {
+  createInMemoryOneTimeCodeStore,
+  type InMemoryOneTimeCodeStore,
+} from './one-time-code-store.js';
+export type {
+  OneTimeCodeStore,
+  OneTimeCodeRecord,
+  OneTimeCodeVerification,
+} from '../ports/one-time-code-store.js';
+export {
+  createInMemoryPendingErasureStore,
+  type InMemoryPendingErasureStore,
+} from './pending-erasure-store.js';
+export type {
+  PendingErasureStore,
+  PendingErasureRecord,
+  PendingErasureStatus,
+} from '../ports/pending-erasure-store.js';
 export { createNeonPgSecretStore, type NeonPgSecretStoreOptions } from './neon-pg/secret-store.js';
 export { createVaultSecretStore, type VaultSecretStoreOptions } from './vault/secret-store.js';
 export {

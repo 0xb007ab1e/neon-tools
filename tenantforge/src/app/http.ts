@@ -119,7 +119,12 @@ function main(): void {
     // configured: OIDC (verify the customer IdP's JWT) when portalAuthMode=oidc, else the static
     // token map. Either way the portal derives the tenant only from the verified principal.
     ...(config.portalSecret !== undefined && tenantAuthenticator !== undefined
-      ? { portalSecret: config.portalSecret, tenantAuthenticator }
+      ? {
+          portalSecret: config.portalSecret,
+          tenantAuthenticator,
+          // Destructive self-serve actions (cancel + erasure) ship OFF until proven (ADR-0010 / F6).
+          portalSelfServeDestructive: config.portalSelfServeDestructive,
+        }
       : {}),
     // Public self-serve signup — mounted when enabled (signup secret + the public Stripe/captcha keys).
     // Config validation guarantees these are present together when TENANTFORGE_SIGNUP_SECRET is set.

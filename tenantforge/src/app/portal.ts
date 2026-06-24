@@ -1,15 +1,25 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
+import { z } from 'zod';
 import type { TenantForge, TenantSummary } from './lib.js';
 import type { TenantAuthenticator } from '../ports/tenant-authenticator.js';
 import type { TenantEvent, TenantUsage } from '../core/index.js';
+import type { RateLimitStore } from '../ports/rate-limit-store.js';
+import type { IdempotencyStore, IdempotentResponse } from '../ports/idempotency-store.js';
+import { createInMemoryRateLimitStore } from '../adapters/rate-limit-store.js';
+import { createInMemoryIdempotencyStore } from '../adapters/idempotency-store.js';
 
 /** Portal session cookie name (scoped to the portal path). */
 const COOKIE = 'tf_portal';
 /** Default portal session lifetime: 1 hour (customer-facing → shorter than the operator dashboard). */
 const DEFAULT_TTL_MS = 60 * 60 * 1000;
+/** Portal API request bodies are tiny — cap hard (DoS / `std-owasp-api` API4). */
+const MAX_BODY = 8 * 1024;
+/** The custom header carrying the signed per-session CSRF token (red-team F4). */
+const CSRF_HEADER = 'x-tf-csrf';
 
 /** Options for {@link createPortal}. */
 export interface PortalOptions {
@@ -23,6 +33,22 @@ export interface PortalOptions {
   ttlMs?: number;
   /** Injectable clock (ms). Defaults to `Date.now`. */
   now?: () => number;
+  /** Per-session/per-IP rate-limit counter store. Defaults to in-memory (per-instance). */
+  rateLimitStore?: RateLimitStore;
+  /** Endpoint-level idempotency store for money ops. Defaults to in-memory (per-instance). */
+  idempotencyStore?: IdempotencyStore;
+  /**
+   * Allowed browser origins for state-changing requests (e.g. `https://portal.example.com`). When set,
+   * a mutation's `Origin` must be in this list (combined with the `Sec-Fetch-Site` check + the signed
+   * CSRF token — red-team F4). Empty/unset ⇒ rely on `Sec-Fetch-Site` + CSRF token (same-origin).
+   */
+  allowedOrigins?: string[];
+  /**
+   * Enable the **destructive** self-serve actions (cancel + erasure). Defaults to **false** — the pair
+   * ships behind a feature flag that is OFF until its abuse tests are green + security-reviewed
+   * (ADR-0010 / red-team F6). Payment / plan / invoices are unaffected by this flag.
+   */
+  enableDestructiveActions?: boolean;
 }
 
 /** Sign a payload with the session secret (base64url HMAC-SHA256). */
@@ -36,8 +62,16 @@ function encodeSession(tenantId: string, secret: string, expMs: number): string 
   return `${body}.${sign(body, secret)}`;
 }
 
-/** Verify + decode a session cookie to a tenant id; null if missing/tampered/expired (fail closed). */
-function decodeSession(value: string, secret: string, nowMs: number): string | null {
+/** A decoded, verified portal session: the tenant id and the cookie's absolute expiry (epoch ms). */
+interface Session {
+  /** The authenticated tenant id (server-derived; never from request input). */
+  tenantId: string;
+  /** The session cookie's absolute expiry (epoch ms) — also the CSRF token's binding value. */
+  exp: number;
+}
+
+/** Verify + decode a session cookie; null if missing/tampered/expired (fail closed). */
+function decodeSession(value: string, secret: string, nowMs: number): Session | null {
   const dot = value.indexOf('.');
   if (dot <= 0) return null;
   const body = value.slice(0, dot);
@@ -52,10 +86,61 @@ function decodeSession(value: string, secret: string, nowMs: number): string | n
     >;
     if (typeof p.exp !== 'number' || p.exp < nowMs) return null;
     if (typeof p.tenantId !== 'string' || p.tenantId === '') return null;
-    return p.tenantId;
+    return { tenantId: p.tenantId, exp: p.exp };
   } catch {
     return null;
   }
+}
+
+/**
+ * Mint a **signed, session-bound CSRF token**: `tenantId.HMAC(csrf:{tenantId}:{exp}, secret)`, where
+ * `exp` is the live session cookie's expiry. The browser reads it (`GET /api/csrf`) and echoes it in
+ * the {@link CSRF_HEADER} on every mutation; the server re-derives from the *current* session and
+ * constant-time compares. Because the token is bound to the session's `exp`, it **rotates with the
+ * cookie and dies on expiry/logout** — a leaked token is not a forever-valid bypass (review L1). It is
+ * a **signed** token (not a bare double-submit value a subdomain/cookie-injection could forge — F4),
+ * and it carries the tenant so a token for A can't be replayed as B.
+ */
+function mintCsrf(session: Session, secret: string): string {
+  return `${session.tenantId}.${sign(`csrf:${session.tenantId}:${session.exp}`, secret)}`;
+}
+
+/** Verify a presented CSRF token against the **current** session (constant-time, session-bound). */
+function verifyCsrf(token: string | undefined, session: Session, secret: string): boolean {
+  if (token === undefined) return false;
+  const expected = mintCsrf(session, secret);
+  const got = Buffer.from(token);
+  const want = Buffer.from(expected);
+  return got.length === want.length && timingSafeEqual(got, want);
+}
+
+/** A non-negative, finite plan price in USD (≥ 0; bounded to avoid absurd values). */
+const PlanChangeSchema = z.object({
+  newPriceUsd: z.number().finite().nonnegative().max(1_000_000),
+});
+/** A confirmed PSP setup-intent id to verify + set as default. */
+const SetDefaultSchema = z.object({ setupIntentId: z.string().min(1).max(256) });
+/** Erasure request: the typed confirmation + the step-up code. */
+const ErasureSchema = z.object({
+  code: z.string().min(1).max(16),
+  /** A typed confirmation phrase the SPA requires (defense in depth; also checked server-side). */
+  confirm: z.literal('ERASE'),
+});
+/** Cancel request: the step-up code (cancel is reversible but still second-factor gated — F1). */
+const CancelSchema = z.object({ code: z.string().min(1).max(16) });
+
+/** Map a facade error message to a safe HTTP status (the message is user-actionable, never internal). */
+function statusFor(message: string): number {
+  if (/not configured/.test(message)) return 503;
+  if (/not found/.test(message)) return 404;
+  if (
+    /no billing customer|no verified email|not confirmed|mismatch|already in progress|already in flight/.test(
+      message,
+    )
+  ) {
+    return 409;
+  }
+  return 400;
 }
 
 /** Escape a value for safe interpolation into HTML text/attributes (XSS defence — defence in depth). */
@@ -223,10 +308,14 @@ ${receiptsTable(receipts)}
  * signed, HttpOnly, `SameSite=Strict` session cookie minted from a portal token; the tenant id comes
  * **only** from that server-side session and is never read from client input, so a tenant can never
  * reach another tenant's data (no BOLA / cross-tenant access — `std-owasp-api` API1,
- * `topic-multi-tenancy`). Read-only: no money movement or lifecycle actions (those stay operator/CLI).
- * Server-rendered, semantic HTML (WCAG 2.2 AA) with no external resources.
+ * `topic-multi-tenancy`). The server-rendered page stays read-only; the JSON `/api/*` surface adds the
+ * tenant's **own-account** self-serve write actions (plan change, payment method, cancel, export,
+ * erasure — ADR-0010 / threat-model B8w). Every mutation is rate-limited, CSRF-protected (a signed
+ * per-session token in the {@link CSRF_HEADER} + `Origin`/`Sec-Fetch-Site` allow-list), money ops are
+ * endpoint-level idempotent, and the two destructive actions (cancel, erasure) require a control-plane
+ * second-factor and ship behind {@link PortalOptions.enableDestructiveActions} (OFF by default).
  *
- * @param options - The service, tenant authenticator, session secret, and optional ttl/clock.
+ * @param options - The service, tenant authenticator, session secret, and optional ttl/clock/stores/flag.
  * @returns A Hono sub-app (mount it under `/portal`).
  */
 export function createPortal(options: PortalOptions): Hono {
@@ -235,11 +324,14 @@ export function createPortal(options: PortalOptions): Hono {
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
   const secret = options.sessionSecret;
 
-  /** The tenant id from the session cookie, or null. */
-  const session = (c: Context): string | null => {
+  /** The verified session ({ tenantId, exp }) from the cookie, or null (fail closed). */
+  const sessionOf = (c: Context): Session | null => {
     const raw = getCookie(c, COOKIE);
     return raw === undefined ? null : decodeSession(raw, secret, now());
   };
+
+  /** The tenant id from the session cookie, or null (convenience over {@link sessionOf}). */
+  const session = (c: Context): string | null => sessionOf(c)?.tenantId ?? null;
 
   /** The current calendar month [first day 00:00 UTC, now] — the portal's usage/invoice window. */
   const currentMonth = (): { from: Date; to: Date } => {
@@ -302,6 +394,135 @@ export function createPortal(options: PortalOptions): Hono {
     return tenantId;
   };
 
+  const rateLimiter = options.rateLimitStore ?? createInMemoryRateLimitStore();
+  const idem = options.idempotencyStore ?? createInMemoryIdempotencyStore();
+  const allowedOrigins = options.allowedOrigins ?? [];
+
+  // All /api/* request bodies are capped (DoS — std-owasp-api API4).
+  app.use('/api/*', bodyLimit({ maxSize: MAX_BODY }));
+
+  /** Per-(tenant|IP) fixed-window limiter; true when over the cap (429 headers set). */
+  const limited = async (
+    c: Context,
+    bucket: string,
+    key: string,
+    max: number,
+  ): Promise<boolean> => {
+    const windowMs = 60_000;
+    const { count, windowStartMs } = await rateLimiter.increment(
+      `portal:${bucket}:${key}`,
+      windowMs,
+      now(),
+    );
+    if (count > max) {
+      c.header('Retry-After', String(Math.ceil((windowStartMs + windowMs - now()) / 1000)));
+      return true;
+    }
+    return false;
+  };
+
+  /** Parse a JSON body against a schema; ok with data, or a ready 400 Response. */
+  async function read<T>(
+    c: Context,
+    schema: z.ZodType<T>,
+  ): Promise<{ ok: true; data: T } | { ok: false; res: Response }> {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return { ok: false, res: c.json({ error: 'invalid JSON body' }, 400) };
+    }
+    const parsed = schema.safeParse(raw);
+    if (!parsed.success) {
+      const detail = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+      return { ok: false, res: c.json({ error: detail }, 400) };
+    }
+    return { ok: true, data: parsed.data };
+  }
+
+  /**
+   * CSRF guard for every mutation (red-team F4): a **signed per-session token** in {@link CSRF_HEADER}
+   * (not a bare double-submit a subdomain could forge), plus an `Origin`/`Sec-Fetch-Site` allow-list
+   * as defense in depth. `SameSite=Strict` on the cookie is a backstop, not the control. Returns true
+   * (and sends 403) when the request fails the check.
+   */
+  const csrfRejected = (c: Context, tenantId: string): Response | null => {
+    // `Sec-Fetch-Site` (sent by modern browsers, not forgeable by JS): only same-origin/none allowed.
+    const site = c.req.header('sec-fetch-site');
+    if (site !== undefined && site !== 'same-origin' && site !== 'none') {
+      return c.json({ error: 'cross-site request rejected' }, 403);
+    }
+    // When an Origin is present, it must be in the allow-list (if one is configured).
+    const origin = c.req.header('origin');
+    if (origin !== undefined && allowedOrigins.length > 0 && !allowedOrigins.includes(origin)) {
+      return c.json({ error: 'origin not allowed' }, 403);
+    }
+    // The CSRF token must verify against the LIVE session — so it's bound to this session's expiry
+    // (rotates with the cookie, dies on expiry/logout — L1) and to this tenant. A session that
+    // vanished mid-request (logout/expiry) fails closed here.
+    const live = sessionOf(c);
+    if (live === null || live.tenantId !== tenantId) {
+      return c.json({ error: 'no session' }, 403);
+    }
+    if (!verifyCsrf(c.req.header(CSRF_HEADER), live, secret)) {
+      return c.json({ error: 'missing or invalid CSRF token' }, 403);
+    }
+    return null;
+  };
+
+  /**
+   * Wrap a mutating money handler in **endpoint-level idempotency** (red-team F3a): a client
+   * `Idempotency-Key` namespaced by the session tenant reserves the operation; a replay with the same
+   * key replays the original response verbatim — so the metadata write **and** the settlement **and**
+   * the audit happen at most once, not just the PSP charge. A key reused with a different body is a
+   * 409. No key ⇒ run normally (the action is still rate-limited + CSRF-guarded).
+   */
+  const withIdempotency = async (
+    c: Context,
+    tenantId: string,
+    bodyRaw: string,
+    run: () => Promise<Response>,
+  ): Promise<Response> => {
+    const key = c.req.header('idempotency-key');
+    if (key === undefined || key === '') return run();
+    const namespaced = `portal:${tenantId}:${c.req.path}:${key}`;
+    const fingerprint = createHash('sha256')
+      .update(`${c.req.method} ${c.req.path} ${bodyRaw}`)
+      .digest('hex');
+    const begun = await idem.begin(namespaced, fingerprint, now());
+    if (begun.outcome === 'replay') {
+      return c.body(begun.response.body, begun.response.status as 200, {
+        'content-type': begun.response.contentType,
+      });
+    }
+    if (begun.outcome === 'mismatch') {
+      return c.json({ error: 'idempotency key reused with a different request' }, 409);
+    }
+    if (begun.outcome === 'in_flight') {
+      return c.json({ error: 'a request with this idempotency key is in progress' }, 409);
+    }
+    const res = await run();
+    // Persist the response so a retry replays it (only 2xx — a failure should be retryable).
+    if (res.status >= 200 && res.status < 300) {
+      const cloned = res.clone();
+      const stored: IdempotentResponse = {
+        status: cloned.status,
+        body: await cloned.text(),
+        contentType: cloned.headers.get('content-type') ?? 'application/json',
+      };
+      await idem.complete(namespaced, stored, now());
+    }
+    return res;
+  };
+
+  // Issue the session-bound CSRF token (the SPA reads this then echoes it in the CSRF header). It is
+  // minted from the live session's expiry, so it rotates with the cookie and dies on expiry/logout.
+  app.get('/api/csrf', (c) => {
+    const live = sessionOf(c);
+    if (live === null) return c.json({ error: 'not authenticated' }, 401);
+    return c.json({ csrfToken: mintCsrf(live, secret) });
+  });
+
   // JSON endpoints (same cookie session) for automation — each strictly scoped to the session tenant.
   app.get('/api/me', async (c) => {
     const tenantId = requireTenant(c);
@@ -340,5 +561,252 @@ export function createPortal(options: PortalOptions): Hono {
     });
   });
 
+  /** Turn a thrown facade error into a safe JSON error + status (never leaks internals). */
+  const fail = (c: Context, e: unknown): Response => {
+    const msg = e instanceof Error ? e.message : 'error';
+    return c.json({ error: msg }, statusFor(msg) as 400);
+  };
+
+  // ---- Plan (read + preview + change) ------------------------------------------------------------
+
+  app.get('/api/plan', async (c) => {
+    const tenantId = requireTenant(c);
+    if (tenantId === null) return c.json({ error: 'not authenticated' });
+    const summary = await options.tf.tenantSummary(tenantId);
+    if (summary === null) return c.json({ error: 'not found' }, 404);
+    // Catalog is the same for all tenants (public plan list) — safe to surface; no infra ids.
+    return c.json({
+      current: summary.planPriceUsd ?? null,
+      available: options.tf.listPlans().map((p) => ({ id: p.id, priceUsd: p.priceUsd })),
+    });
+  });
+
+  app.post('/api/plan/preview', async (c) => {
+    const tenantId = requireTenant(c);
+    if (tenantId === null) return c.json({ error: 'not authenticated' });
+    if (await limited(c, 'plan-preview', tenantId, 30)) {
+      return c.json({ error: 'too many requests' }, 429);
+    }
+    const csrf = csrfRejected(c, tenantId);
+    if (csrf !== null) return csrf; // 403 already set
+    const parsed = await read(c, PlanChangeSchema);
+    if (!parsed.ok) return parsed.res;
+    try {
+      // Pure quote — no mutation, no money. Server-derived tenant id only.
+      return c.json(await options.tf.previewPlanChange(tenantId, parsed.data.newPriceUsd));
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  app.post('/api/plan/change', async (c) => {
+    const tenantId = requireTenant(c);
+    if (tenantId === null) return c.json({ error: 'not authenticated' });
+    if (await limited(c, 'plan-change', tenantId, 10)) {
+      return c.json({ error: 'too many requests' }, 429);
+    }
+    const csrf = csrfRejected(c, tenantId);
+    if (csrf !== null) return csrf;
+    const bodyRaw = await c.req.text();
+    const parsed = PlanChangeSchema.safeParse(safeJson(bodyRaw));
+    if (!parsed.success) return c.json({ error: 'invalid body' }, 400);
+    // Endpoint-level idempotency wraps metadata write + settlement + audit (red-team F3a).
+    return withIdempotency(c, tenantId, bodyRaw, async () => {
+      try {
+        const report = await options.tf.changePlan(tenantId, parsed.data.newPriceUsd, {
+          settle: true,
+        });
+        return c.json(report);
+      } catch (e) {
+        return fail(c, e);
+      }
+    });
+  });
+
+  // ---- Payment method (setup-intent + confirm/set-default) ---------------------------------------
+
+  app.post('/api/payment-method/setup-intent', async (c) => {
+    const tenantId = requireTenant(c);
+    if (tenantId === null) return c.json({ error: 'not authenticated' });
+    if (await limited(c, 'pm-setup', tenantId, 10)) {
+      return c.json({ error: 'too many requests' }, 429);
+    }
+    const csrf = csrfRejected(c, tenantId);
+    if (csrf !== null) return csrf;
+    try {
+      // Mints a SetupIntent for THIS tenant's billingCustomerRef (fails closed if none — F5).
+      return c.json(await options.tf.tenantPaymentSetup(tenantId));
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  app.post('/api/payment-method/set-default', async (c) => {
+    const tenantId = requireTenant(c);
+    if (tenantId === null) return c.json({ error: 'not authenticated' });
+    if (await limited(c, 'pm-default', tenantId, 10)) {
+      return c.json({ error: 'too many requests' }, 429);
+    }
+    const csrf = csrfRejected(c, tenantId);
+    if (csrf !== null) return csrf;
+    const bodyRaw = await c.req.text();
+    const parsed = SetDefaultSchema.safeParse(safeJson(bodyRaw));
+    if (!parsed.success) return c.json({ error: 'invalid body' }, 400);
+    // Idempotent set-default: server verifies the SetupIntent + customerRef match (red-team F5).
+    return withIdempotency(c, tenantId, bodyRaw, async () => {
+      try {
+        return c.json(
+          await options.tf.confirmTenantPaymentMethod(tenantId, parsed.data.setupIntentId),
+        );
+      } catch (e) {
+        return fail(c, e);
+      }
+    });
+  });
+
+  // ---- Invoices + credit balance (reads) ---------------------------------------------------------
+
+  app.get('/api/invoices', async (c) => {
+    const tenantId = requireTenant(c);
+    if (tenantId === null) return c.json({ error: 'not authenticated' });
+    try {
+      return c.json({ invoices: await options.tf.tenantInvoices(tenantId) });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  app.get('/api/credit-balance', async (c) => {
+    const tenantId = requireTenant(c);
+    if (tenantId === null) return c.json({ error: 'not authenticated' });
+    return c.json({ balanceMinor: await options.tf.creditBalance(tenantId), currency: 'usd' });
+  });
+
+  // ---- Destructive actions (feature-flagged OFF by default — ADR-0010 / red-team F6) --------------
+
+  if (options.enableDestructiveActions === true) {
+    // Step-up: request a single-use control-plane code (email) for cancel/erasure (F1).
+    app.post('/api/step-up', async (c) => {
+      const tenantId = requireTenant(c);
+      if (tenantId === null) return c.json({ error: 'not authenticated' });
+      if (await limited(c, 'step-up', tenantId, 5)) {
+        return c.json({ error: 'too many requests' }, 429);
+      }
+      const csrf = csrfRejected(c, tenantId);
+      if (csrf !== null) return csrf;
+      const parsed = await read(c, z.object({ action: z.enum(['cancel', 'erasure']) }));
+      if (!parsed.ok) return parsed.res;
+      try {
+        await options.tf.requestTenantStepUp(tenantId, parsed.data.action);
+        return c.body(null, 204); // never reveal whether an email was on file (enumeration)
+      } catch (e) {
+        return fail(c, e);
+      }
+    });
+
+    // Cancel = self-serve offboard (reversible; second-factor gated — F1). Surfaces reversibleUntil.
+    app.post('/api/cancel', async (c) => {
+      const tenantId = requireTenant(c);
+      if (tenantId === null) return c.json({ error: 'not authenticated' });
+      if (await limited(c, 'cancel', tenantId, 5)) {
+        return c.json({ error: 'too many requests' }, 429);
+      }
+      const csrf = csrfRejected(c, tenantId);
+      if (csrf !== null) return csrf;
+      const parsed = await read(c, CancelSchema);
+      if (!parsed.ok) return parsed.res;
+      // Step-up: verify the control-plane second factor bound to `cancel` (not the OIDC token — F1).
+      if (!(await options.tf.verifyTenantStepUp(tenantId, 'cancel', parsed.data.code))) {
+        return c.json({ error: 'step-up verification failed' }, 403);
+      }
+      try {
+        return c.json(await options.tf.cancelTenant(tenantId));
+      } catch (e) {
+        return fail(c, e);
+      }
+    });
+
+    // Data export (DSAR) — rate-limited + cooldown via the per-tenant limiter.
+    app.post('/api/data-export', async (c) => {
+      const tenantId = requireTenant(c);
+      if (tenantId === null) return c.json({ error: 'not authenticated' });
+      // Tight cap = the per-tenant cooldown / max-in-flight (red-team F7).
+      if (await limited(c, 'data-export', tenantId, 3)) {
+        return c.json({ error: 'too many requests' }, 429);
+      }
+      const csrf = csrfRejected(c, tenantId);
+      if (csrf !== null) return csrf;
+      try {
+        const result = await options.tf.exportTenantData(tenantId);
+        // Safe projection: a reference to the artifact location + size; never tenant content/URIs.
+        return c.json({ location: result.location, bytes: result.bytes ?? null });
+      } catch (e) {
+        return fail(c, e);
+      }
+    });
+
+    // Erasure (irreversible) — typed confirm + second factor gate the REQUEST; the undo window guards
+    // EXECUTION. The request only SCHEDULES; the tenant keeps serving until the window elapses (F2).
+    app.post('/api/erasure', async (c) => {
+      const tenantId = requireTenant(c);
+      if (tenantId === null) return c.json({ error: 'not authenticated' });
+      if (await limited(c, 'erasure', tenantId, 3)) {
+        return c.json({ error: 'too many requests' }, 429);
+      }
+      const csrf = csrfRejected(c, tenantId);
+      if (csrf !== null) return csrf;
+      const parsed = await read(c, ErasureSchema);
+      if (!parsed.ok) return parsed.res;
+      if (!(await options.tf.verifyTenantStepUp(tenantId, 'erasure', parsed.data.code))) {
+        return c.json({ error: 'step-up verification failed' }, 403);
+      }
+      try {
+        return c.json(
+          await options.tf.requestTenantErasure(
+            tenantId,
+            'self-serve portal erasure (GDPR Art.17)',
+          ),
+        );
+      } catch (e) {
+        return fail(c, e);
+      }
+    });
+
+    // Cancel a pending erasure within the undo window (atomic pending → cancelled — F2).
+    app.post('/api/erasure/cancel', async (c) => {
+      const tenantId = requireTenant(c);
+      if (tenantId === null) return c.json({ error: 'not authenticated' });
+      if (await limited(c, 'erasure-cancel', tenantId, 10)) {
+        return c.json({ error: 'too many requests' }, 429);
+      }
+      const csrf = csrfRejected(c, tenantId);
+      if (csrf !== null) return csrf;
+      try {
+        const cancelled = await options.tf.cancelTenantErasure(tenantId);
+        return cancelled
+          ? c.json({ cancelled: true })
+          : c.json({ error: 'no pending erasure to cancel' }, 409);
+      } catch (e) {
+        return fail(c, e);
+      }
+    });
+
+    // Read the active pending erasure (undo deadline) for the SPA's danger-zone status.
+    app.get('/api/erasure', async (c) => {
+      const tenantId = requireTenant(c);
+      if (tenantId === null) return c.json({ error: 'not authenticated' });
+      return c.json({ pending: await options.tf.pendingErasure(tenantId) });
+    });
+  }
+
   return app;
+}
+
+/** Parse JSON, returning `undefined` on failure (so schema parsing yields a clean 400). */
+function safeJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
 }

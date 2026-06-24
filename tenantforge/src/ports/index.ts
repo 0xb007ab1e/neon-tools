@@ -15,3 +15,13 @@ export type { UsageProvider } from './usage-provider.js';
 export type { MessageQueue, QueueMessage } from './message-queue.js';
 export type { MigrationRunner, MigrationExecution } from './migration-runner.js';
 export type { ConnectionRouter, TenantConnection } from './connection-router.js';
+export type {
+  OneTimeCodeStore,
+  OneTimeCodeRecord,
+  OneTimeCodeVerification,
+} from './one-time-code-store.js';
+export type {
+  PendingErasureStore,
+  PendingErasureRecord,
+  PendingErasureStatus,
+} from './pending-erasure-store.js';

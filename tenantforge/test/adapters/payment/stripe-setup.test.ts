@@ -94,6 +94,30 @@ describe('createStripeSetup', () => {
     await expect(mk('canceled').getSetupIntent('seti_1')).rejects.toThrow(/not completed/);
   });
 
+  it('sets the customer default payment method via POST /v1/customers/{id} (M1)', async () => {
+    const { impl, calls } = fakeFetch([{ status: 200, body: { id: 'cus_1' } }]);
+    const setup = createStripeSetup({ secretKey: 'sk_test_x', fetchImpl: impl });
+    await setup.setDefaultPaymentMethod('cus_1', 'pm_9');
+    const call = calls[0]!;
+    expect(call.url).toBe('https://api.stripe.com/v1/customers/cus_1');
+    expect(call.init.method).toBe('POST');
+    const body = (call.init.body as URLSearchParams).toString();
+    // This is the field the off-session charge path reads — without it the saved card is unused.
+    expect(body).toContain('invoice_settings%5Bdefault_payment_method%5D=pm_9');
+    // Idempotency-keyed so a retry of the same set-default is a safe no-op.
+    expect((call.init.headers as Record<string, string>)['idempotency-key']).toBe(
+      'set-default-pm:cus_1:pm_9',
+    );
+  });
+
+  it('set-default throws (fails closed) on a non-2xx so the caller never reports success', async () => {
+    const { impl } = fakeFetch([{ status: 402, body: { error: { message: 'no such customer' } } }]);
+    const setup = createStripeSetup({ secretKey: 'sk', fetchImpl: impl });
+    await expect(setup.setDefaultPaymentMethod('cus_x', 'pm_x')).rejects.toThrow(
+      /set default payment method failed \(402\): no such customer/,
+    );
+  });
+
   it('throws with Stripe’s message on a non-2xx', async () => {
     const { impl } = fakeFetch([{ status: 402, body: { error: { message: 'card declined' } } }]);
     const setup = createStripeSetup({ secretKey: 'sk', fetchImpl: impl });

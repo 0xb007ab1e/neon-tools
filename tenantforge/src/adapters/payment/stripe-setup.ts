@@ -171,5 +171,20 @@ export function createStripeSetup(options: StripeSetupOptions): PaymentSetup {
         provider: 'stripe',
       };
     },
+    async setDefaultPaymentMethod(customerRef: string, paymentMethodRef: string): Promise<void> {
+      // Update the customer's invoice_settings.default_payment_method — the value the off_session
+      // charge path reads (the gateway sends `customer` + `off_session` with no explicit method).
+      const body = new URLSearchParams({
+        'invoice_settings[default_payment_method]': paymentMethodRef,
+      });
+      // Idempotency-keyed by (customer, method): a retry of the same set-default is a safe no-op.
+      await request(
+        'POST',
+        `/v1/customers/${encodeURIComponent(customerRef)}`,
+        'set default payment method',
+        body,
+        `set-default-pm:${customerRef}:${paymentMethodRef}`,
+      );
+    },
   };
 }
