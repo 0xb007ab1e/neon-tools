@@ -14,7 +14,7 @@ import { erasureCertClaims, ERASURE_CERT_ALG, ERASURE_CERT_TYP } from '../core/e
 import type { CertificateSigner } from '../ports/certificate-signer.js';
 
 /** A private signing key as accepted by `jose`: a `CryptoKey`/`KeyObject` (the Ed25519 private key). */
-type PrivateKey = CryptoKey | KeyObject;
+export type Ed25519PrivateKey = CryptoKey | KeyObject;
 
 /** Options for {@link createEd25519CertificateSigner}. */
 export interface Ed25519CertificateSignerOptions {
@@ -31,26 +31,31 @@ export interface Ed25519CertificateSignerOptions {
 }
 
 /**
- * Coerce a private-key input (PKCS#8 PEM or JWK) into a `jose` key + derive the matching **public**
- * JWK. Fails closed on anything that isn't an Ed25519 private key (master §2, topic-cryptography).
+ * Coerce a private-key input (PKCS#8 PEM or JWK) into a `jose` Ed25519 key + derive the matching
+ * **public** JWK. Fails closed on anything that isn't an Ed25519 private key (master §2,
+ * topic-cryptography). Shared by the erasure-certificate and compliance-report signers — both reuse
+ * the same Ed25519 mechanism (`@rules/topic-dependency-injection.md`); the `label` only flavours the
+ * error message to name the offending config var.
  *
  * @param input - The PEM string or JWK (object/JSON).
+ * @param label - The config-var name to cite in failure messages (e.g. `TENANTFORGE_ERASURE_SIGNING_KEY`).
  * @returns The imported private key and its public JWK.
  * @throws Error if the material is malformed or not an Ed25519 private key.
  */
-async function importEd25519PrivateKey(
+export async function importEd25519PrivateKey(
   input: string | JWK,
-): Promise<{ key: PrivateKey; publicJwk: JWK }> {
+  label = 'TENANTFORGE_ERASURE_SIGNING_KEY',
+): Promise<{ key: Ed25519PrivateKey; publicJwk: JWK }> {
   let jwk: JWK;
   if (typeof input === 'string' && input.trimStart().startsWith('-----BEGIN')) {
     // PKCS#8 PEM → the signing key (kept NON-extractable — the private key never leaves the
     // process as bytes). Derive the public JWK via Node's KeyObject (no need to make the private
     // key extractable just to publish the public half).
-    const key = (await importPKCS8(input, ERASURE_CERT_ALG)) as PrivateKey;
+    const key = (await importPKCS8(input, ERASURE_CERT_ALG)) as Ed25519PrivateKey;
     const pubKeyObject = createPublicKey(createPrivateKey(input));
     const exported = pubKeyObject.export({ format: 'jwk' }) as JWK;
     if (exported.kty !== 'OKP' || exported.crv !== 'Ed25519') {
-      throw new Error('TENANTFORGE_ERASURE_SIGNING_KEY: PEM is not an Ed25519 (OKP) private key');
+      throw new Error(`${label}: PEM is not an Ed25519 (OKP) private key`);
     }
     return { key, publicJwk: stripPrivate(exported) };
   }
@@ -58,28 +63,41 @@ async function importEd25519PrivateKey(
   try {
     jwk = typeof input === 'string' ? (JSON.parse(input) as JWK) : input;
   } catch {
-    throw new Error('TENANTFORGE_ERASURE_SIGNING_KEY: not valid PKCS#8 PEM or JWK JSON');
+    throw new Error(`${label}: not valid PKCS#8 PEM or JWK JSON`);
   }
   if (jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519' || typeof jwk.d !== 'string') {
-    throw new Error(
-      'TENANTFORGE_ERASURE_SIGNING_KEY: JWK must be an Ed25519 private key (kty=OKP, crv=Ed25519, d set)',
-    );
+    throw new Error(`${label}: JWK must be an Ed25519 private key (kty=OKP, crv=Ed25519, d set)`);
   }
-  const key = (await importJWK(jwk, ERASURE_CERT_ALG)) as PrivateKey;
+  const key = (await importJWK(jwk, ERASURE_CERT_ALG)) as Ed25519PrivateKey;
   // The public JWK is the private JWK minus its private member(s) — see stripPrivate.
   return { key, publicJwk: stripPrivate(jwk) };
 }
 
 /** Return a copy of a JWK with private/sensitive members removed (only the public Ed25519 fields). */
-function stripPrivate(jwk: JWK): JWK {
+export function stripPrivate(jwk: JWK): JWK {
   return { kty: 'OKP', crv: 'Ed25519', ...(jwk.x !== undefined ? { x: jwk.x } : {}) };
+}
+
+/**
+ * Generate a fresh, in-memory Ed25519 keypair for the **dev/test/CI ephemeral** signer paths, with
+ * the public half exported as a JWK (extractable so in-process verification works in tests). NEVER
+ * for production — an ephemeral key isn't verifiable across restarts (no stable published key).
+ *
+ * @returns The private key and its public JWK.
+ */
+export async function generateEphemeralEd25519(): Promise<{
+  key: Ed25519PrivateKey;
+  publicJwk: JWK;
+}> {
+  const { privateKey, publicKey } = await generateKeyPair(ERASURE_CERT_ALG, { extractable: true });
+  return { key: privateKey, publicJwk: stripPrivate(await exportJWK(publicKey)) };
 }
 
 /**
  * Build a {@link CertificateSigner} from a key + its public JWK — the shared signer construction for
  * both the configured and the dev-ephemeral paths.
  */
-function signerFrom(key: PrivateKey, publicJwk: JWK): CertificateSigner {
+function signerFrom(key: Ed25519PrivateKey, publicJwk: JWK): CertificateSigner {
   // Freeze the published public JWK so a caller can't mutate the shared object.
   const frozenPublic: JWK = Object.freeze({ ...publicJwk });
   return {
@@ -130,8 +148,6 @@ export async function createEd25519CertificateSigner(
  * @returns An ephemeral certificate signer.
  */
 export async function createEphemeralCertificateSigner(): Promise<CertificateSigner> {
-  // `extractable: true` so the public JWK can be exported for in-process verification in tests.
-  const { privateKey, publicKey } = await generateKeyPair(ERASURE_CERT_ALG, { extractable: true });
-  const publicJwk = stripPrivate(await exportJWK(publicKey));
-  return signerFrom(privateKey, publicJwk);
+  const { key, publicJwk } = await generateEphemeralEd25519();
+  return signerFrom(key, publicJwk);
 }

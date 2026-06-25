@@ -157,6 +157,13 @@ const EnvSchema = z
     // PKCS#8 PEM (`-----BEGIN PRIVATE KEY-----…`) or a private JWK (JSON: kty=OKP, crv=Ed25519, d).
     // **Required in production** (enforced below); in non-prod an ephemeral key is generated if unset.
     TENANTFORGE_ERASURE_SIGNING_KEY: z.string().min(1).optional(),
+    // **Ed25519 private signing key for compliance reports** (EdDSA compact JWS; the compliance
+    // evidence layer, ADR-0011 Phase 1). A secret — from the secret manager / env, never committed or
+    // logged. Same format as the erasure key (PKCS#8 PEM or private JWK) but a **distinct purpose/kid**
+    // so the two artifact classes can't be confused. **Required in production** (enforced below) for
+    // the signed report; in non-prod an ephemeral key is generated if unset. The unsigned
+    // `complianceReport()` path needs no key — only `signedComplianceReport()` does.
+    TENANTFORGE_COMPLIANCE_SIGNING_KEY: z.string().min(1).optional(),
     // HTTP entrypoint auth. TENANTFORGE_HTTP_TOKEN is the single-admin shorthand. For per-operator
     // identity + RBAC, set TENANTFORGE_HTTP_CREDENTIALS as comma-separated `id:role:token` entries
     // (role = admin | readonly; the token may itself contain colons — only the first two split).
@@ -410,6 +417,20 @@ const EnvSchema = z
           'certificates are always signed; an ephemeral key is non-prod only)',
       });
     }
+    // Production must ship a real compliance signing key too — the signed compliance report
+    // (ADR-0011) is only auditor-verifiable against a stable published key. Same fail-fast rationale.
+    if (
+      env.TENANTFORGE_ENV === 'production' &&
+      env.TENANTFORGE_COMPLIANCE_SIGNING_KEY === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TENANTFORGE_COMPLIANCE_SIGNING_KEY'],
+        message:
+          'TENANTFORGE_COMPLIANCE_SIGNING_KEY is required when TENANTFORGE_ENV=production (the signed ' +
+          'compliance report needs a stable, published key; an ephemeral key is non-prod only)',
+      });
+    }
     // OIDC mode needs the issuer, audience, and JWKS endpoint to verify tokens (fail fast).
     if (env.TENANTFORGE_AUTH_MODE === 'oidc') {
       if (env.TENANTFORGE_OIDC_ISSUER === undefined) {
@@ -497,6 +518,12 @@ export interface Config {
    * Required in production. Absent in non-prod ⇒ an ephemeral keypair is generated at startup.
    */
   erasureSigningKey?: string;
+  /**
+   * Ed25519 **private** signing key for compliance reports (PKCS#8 PEM or private JWK; a secret;
+   * ADR-0011). Required in production for the signed report. Absent in non-prod ⇒ an ephemeral
+   * keypair is generated at startup. Distinct purpose/kid from {@link erasureSigningKey}.
+   */
+  complianceSigningKey?: string;
   /** Which backend stores per-tenant connection secrets. */
   secretBackend: 'neon-pg' | 'vault';
   /** AES passphrase for the `neon-pg` secret backend (separate from the DB cred); set when that backend is used. */
@@ -666,6 +693,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     env: parsed.TENANTFORGE_ENV,
     ...(parsed.TENANTFORGE_ERASURE_SIGNING_KEY !== undefined
       ? { erasureSigningKey: parsed.TENANTFORGE_ERASURE_SIGNING_KEY }
+      : {}),
+    ...(parsed.TENANTFORGE_COMPLIANCE_SIGNING_KEY !== undefined
+      ? { complianceSigningKey: parsed.TENANTFORGE_COMPLIANCE_SIGNING_KEY }
       : {}),
     secretBackend: parsed.TENANTFORGE_SECRET_BACKEND,
     exporter: parsed.TENANTFORGE_EXPORTER,

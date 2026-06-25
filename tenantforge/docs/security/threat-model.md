@@ -189,6 +189,52 @@ data). No tenant content is stored in the control plane.
   (`erasure-cert-verify` / `verifyErasureCertificate`). **Operator + the tenant's verified email are
   alerted** on schedule and on execution (griefing tripwire / wrong-account safety net).
 
+### B9 — Signed compliance report (evidence artifact) — Phase 1 SHIPPED (2026-06-25)
+
+> **Status: Phase 1 of the compliance evidence layer landed (ADR-0011).** The fleet
+> `complianceReport()` (`core/compliance.ts`) is now **independently verifiable**: alongside the
+> existing SHA-256 digest, `signedComplianceReport()` emits an **EdDSA (Ed25519) compact JWS** over
+> the same canonical report JSON (`core/compliance-cert.ts`, `adapters/compliance-report-signer.ts`).
+> The report is a **confidential** artifact (tenant ids, residency, an audit excerpt). STRIDE pass on
+> that artifact below. **Out of scope here (Phase 2/3):** the evidence _bundle_, **per-tenant**
+> scoping, persistence, and the **retrieval surface + access control** (BOLA on fetch) — those land
+> later; this section covers only the signed-artifact boundary.
+
+- **T (tampering) — the core threat:** the report's integrity/authenticity anchor is upgraded from a
+  bare SHA-256 digest (proves bytes unchanged, but only if you trust the source) to an **EdDSA JWS**.
+  Any tamper to the payload invalidates the signature; `verifyComplianceReport` fails closed. The JWS
+  signs the **same canonical bytes** the digest covers (a test pins byte-identity), so the two anchors
+  agree. (std-owasp #8 — software/data integrity; CWE-345/347.)
+- **S / R (spoofing / repudiation):** signer authenticity rests on the **alg-pinned EdDSA**
+  verification (rejects `alg:none`/`HS*`/any non-EdDSA — no alg-confusion, CWE-347) against the
+  operator's **published public JWK**, and signer **identity/purpose** via a distinct protected-header
+  `kid` (`tenantforge-compliance-report`) + `typ` (`application/compliance-report+jws`). A confused
+  deputy cannot present a token minted for another purpose: an **erasure-certificate JWS does not
+  verify as a compliance report** (distinct `typ`/`kid`; pinned by a cross-type abuse test). Signing
+  is recorded via a `compliance.report_signed` audit event (non-repudiation).
+- **I (information disclosure):** the report carries **attestation facts only** — inventory counts,
+  isolation/residency booleans + offending ids, allow-list, and an **already-redacted** audit excerpt
+  (`redactSecrets` upstream; the audit entries are PII-minimized to `at/event/outcome/actor/tenantId`).
+  It contains **no secrets and no connection URIs** (master §5); a canonicalization test asserts the
+  signed claim object never matches secret/connection patterns. Distribution/access-control of the
+  artifact is a **Phase 3** concern (operator-only retrieval, then tenant-scoped — no cross-tenant
+  BOLA); v1 is operator-only.
+- **D (denial of service):** report assembly is a bounded registry read + a bounded audit query (the
+  same caps the unsigned path already uses); signing is one EdDSA operation. No new unbounded surface.
+- **E (elevation):** no privilege boundary is crossed by signing; the signer holds only its own
+  private key. The signing key is **private**, from config/secret-manager, never logged
+  (`@rules/workflow-secrets.md`); only the **public** JWK is exposed
+  (`complianceReportPublicKey()`).
+- **Always-signed / fail-closed:** `signedComplianceReport()` **fails closed** without a signer (no
+  unsigned "signed report"). Production **requires** `TENANTFORGE_COMPLIANCE_SIGNING_KEY` (config
+  `superRefine` + a defense-in-depth re-check in `buildComplianceReportSigner`); non-prod with no key
+  uses an ephemeral key (warned; not verifiable across restarts). The unsigned `complianceReport()`
+  (digest-only) is unchanged and needs no key.
+- **Verification is the product (HARD REQUIREMENT):** an auditor must verify a report **offline with
+  only the public key** — `verifyComplianceReport(jws, jwk)` is **pure, deterministic, alg-pinned, and
+  fail-closed** (mirrors `verifyErasureCertificate`), allow-list-validating the report shape with no
+  coercion. Any signature/alg/typ/key/shape failure throws; it never returns an unverified report.
+
 ## Residual risks (tracked)
 
 - **R1 — closed.** Per-operator credentials + RBAC are in-app (admin/readonly, constant-time compare),
@@ -240,7 +286,8 @@ Each boundary's key threat is pinned by a negative/abuse test (master §4, `@rul
 | Unverified / cross-customer payment (B8w) | a client's "card saved" without a server-verified SetupIntent is rejected, and a SetupIntent whose `customerRef` ≠ the tenant's is rejected (F5) (`portal-selfserve*.test.ts`)                                                                                                                                                                                                   |
 | Cancel billing exclusion (B8w)            | a cancelled (`offboarding`) tenant is absent from the active set the billing/dunning sweeps charge (`portal-selfserve-facade.test.ts`)                                                                                                                                                                                                                                           |
 | Signed erasure certificate (B8w)          | sign→verify round-trips; a **tampered** cert, the **wrong public key**, and **alg-confusion** (`alg:none`/`HS*`/non-EdDSA) all fail closed; always-signed engine; prod startup fail-fast without a key; post-erasure signing failure fails soft (no rollback) (`erasure-cert.test.ts`, `certificate-signer.test.ts`, `erasure-engine.test.ts`, `config-erasure-signing.test.ts`) |
+| Signed compliance report (B9)             | sign→verify round-trips; a **tampered** report, the **wrong public key**, **alg-confusion** (`alg:none`/`HS*`/non-EdDSA), wrong **typ**, and a real **erasure-cert JWS** (cross-type confusion) all fail closed; the signed claims carry no secrets/connection URIs and equal the digested canonical JSON (`compliance-cert.test.ts`)                                            |
 
 ---
 
-_Last reviewed: 2026-06-18 (v0.3.0 stable). Owner: TenantForge maintainers. Review on any trust-boundary change._
+_Last reviewed: 2026-06-25 (ADR-0011 Phase 1 — signed compliance report; B9 added). Owner: TenantForge maintainers. Review on any trust-boundary change._

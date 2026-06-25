@@ -36,6 +36,13 @@ export {
   type ComplianceAuditEntry,
 } from './compliance.js';
 export {
+  verifyComplianceReport,
+  complianceReportClaims,
+  COMPLIANCE_REPORT_ALG,
+  COMPLIANCE_REPORT_TYP,
+  type SignedComplianceReport,
+} from './compliance-cert.js';
+export {
   estimateCostUsd,
   buildCostReport,
   type CostRates,
