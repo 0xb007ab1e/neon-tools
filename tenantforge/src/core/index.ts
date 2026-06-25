@@ -31,9 +31,16 @@ export {
 export { evaluateQuota, type Quota, type QuotaBreach, type QuotaStatus } from './quota.js';
 export {
   buildComplianceReport,
+  auditEntries,
+  inventoryByStatus,
+  buildIsolationAttestation,
+  buildResidencyAttestation,
   type ComplianceReport,
   type ComplianceReportOptions,
   type ComplianceAuditEntry,
+  type ComplianceInventory,
+  type ComplianceIsolation,
+  type ComplianceResidency,
 } from './compliance.js';
 export {
   verifyComplianceReport,
@@ -42,6 +49,19 @@ export {
   COMPLIANCE_REPORT_TYP,
   type SignedComplianceReport,
 } from './compliance-cert.js';
+export {
+  buildEvidenceBundle,
+  evidenceBundleClaims,
+  verifyEvidenceBundle,
+  EVIDENCE_BUNDLE_ALG,
+  EVIDENCE_BUNDLE_TYP,
+  type EvidenceBundle,
+  type SignedEvidenceBundle,
+  type EvidenceArtifacts,
+  type EvidenceContentHashes,
+  type EvidenceScope,
+  type BuildEvidenceBundleOptions,
+} from './evidence-bundle.js';
 export {
   estimateCostUsd,
   buildCostReport,

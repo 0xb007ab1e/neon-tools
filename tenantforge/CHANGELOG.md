@@ -8,6 +8,28 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Signed, independently-verifiable evidence bundles** — Phase 2 of the **compliance & governance
+  evidence layer** (ADR-0011; threat-model **B10**). A pure `buildEvidenceBundle(...)` (fleet **and**
+  per-tenant) assembles the isolation proof, residency attestation, a PII-minimized audit excerpt, and
+  the embedded **signed** erasure certificate(s) into one auditor-consumable pack, signed as an
+  **EdDSA (Ed25519) compact JWS** verifiable **offline with only the published public key**. New
+  `TenantForge.evidenceBundle({ scope, tenantId? })` (→ `{ bundle, jws }`) + `evidenceBundlePublicKey()`
+  facade methods; a new `EvidenceBundleSigner` port + `createEd25519EvidenceBundleSigner` adapter that
+  **reuses the compliance evidence signing key** (`TENANTFORGE_COMPLIANCE_SIGNING_KEY` — **no third
+  prod key**) under a **distinct purpose**: a distinct `typ` (`application/evidence-bundle+jws`) +
+  `kid`, so the three artifact classes (erasure cert / compliance report / evidence bundle) are never
+  confusable (cross-type confusion — std-cwe). A pure `verifyEvidenceBundle(jws, publicJwk)` **pins
+  EdDSA** (rejects `alg:none`/`HS*`/non-EdDSA — CWE-347), checks the domain `typ`, enforces the scope ↔
+  tenantId invariant, and allow-list-validates every block (fail closed). **Per-tenant scope is a BOLA
+  boundary:** every artifact is filtered to the server-derived tenant id — a tenant's bundle can never
+  carry another tenant's facts. The embedded erasure certs are folded in **opaque** (not re-signed) and
+  remain independently verifiable via `verifyErasureCertificate`; the bundle signature also covers
+  their bytes (tamper-evident). **Always-signed:** `evidenceBundle()` fails closed without a signer;
+  production requires the compliance key (validated at startup). The shared isolation/residency/
+  inventory/audit attestation builders were extracted from `buildComplianceReport` (no behavior
+  change). **Persistence (`EvidenceStore`), the retrieval surface + access control, the public-key
+  endpoint, the generate webhook, and the dashboard panel are deferred to Phase 3.**
+
 - **Signed, independently-verifiable compliance reports** — Phase 1 of the **compliance & governance
   evidence layer** (ADR-0011; threat-model **B9**). The fleet compliance report's integrity anchor is
   upgraded from a bare SHA-256 digest to an **EdDSA (Ed25519) compact JWS** over the same canonical
