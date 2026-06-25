@@ -365,6 +365,21 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     });
   }
 
+  // Evidence-bundle PUBLIC verification key (Ed25519 JWK) — the single deliberately UNAUTHENTICATED
+  // evidence read (ADR-0011 Phase 3b / threat-model B11): it serves a **public** key so an auditor can
+  // verify a stored bundle's JWS offline. It exposes ONLY the public JWK (the facade returns the public
+  // key; a private `d` is never present) — never any private material. 404 when no signer is wired.
+  app.get('/v1/evidence/public-key', async (c) => {
+    try {
+      const jwk = await tf.evidenceBundlePublicKey();
+      if (jwk === null)
+        return problem(c, 404, 'Not Found', 'no evidence-bundle signer is configured');
+      return c.json({ publicKey: jwk });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // AuthN: resolve the bearer token to a principal via the authenticator (token match or OIDC JWT).
   const authenticate: MiddlewareHandler<Env> = async (c, next) => {
     const header = c.req.header('authorization') ?? '';
@@ -544,6 +559,47 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     try {
       const { report, digest } = await tf.complianceReport();
       return c.json({ report, digest });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // --- Evidence retrieval surface (ADR-0011 Phase 3b — operator-only; threat-model B11) ---
+  // OPERATOR-gated, deny-by-default (`evidence:read` — held by admin+operator, NOT readonly). The
+  // tenant scope is server-derived: the operator surface fetches fleet-wide (`null`), and there is NO
+  // client-supplied tenant-id parameter (BOLA — the project's #1 risk). Tenant self-serve is DEFERRED.
+
+  // List persisted evidence manifests (FACTS ONLY — no bundle body), bounded/paginated (?limit clamped
+  // by the store to [1, 1000]). ?scope filters fleet|tenant. No tenant-id query param (server-derived).
+  app.get('/v1/evidence/bundles', requirePermission('evidence:read'), async (c) => {
+    const scopeParam = c.req.query('scope');
+    if (scopeParam !== undefined && scopeParam !== 'fleet' && scopeParam !== 'tenant') {
+      return problem(c, 400, 'Bad Request', 'scope must be "fleet" or "tenant"');
+    }
+    const limitParam = c.req.query('limit');
+    const limit = limitParam === undefined ? undefined : Number(limitParam);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      return problem(c, 400, 'Bad Request', 'limit must be a positive integer');
+    }
+    try {
+      const manifests = await tf.evidenceList({
+        ...(scopeParam === 'fleet' || scopeParam === 'tenant' ? { scope: scopeParam } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      return c.json({ manifests });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // Fetch the signed bundle (`{ bundle, jws }`) by id. Operator/fleet scope (`null`) — the `:bundleId`
+  // is a non-guessable handle, NEVER a tenant selector. A 404 (unknown or out-of-scope) reveals
+  // nothing about whether the id exists elsewhere (uniform Not Found).
+  app.get('/v1/evidence/bundles/:bundleId', requirePermission('evidence:read'), async (c) => {
+    try {
+      const signed = await tf.evidenceGet(c.req.param('bundleId'), null);
+      if (signed === null) return problem(c, 404, 'Not Found');
+      return c.json({ bundle: signed.bundle, jws: signed.jws });
     } catch (error) {
       return handleError(c, error);
     }

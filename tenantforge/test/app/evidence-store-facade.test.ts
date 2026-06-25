@@ -236,3 +236,68 @@ describe('evidencePrune retention sweep (ADR-0011 Phase 3a)', () => {
     expect(await store!.get(r.manifest!.bundleId, null)).not.toBeNull();
   });
 });
+
+describe('evidenceList / evidenceGet retrieval facade (ADR-0011 Phase 3b)', () => {
+  it('lists persisted manifests (facts only) and audits the list (count, no body)', async () => {
+    const sink = capturingSink();
+    const { tf } = await makeForge({ sink });
+    await tf.evidenceBundle({ scope: 'fleet' });
+    await tf.evidenceBundle({ scope: 'tenant', tenantId: 't-a' });
+    const manifests = await tf.evidenceList();
+    expect(manifests).toHaveLength(2);
+    // Manifests carry FACTS ONLY — never the signed JWS body.
+    for (const m of manifests) expect(m).not.toHaveProperty('jws');
+    expect(JSON.stringify(manifests)).not.toContain('eyJ'); // no base64url JWS header anywhere
+    const listed = sink.events.find((e) => e.event === 'compliance.evidence_list');
+    expect(listed).toBeDefined();
+    expect(listed!.context?.['count']).toBe(2);
+  });
+
+  it('a scope filter restricts the listing (server-derived; no client tenant id)', async () => {
+    const { tf } = await makeForge();
+    await tf.evidenceBundle({ scope: 'fleet' });
+    await tf.evidenceBundle({ scope: 'tenant', tenantId: 't-a' });
+    const fleet = await tf.evidenceList({ scope: 'fleet' });
+    expect(fleet.every((m) => m.scope === 'fleet')).toBe(true);
+    expect(fleet).toHaveLength(1);
+  });
+
+  it('evidenceGet returns a stored bundle under operator (fleet) scope and audits the fetch', async () => {
+    const sink = capturingSink();
+    const { tf } = await makeForge({ sink });
+    const r = await tf.evidenceBundle({ scope: 'fleet' });
+    const got = await tf.evidenceGet(r.manifest!.bundleId, null);
+    expect(got).not.toBeNull();
+    const pub = await tf.evidenceBundlePublicKey();
+    await expect(verifyEvidenceBundle(got!.jws, pub!)).resolves.toMatchObject({ scope: 'fleet' });
+    const fetched = sink.events.find((e) => e.event === 'compliance.evidence_fetch');
+    expect(fetched).toBeDefined();
+    expect(fetched!.context?.['bundleId']).toBe(r.manifest!.bundleId);
+    expect(fetched!.context?.['found']).toBe(true);
+    // The audit event never leaks the bundle body.
+    expect(JSON.stringify(fetched!.context)).not.toContain(got!.jws);
+  });
+
+  it('evidenceGet honors the server-derived tenant scope (cross-tenant fetch returns null — BOLA)', async () => {
+    const { tf } = await makeForge();
+    const r = await tf.evidenceBundle({ scope: 'tenant', tenantId: 't-a' });
+    // Tenant A's own scope returns it; tenant B's scope must NOT (store-level BOLA defense).
+    expect(await tf.evidenceGet(r.manifest!.bundleId, 't-a')).not.toBeNull();
+    expect(await tf.evidenceGet(r.manifest!.bundleId, 't-b')).toBeNull();
+  });
+
+  it('evidenceGet audits found:false for an unknown id (still ok outcome — a clean miss)', async () => {
+    const sink = capturingSink();
+    const { tf } = await makeForge({ sink });
+    expect(await tf.evidenceGet('deadbeef', null)).toBeNull();
+    const fetched = sink.events.find((e) => e.event === 'compliance.evidence_fetch');
+    expect(fetched!.outcome).toBe('ok');
+    expect(fetched!.context?.['found']).toBe(false);
+  });
+
+  it('fail soft when no store is wired (list → [], get → null)', async () => {
+    const { tf } = await makeForge({ withStore: false });
+    expect(await tf.evidenceList()).toEqual([]);
+    expect(await tf.evidenceGet('x', null)).toBeNull();
+  });
+});

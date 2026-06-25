@@ -63,6 +63,25 @@ const permissiveTf = (): TenantForge =>
       }),
     listPlans: () => [],
     listSignupTokens: () => Promise.resolve([]),
+    evidenceList: () => Promise.resolve([]),
+    // Return a stub bundle (not null) so the documented `GET .../bundles/{bundleId}` route resolves
+    // to 200 — this fixture asserts routing, not behavior (mirrors getTenant returning a tenant).
+    evidenceGet: () =>
+      Promise.resolve({
+        bundle: {
+          scope: 'fleet',
+          generatedAt: 'x',
+          artifacts: {
+            isolation: { compliant: true, missingProject: [], sharedProjects: [] },
+            residency: { compliant: true, allowedRegions: [], byJurisdiction: {}, violations: [] },
+            auditExcerpt: [],
+            erasureCertificates: [],
+          },
+          contentHashes: {},
+        },
+        jws: 'x',
+      }),
+    evidenceBundlePublicKey: () => Promise.resolve({ kty: 'OKP', crv: 'Ed25519', x: 'PUB' }),
     previewPlanChange: (id: string, newPriceUsd: number) =>
       Promise.resolve({
         tenantId: id,
@@ -93,7 +112,7 @@ describe('OpenAPI contract ↔ HTTP app', () => {
   });
 
   it.each(operations)('serves $method $path (documented → routed)', async ({ path, method }) => {
-    const url = `http://local${path.replace('{id}', 't1')}`;
+    const url = `http://local${path.replace('{id}', 't1').replace('{bundleId}', 'bid-1')}`;
     const res = await createHttpServer(permissiveTf(), {
       token: TOKEN,
       paymentWebhooks: true,
@@ -107,19 +126,24 @@ describe('OpenAPI contract ↔ HTTP app', () => {
     expect(res.status).not.toBe(405);
   });
 
-  it.each(operations.filter((o) => o.path.startsWith('/v1')))(
-    'requires auth for $method $path',
-    async ({ path, method }) => {
-      const url = `http://local${path.replace('{id}', 't1')}`;
-      const res = await createHttpServer(permissiveTf(), { token: TOKEN }).request(url, {
-        method: method.toUpperCase(),
-        ...(method === 'post'
-          ? { headers: { 'content-type': 'application/json' }, body: postBody }
-          : {}),
-      });
-      expect(res.status).toBe(401);
-    },
-  );
+  it.each(
+    // Routes explicitly documented as public (`security: []`, e.g. the evidence public-key endpoint)
+    // are intentionally unauthenticated — the contract itself declares which `/v1` routes are public.
+    operations.filter((o) => o.path.startsWith('/v1') && o.op.security === undefined),
+  )('requires auth for $method $path', async ({ path, method }) => {
+    const url = `http://local${path.replace('{id}', 't1').replace('{bundleId}', 'bid-1')}`;
+    const res = await createHttpServer(permissiveTf(), { token: TOKEN }).request(url, {
+      method: method.toUpperCase(),
+      ...(method === 'post'
+        ? { headers: { 'content-type': 'application/json' }, body: postBody }
+        : {}),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('marks the evidence public-key endpoint as public (security: [])', () => {
+    expect(spec.paths['/v1/evidence/public-key']?.get?.security).toEqual([]);
+  });
 
   it('marks /health as public (security: [])', () => {
     expect(spec.paths['/health']?.get?.security).toEqual([]);

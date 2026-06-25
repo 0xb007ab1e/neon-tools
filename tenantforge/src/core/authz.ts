@@ -12,14 +12,18 @@ export const PERMISSIONS = [
   'tenant:purge', // IRREVERSIBLE hard-delete
   'webhooks:read', // list webhook subscriptions (no secret)
   'webhooks:manage', // create / delete webhook subscriptions (secret-bearing)
+  'evidence:read', // list + fetch persisted signed compliance evidence bundles (ADR-0011 Phase 3b)
 ] as const;
 /** A control-plane permission. */
 export type Permission = (typeof PERMISSIONS)[number];
 
 /**
  * Default permission set per role. `admin` keeps every capability (backward-compatible); `operator`
- * can run the full reversible lifecycle (incl. managing webhook integrations) but **not** the
- * irreversible purge; `readonly` may only read.
+ * can run the full reversible lifecycle (incl. managing webhook integrations and retrieving signed
+ * compliance evidence) but **not** the irreversible purge; `readonly` may only read tenant facts —
+ * **not** confidential evidence bundles (evidence retrieval is genuinely operator-gated, ADR-0011
+ * Phase 3b / threat-model B11). The public-key endpoint is unauthenticated (a public key) and needs
+ * no permission.
  */
 const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   admin: PERMISSIONS,
@@ -30,6 +34,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'tenant:offboard',
     'webhooks:read',
     'webhooks:manage',
+    'evidence:read',
   ],
   readonly: ['tenant:read'],
 };

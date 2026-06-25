@@ -46,6 +46,8 @@ describe('MCP server', () => {
       'tf_cost_anomalies',
       'tf_cost_report',
       'tf_credit_balance',
+      'tf_evidence_list',
+      'tf_evidence_public_key',
       'tf_invoice',
       'tf_invoices',
       'tf_list_tenants',
@@ -67,6 +69,9 @@ describe('MCP server', () => {
     const names = tools.map((t) => t.name);
     expect(names).not.toContain('tf_purge');
     expect(names).not.toContain('tf_reconcile'); // execution; only the read-only plan is exposed
+    // The full evidence-bundle BODY (confidential evidence) is kept off the agent surface (ADR-0004);
+    // only manifest facts (tf_evidence_list) + the public key (tf_evidence_public_key) are exposed.
+    expect(names).not.toContain('tf_evidence_get');
     // Money-moving / resource-creating ops stay off MCP (read surface only for these areas).
     for (const off of [
       'tf_charge',
@@ -210,6 +215,50 @@ describe('MCP server', () => {
     const client = await connect(fakeTf({ complianceReport: async () => report as never }));
     const out = body(await client.callTool({ name: 'tf_compliance_report', arguments: {} }));
     expect(out).toContain('"digest": "abc123"');
+    await client.close();
+  });
+
+  it('tf_evidence_list returns manifest FACTS ONLY (no bundle body) and is fleet-scoped', async () => {
+    let seenTenantFilter: string | undefined = 'sentinel';
+    const manifest = {
+      bundleId: 'bid-1',
+      scope: 'fleet',
+      generatedAt: '2026-06-25T00:00:00.000Z',
+      storedAt: '2026-06-25T00:00:01.000Z',
+      signerKid: 'tenantforge-evidence-bundle',
+      contentHashes: {
+        inventory: 'h',
+        isolation: 'h',
+        residency: 'h',
+        auditExcerpt: 'h',
+        erasureCertificates: 'h',
+      },
+    };
+    const client = await connect(
+      fakeTf({
+        evidenceList: async (f) => {
+          seenTenantFilter = f?.tenantId;
+          return [manifest] as never;
+        },
+      }),
+    );
+    const out = body(await client.callTool({ name: 'tf_evidence_list', arguments: {} }));
+    expect(out).toContain('"bundleId": "bid-1"');
+    expect(out).not.toContain('eyJ'); // never a JWS body in the model context
+    // No client-supplied tenant id (BOLA) — the agent surface never narrows to a tenant.
+    expect(seenTenantFilter).toBeUndefined();
+    await client.close();
+  });
+
+  it('tf_evidence_public_key returns the public JWK (no private d)', async () => {
+    const client = await connect(
+      fakeTf({
+        evidenceBundlePublicKey: async () => ({ kty: 'OKP', crv: 'Ed25519', x: 'PUB' }),
+      }),
+    );
+    const out = body(await client.callTool({ name: 'tf_evidence_public_key', arguments: {} }));
+    expect(out).toContain('"crv": "Ed25519"');
+    expect(out).not.toContain('"d"');
     await client.close();
   });
 

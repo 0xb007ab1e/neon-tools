@@ -27,7 +27,10 @@ const json = (value: unknown) => text(JSON.stringify(value, null, 2));
  * subsumes the per-event billing histories via its `events` filter) / audit anomalies / retention /
  * plan catalog / signup-token status / credit balance — all read-only and carrying no secrets.
  * Money-moving and resource-creating ops (charge / refund / credit grant / plan settlement / signup
- * issue+redeem / data export) stay off MCP.
+ * issue+redeem / data export) stay off MCP. Evidence retrieval (ADR-0011 Phase 3b) is read-only and
+ * **facts only** (`tf_evidence_list` manifests + `tf_evidence_public_key`); the full signed bundle
+ * **body** is **confidential** evidence and is deliberately NOT exposed to the agent context (ADR-0004
+ * disclosure-risk) — fetch it over the operator CLI/HTTP.
  *
  * @param tf - The TenantForge application service the tools delegate to.
  * @returns A configured (not-yet-connected) MCP server.
@@ -182,6 +185,48 @@ export function createMcpServer(tf: TenantForge): McpServer {
       inputSchema: {},
     },
     async () => asMcp(async () => json(await tf.complianceReport())),
+  );
+
+  // Evidence retrieval on the agent surface (ADR-0011 Phase 3b, ADR-0004): READ-ONLY and **facts
+  // only**. `tf_evidence_list` returns manifest facts (no bundle body); `tf_evidence_public_key`
+  // returns the public verification JWK. The full signed bundle BODY is deliberately NOT exposed to
+  // MCP — it is **confidential** evidence (tenant ids/residency/audit excerpt), and ADR-0004 keeps
+  // disclosure-risk material off the agent context: an operator fetches a full bundle over CLI/HTTP.
+  server.registerTool(
+    'tf_evidence_list',
+    {
+      description:
+        'List persisted signed compliance evidence bundles (read-only): manifest FACTS ONLY ' +
+        '(bundleId, scope, tenantId, generatedAt, storedAt, signerKid, contentHashes, retentionUntil) ' +
+        '— never the bundle body. Newest-stored first, bounded (limit clamped to 1000). Fetch a full ' +
+        'bundle body over the CLI/HTTP (it is confidential evidence, kept off the agent surface).',
+      inputSchema: {
+        scope: z.enum(['fleet', 'tenant']).optional(),
+        limit: z.number().int().min(1).max(1000).optional(),
+      },
+    },
+    async ({ scope, limit }) =>
+      asMcp(async () =>
+        json({
+          // Fleet/operator scope — no client-supplied tenant id (BOLA). Tenant self-serve is deferred.
+          manifests: await tf.evidenceList({
+            ...(scope ? { scope } : {}),
+            ...(limit !== undefined ? { limit } : {}),
+          }),
+        }),
+      ),
+  );
+
+  server.registerTool(
+    'tf_evidence_public_key',
+    {
+      description:
+        'The public Ed25519 JWK that verifies signed evidence bundles (read-only). Publish it to ' +
+        'auditors for offline verification (verifyEvidenceBundle). Contains no private material. ' +
+        'null when no evidence-bundle signer is configured.',
+      inputSchema: {},
+    },
+    async () => asMcp(async () => json({ publicKey: await tf.evidenceBundlePublicKey() })),
   );
 
   server.registerTool(

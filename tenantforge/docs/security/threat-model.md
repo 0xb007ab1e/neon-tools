@@ -320,6 +320,80 @@ Evidence-at-rest STRIDE addendum (the **retrieval-authz** STRIDE — who may _fe
 - **D (denial of service):** `put` is one bounded write + index insert; `list`/`pruneExpired` are
   **bounded** (limit clamped — no unbounded scan). No new unbounded surface.
 
+### B11 — Evidence retrieval surface (the fetch boundary) — Phase 3b SHIPPED (2026-06-25)
+
+> **Status: Phase 3b of the compliance evidence layer landed (ADR-0011).** The **access-controlled
+> retrieval surface** for persisted, signed evidence bundles: operator-gated HTTP reads
+> (`GET /v1/evidence/bundles`, `GET /v1/evidence/bundles/:bundleId`), a public-key endpoint
+> (`GET /v1/evidence/public-key`), operator CLI (`evidence-list`, `evidence-get`), and a **read-only**
+> MCP surface (`tf_evidence_list`, `tf_evidence_public_key`). A **durable pg-backed `EvidenceStore`**
+> (`TENANTFORGE_EVIDENCE_STORE=pg`, migration 0013 `tf_evidence_bundles`) closes the 3a in-process-index
+> gap so `get`/`list`/`pruneExpired` survive restart and hold across replicas. **Scope is
+> OPERATOR-ONLY** (ADR-0011 locked decision #5): the consumers are authenticated operators. **Tenant
+> self-serve retrieval via the portal stays DEFERRED** (no portal/tenant-facing fetch path here). The
+> **dashboard panel is Phase 3c — out of scope here.** This is the **fetch boundary** the Phase 2
+> content-scoping + Phase 3a key/index were groundwork for. STRIDE on it:
+
+- **S (spoofing) / AuthN:** every retrieval route/command/tool — **except the public-key endpoint** —
+  requires an authenticated principal. HTTP reuses the existing `authenticate` middleware (bearer
+  token / OIDC JWT via the `Authenticator` port); an unauthenticated request → **401** (pinned by a
+  negative test). The MCP surface runs as the single attributed `mcp` operator (ADR-0004), so it is
+  authenticated by construction. The public-key endpoint is intentionally **unauthenticated** — it
+  serves a **public** key.
+- **E (elevation) / AuthZ — deny-by-default, OPERATOR role required (the crux):** retrieval is gated
+  on a **new dedicated permission `evidence:read`**, held by `admin` + `operator` but **NOT** by
+  `readonly` (so it is genuinely operator-gated, not merely "any authenticated reader" — a `readonly`
+  token → **403**, pinned by a negative test). Evaluated **server-side** on every route/command/tool
+  (`requirePermission('evidence:read')` — std-owasp-api API5 Broken Function Level Authorization,
+  topic-authn-authz, deny by default). The public-key endpoint requires **no** permission (public
+  key). No privilege boundary is crossed by a read; the surface exposes only the **public** JWK and
+  already-signed, no-secret evidence.
+- **I (information disclosure) — confidential evidence + the BOLA note:** an evidence bundle body is a
+  **confidential** artifact (tenant ids, residency, a redacted audit excerpt) but carries **no secrets,
+  no connection URIs** (master §5; the Phase 2 canonicalization test pins this). It is served **only to
+  authenticated operators** over TLS. **BOLA (the project's #1 risk):** the tenant scope passed to the
+  store is **server-derived, never client-supplied** — for the operator surface it is the **fleet scope
+  (`null`)**, so an operator can fetch any bundle (their legitimate fleet-wide remit), but the path
+  `bundleId` is **never** interpreted as a tenant selector and there is **no client-supplied tenant-id
+  parameter** anywhere on the surface. The store's `get(bundleId, tenantScope)` second argument is set
+  by the server, not the request. This is the **groundwork for the deferred tenant-self-serve path**:
+  when it lands, it will pass the **server-derived tenant id** (from the authenticated tenant
+  principal) as `tenantScope`, and the store already refuses to return another tenant's (or a fleet)
+  bundle under a tenant scope (the store-level half of BOLA defense, B10a). A cross-tenant abuse test
+  asserts a tenant-scoped fetch of another tenant's bundle returns nothing. The **public-key endpoint
+  exposes ONLY the public JWK** — a serialization guard + a test assert it never contains the private
+  `d` parameter (CWE-200; no private key material ever leaves the process).
+- **R (repudiation) — audit every authenticated access:** every operator retrieval (`list`/`get`)
+  emits a redacted audit event via the existing `observe`/event sink — `compliance.evidence_list`,
+  `compliance.evidence_fetch` — recording the **operator id** (from the actor context), the
+  **bundleId** (a non-secret handle) where applicable, and the **outcome** (`ok`, with a `found:
+true|false` flag on a fetch; `error` reserved for failures). **Facts only — never the bundle body,
+  never the JWS, never a key** (master §5). A fetch of an unknown/out-of-scope id audits `found:
+false` (the **404** also never reveals whether the id exists out of scope — uniform "Not Found").
+  The **public-key endpoint is deliberately NOT audited**: it is unauthenticated (no principal to
+  attribute) and exposes only the public JWK — there is no confidentiality or repudiation concern to
+  record (auditing an anonymous public read would be noise without evidentiary value).
+- **D (denial of service) — bounded/paginated list:** `GET /v1/evidence/bundles` is **bounded** — the
+  `?limit` is parsed, validated (positive integer → 400 otherwise), and the store **clamps** it to
+  `[1, MAX_LIMIT=1000]` (no unbounded result set; the same DoS control as the tenant list and the 3a
+  store). Per-principal rate limiting + the body-size cap from the existing `/v1/*` middleware apply.
+  `get` is one bounded lookup. (A pagination-bound test asserts a huge `?limit` is clamped.)
+- **T (tampering):** the served body is the **signed** bundle; an auditor verifies it **offline with
+  only the public key** (`verifyEvidenceBundle` against `GET /v1/evidence/public-key` / the
+  `evidence-get --verify` CLI). Tamper in transit or at rest is detected by the signature — the
+  retrieval surface adds no new trust in the channel (verification is the product).
+- **Durable index (closes the B10a 3a gap):** the **pg `EvidenceStore`** (`tf_evidence_bundles`,
+  migration 0013) persists the manifest **and** the no-secret signed body as `jsonb`, indexed on
+  `(scope)`, `(tenant_id)`, `(stored_at)`, `(retention_until)`, so `get`/`list`/`pruneExpired` are
+  durable + cross-replica (mirrors the pg pending-erasure adapter). The body column holds **only** the
+  signed bundle (attestation facts + JWS) — **no secrets/connection URIs**; the table is in the
+  metadata control-plane DB (not tenant content). TLS-enforced at construction (`assertPostgresTls`),
+  fail-closed (the documented `allowInsecure` local-dev opt-out). The in-memory + object-store adapters
+  remain for dev/test and the object-body-at-rest tier.
+- **Deferred / out of scope here (confirmed):** **tenant self-serve retrieval** via the portal (no
+  tenant-facing fetch path — design is BOLA-ready via the server-derived `tenantScope`, but not shipped)
+  and the **Phase 3c dashboard panel**.
+
 ## Residual risks (tracked)
 
 - **R1 — closed.** Per-operator credentials + RBAC are in-app (admin/readonly, constant-time compare),

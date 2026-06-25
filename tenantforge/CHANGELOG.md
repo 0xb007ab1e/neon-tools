@@ -8,6 +8,33 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Compliance evidence retrieval surface (operator-only) + durable index** — Phase 3b of the
+  **compliance & governance evidence layer** (ADR-0011; threat-model **B11**). Authenticated
+  **operators** can now retrieve persisted, signed evidence bundles, and an auditor can verify them
+  offline with only the published public key. New **operator-gated** surfaces (deny-by-default, on a
+  new dedicated `evidence:read` permission held by `admin`+`operator` but **not** `readonly`):
+  - **HTTP (Hono, RFC-9457 errors):** `GET /v1/evidence/bundles` (list manifests — **facts only**,
+    bounded/paginated, `?scope` + clamped `?limit`), `GET /v1/evidence/bundles/:bundleId` (fetch the
+    signed `{ bundle, jws }`), and `GET /v1/evidence/public-key` (the Ed25519 **public** JWK — the one
+    **unauthenticated** read; exposes only the public key, never the private `d`).
+  - **CLI (citty):** `evidence-list`, `evidence-get <bundleId> [--verify]` (verifies the JWS against
+    the published public key locally), `evidence-pubkey`.
+  - **MCP (read-only):** `tf_evidence_list` (manifest facts) + `tf_evidence_public_key`. The
+    confidential bundle **body** is kept off the agent surface (ADR-0004 disclosure-risk) — fetch it
+    over CLI/HTTP; `tf_evidence_get` is intentionally absent.
+  - **BOLA-safe:** the tenant scope is **server-derived** (the operator surface fetches fleet-wide;
+    there is no client-supplied tenant-id parameter) — groundwork for the **deferred** tenant
+    self-serve path. Every fetch/list is **audited** (`compliance.evidence_fetch` /
+    `compliance.evidence_list` — operator id, bundleId, outcome; never the body).
+  - **Durable manifest index** — a new **pg-backed `EvidenceStore`** (`createPgEvidenceStore`,
+    migration **0013** `tf_evidence_bundles`) closes the Phase 3a in-process-index gap: the manifest
+    **and** the no-secret signed body live in Postgres, so `get`/`list`/`pruneExpired` **survive
+    restart and hold across replicas** (mirrors the pg pending-erasure adapter). `TENANTFORGE_EVIDENCE_STORE`
+    is extended with **`pg`** (the production backend; `object-store` + `memory` remain). `tenant_id`
+    has no FK — **evidence outlives the tenant** it attests. New facade methods `evidenceList` /
+    `evidenceGet`. **The dashboard panel is Phase 3c, and tenant self-serve retrieval remains DEFERRED
+    — both confirmed out of scope here.**
+
 - **Evidence-at-rest persistence foundation** — Phase 3a of the **compliance & governance evidence
   layer** (ADR-0011; threat-model **B10**). Signed evidence bundles can now be **persisted at rest**
   with a queryable manifest index, retention, and a generate webhook. New pure-core

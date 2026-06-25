@@ -55,6 +55,7 @@ import {
   type EvidenceScope,
   type SignedEvidenceBundle,
   type EvidenceManifest,
+  type EvidenceManifestFilter,
   type AuditQueryInput,
   type AnomalyThresholds,
   type AuditAnomaly,
@@ -194,6 +195,7 @@ import { createPgPendingErasureStore } from '../adapters/neon-pg/pending-erasure
 import type { EvidenceStore } from '../ports/evidence-store.js';
 import { createInMemoryEvidenceStore } from '../adapters/evidence-store.js';
 import { createObjectStoreEvidenceStore } from '../adapters/object-store-evidence-store.js';
+import { createPgEvidenceStore } from '../adapters/neon-pg/evidence-store.js';
 import { createPgMessageQueue } from '../adapters/neon-pg/message-queue.js';
 import { createPgWebhookSubscriptionStore } from '../adapters/neon-pg/webhook-subscription-store.js';
 import { createSubscriptionWebhookEventSink } from '../adapters/subscription-webhook-event-sink.js';
@@ -1416,6 +1418,36 @@ export interface TenantForge {
    * @returns The public Ed25519 JWK, or `null` when no evidence-bundle signer is configured.
    */
   evidenceBundlePublicKey(): Promise<import('jose').JWK | null>;
+
+  /**
+   * **List persisted evidence-bundle manifests** (ADR-0011 Phase 3b retrieval surface) — **facts
+   * only** (`bundleId`/`scope`/`tenantId`/`generatedAt`/`storedAt`/`signerKid`/`contentHashes`/
+   * `retentionUntil`), newest-stored first, **bounded** (`limit` clamped by the store — no unbounded
+   * scan). Returns `[]` when no evidence store is wired. **Access control lives at the calling
+   * surface** (operator-gated HTTP/CLI/MCP — threat-model B11): the `tenantId` filter, when set, MUST
+   * come from a server-derived principal (BOLA) — the operator surface lists fleet-wide (no filter).
+   * Emits a redacted `compliance.evidence_list` audit event (who/how-many — never a bundle body).
+   *
+   * @param filter - Optional `scope` / `tenantId` / `limit` constraints (the store clamps `limit`).
+   * @returns The matching manifests, newest-stored first; `[]` when no store is wired.
+   */
+  evidenceList(filter?: EvidenceManifestFilter): Promise<EvidenceManifest[]>;
+
+  /**
+   * **Fetch a persisted signed evidence bundle by id** (ADR-0011 Phase 3b retrieval surface),
+   * **scoped server-side**. `tenantScope = null` is the **operator (fleet) scope** (may fetch any
+   * bundle); a tenant id restricts to that tenant's bundles (the store returns `null` for another
+   * tenant's / a fleet bundle — the store-level half of BOLA defense, B10a). **The scope is
+   * server-derived, never client-supplied** — the operator surface passes `null`; the deferred
+   * tenant-self-serve path will pass the authenticated tenant's id. Returns `null` when unknown,
+   * out-of-scope, or no store is wired. Emits a redacted `compliance.evidence_fetch` audit event
+   * (operator id, bundleId, `ok`/`not_found` — never the body/JWS).
+   *
+   * @param bundleId - The non-guessable bundle id from a manifest.
+   * @param tenantScope - The **server-derived** tenant id to scope to, or `null` for operator/fleet.
+   * @returns The signed bundle (`{ bundle, jws }`), or `null` if unknown / out of scope.
+   */
+  evidenceGet(bundleId: string, tenantScope: string | null): Promise<SignedEvidenceBundle | null>;
 
   /**
    * **Query the audit trail** — the general, filterable view over the operator-attributed,
@@ -3967,6 +3999,43 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return evidenceBundleSigner === undefined ? null : evidenceBundleSigner.publicKeyJwk();
     },
 
+    async evidenceList(filter?: EvidenceManifestFilter): Promise<EvidenceManifest[]> {
+      const store = deps.evidenceStore;
+      // No store wired ⇒ nothing persisted ⇒ empty (fail soft, like the other history reads).
+      if (store === undefined) return [];
+      const manifests = await store.list(filter);
+      // Audit FACTS ONLY (who/how-many/scope) — never a bundle body. Access control is the calling
+      // surface's (operator-gated — threat-model B11); the tenant filter (when set) is server-derived.
+      observe('compliance.evidence_list', {
+        outcome: 'ok',
+        ...(filter?.tenantId !== undefined ? { tenantId: filter.tenantId } : {}),
+        context: {
+          count: manifests.length,
+          ...(filter?.scope !== undefined ? { scope: filter.scope } : {}),
+        },
+      });
+      return manifests;
+    },
+
+    async evidenceGet(
+      bundleId: string,
+      tenantScope: string | null,
+    ): Promise<SignedEvidenceBundle | null> {
+      const store = deps.evidenceStore;
+      if (store === undefined) return null;
+      // The store enforces the scope it is TOLD (server-derived; the operator surface passes null).
+      const signed = await store.get(bundleId, tenantScope);
+      // Audit every fetch attempt (non-repudiation) — bundleId is a non-secret handle; never the body.
+      // The lookup itself succeeded (`ok`); `found` distinguishes a hit from an unknown/out-of-scope id
+      // (the binary outcome taxonomy reserves `error` for failures, not a clean miss).
+      observe('compliance.evidence_fetch', {
+        outcome: 'ok',
+        ...(signed?.bundle.tenantId !== undefined ? { tenantId: signed.bundle.tenantId } : {}),
+        context: { bundleId, found: signed !== null },
+      });
+      return signed;
+    },
+
     async queryAudit(query: AuditQueryInput = {}): Promise<TenantEvent[]> {
       if (auditLog === undefined) return [];
       const q = normalizeAuditQuery(query); // validates + clamps (throws on bad limit/since)
@@ -5164,18 +5233,25 @@ export async function tenantForgeFromConfig(
             allowInsecure: allowInsecureDb,
           })
         : createInMemoryPendingErasureStore(),
-    // Evidence-at-rest store (ADR-0011 Phase 3a). `object-store` persists the signed bundle body to
-    // the configured export object store (requires TENANTFORGE_EXPORT_DIR; encrypt-at-rest is the
-    // object store's concern) under non-guessable tenant-scoped keys + a queryable manifest index;
-    // `memory` (default) is per-instance dev/test. Retention defaults from
-    // TENANTFORGE_EVIDENCE_RETENTION_DAYS (0 ⇒ indefinite). This is persistence only — no outward
-    // retrieval surface (Phase 3b).
+    // Evidence-at-rest store (ADR-0011 Phase 3a/3b). `pg` is the **durable** backend (manifest +
+    // no-secret signed body in Postgres `tf_evidence_bundles`, migration 0013) so the Phase 3b
+    // retrieval surface's get/list/prune survive restart and hold across replicas — the production
+    // backend. `object-store` persists the signed bundle body to the configured export object store
+    // (requires TENANTFORGE_EXPORT_DIR; encrypt-at-rest is the object store's concern) under
+    // non-guessable tenant-scoped keys, but keeps the manifest index in-process (the 3a limitation —
+    // get/list do not survive restart). `memory` (default) is per-instance dev/test. Retention
+    // defaults from TENANTFORGE_EVIDENCE_RETENTION_DAYS (0 ⇒ indefinite).
     evidenceStore:
-      config.evidenceStore === 'object-store' && config.exportDir !== undefined
-        ? createObjectStoreEvidenceStore({
-            objectStore: createFilesystemObjectStore({ dir: config.exportDir }),
+      config.evidenceStore === 'pg'
+        ? createPgEvidenceStore({
+            connectionString: config.databaseUrl,
+            allowInsecure: allowInsecureDb,
           })
-        : createInMemoryEvidenceStore(),
+        : config.evidenceStore === 'object-store' && config.exportDir !== undefined
+          ? createObjectStoreEvidenceStore({
+              objectStore: createFilesystemObjectStore({ dir: config.exportDir }),
+            })
+          : createInMemoryEvidenceStore(),
     evidenceRetentionDays: config.evidenceRetentionDays,
     ...(config.stepUpCodeTtlMs !== undefined ? { stepUpCodeTtlMs: config.stepUpCodeTtlMs } : {}),
     ...(config.erasureUndoWindowMs !== undefined
