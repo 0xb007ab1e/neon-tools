@@ -245,6 +245,27 @@ status='pending'` whose rowcount decides the single winner), satisfying the mult
   - **Dashboard parity:** the customer portal is the customer-facing window onto these self-serve
     features (the per-feature web-view rule); the operator dashboard remains read-only (ADR-0004).
 
+### Tests
+
+- **Cross-entrypoint E2E journey suite (gap B2; master §4 "E2E suite for primary user journeys").**
+  A new hermetic, CI-runnable journey suite under `test/e2e/` exercises the whole stack through the
+  library facade (`createTenantForge`) wired to in-memory adapters with deterministic ids + an
+  injected clock — the fast complement to the live-Neon `test:int` game-day suite (no live Neon, no
+  network). Built on reusable **journey fixtures/builders**: `journeyHarness()` assembles the full
+  stack (registry, provisioning, secret store, evidence store + all three Ed25519 signers, audit log,
+  signup ports, pending-erasure/one-time-code stores, usage provider, fan-out event sink) and exposes
+  state handles + a `drainQueue()` that runs the real lifecycle handler as the async worker;
+  arrange-phase builders (`aProvisionedTenant` / `anActiveSignup` / `anOffboardedTenant` /
+  `twoTenants`) reach common states in one line. Journeys: (1) full operator lifecycle (provision →
+  reveal → usage → suspend/resume → offboard → purge) + right-to-erasure with a **verifiable signed
+  certificate**, a **signed compliance report**, and a persisted **per-tenant evidence bundle**, all
+  verified against their published Ed25519 public keys; (2) self-serve signup funnel through to the
+  one-time connection reveal; (3) tenant self-serve evidence driven through the **real portal HTTP
+  app → facade → core verify**; (4) **abuse/negative** paths — cross-tenant connection + evidence
+  denial (BOLA), one-time-reveal replay denial, routing fail-closed for non-active/secret-less
+  tenants, and purge requiring the `admin` role + explicit `confirm` (an `operator` is 403, a missing
+  `confirm` is 400). +15 tests; `src/core` stays at 100%, overall coverage unaffected.
+
 ### Changed
 
 - **BREAKING (pre-release — no backward-compat preserved):** `TenantForge.erase` and
