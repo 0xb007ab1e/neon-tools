@@ -63,6 +63,7 @@ import {
   type TenantStatus,
   type TenantUsage,
   type ErasureCertificate,
+  type SignedErasureCertificate,
   type FleetDriftReport,
   type FleetReconcilePlan,
 } from '../core/index.js';
@@ -86,6 +87,11 @@ import { createPgAuditLogStore } from '../adapters/neon-pg/audit-log-store.js';
 import { currentActor } from './actor-context.js';
 import { currentTrace, outboundTraceparent } from './trace-context.js';
 import { createErasureEngine, type EraseOptions } from '../adapters/erasure-engine.js';
+import type { CertificateSigner } from '../ports/certificate-signer.js';
+import {
+  createEd25519CertificateSigner,
+  createEphemeralCertificateSigner,
+} from '../adapters/certificate-signer.js';
 import { createCachingConnectionRouter } from '../adapters/caching-connection-router.js';
 import {
   createRehomeEngine,
@@ -497,6 +503,16 @@ export interface TenantForgeDeps {
    * self-serve erasure fails closed.
    */
   pendingErasureStore?: PendingErasureStore;
+  /**
+   * **Cryptographic signer for erasure certificates** (EdDSA/Ed25519 compact JWS). When present,
+   * every {@link TenantForge.erase} / {@link TenantForge.executePendingErasure} produces a
+   * **signed** certificate (the `.jws` an auditor verifies with `verifyErasureCertificate` against
+   * {@link TenantForge.erasureCertificatePublicKey}). **Erasure is always-signed:** with no signer,
+   * `erase` and scheduling an erasure (`requestTenantErasure`) **fail closed** — there is no unsigned
+   * path, so a tenant can never be erased without a verifiable certificate. The composition root
+   * validates the key at startup (fail-fast) and, in non-prod only, generates an ephemeral key.
+   */
+  certificateSigner?: CertificateSigner;
   /** Erasure undo window (ms): how long a tenant may cancel a scheduled erasure. Defaults to 48h. */
   erasureUndoWindowMs?: number;
   /**
@@ -1058,15 +1074,29 @@ export interface TenantForge {
   /**
    * Erase a tenant under a right-to-erasure request (GDPR Art. 17 / CCPA — ErasureEngine #17): an
    * optional final export, then delete the project, crypto-shred the secret, mark `deleted`, verify,
-   * and return an auditable {@link ErasureCertificate}. Unlike {@link TenantForge.purge}, erasure is
-   * the legal-override path — it applies from **any** state, not just an offboarded tenant. Inspect
-   * the certificate's `verified` flag; a `false` is a remediation signal (the data is already gone).
+   * and return a **cryptographically signed** {@link SignedErasureCertificate}. Unlike
+   * {@link TenantForge.purge}, erasure is the legal-override path — it applies from **any** state,
+   * not just an offboarded tenant. Inspect `.certificate.verified` (a `false` is a remediation
+   * signal — the data is already gone); `.jws` is the EdDSA/Ed25519 compact JWS an auditor verifies
+   * with `verifyErasureCertificate` against {@link TenantForge.erasureCertificatePublicKey}.
+   *
+   * **Always-signed:** fails closed if no certificate signer is configured (no unsigned erasure).
    *
    * @param id - The tenant to erase.
    * @param options - The audit reason and export choice.
-   * @returns The erasure certificate.
+   * @returns The signed erasure certificate.
+   * @throws Error if no certificate signer is configured.
    */
-  erase(id: string, options: EraseOptions): Promise<ErasureCertificate>;
+  erase(id: string, options: EraseOptions): Promise<SignedErasureCertificate>;
+
+  /**
+   * The **public** verification key (Ed25519 JWK) for erasure certificates — publish this to
+   * auditors / data subjects so they can verify a certificate's `.jws` with
+   * `verifyErasureCertificate`. Contains no private material.
+   *
+   * @returns The public Ed25519 JWK, or `null` when no certificate signer is configured.
+   */
+  erasureCertificatePublicKey(): Promise<import('jose').JWK | null>;
 
   /**
    * Re-home an active tenant to a new region (#5) — for a residency change or latency optimization.
@@ -1724,9 +1754,9 @@ export interface TenantForge {
    * verified-erasure engine on the winner, marks the record `done`, and alerts operator + tenant.
    *
    * @param id - The pending-erasure request id.
-   * @returns The erasure certificate when this call ran the erasure, else `null` (lost the flip).
+   * @returns The signed erasure certificate when this call ran the erasure, else `null` (lost the flip).
    */
-  executePendingErasure(id: string): Promise<ErasureCertificate | null>;
+  executePendingErasure(id: string): Promise<SignedErasureCertificate | null>;
 
   /**
    * Pending erasures whose window has elapsed and are still `pending` — the executor's work queue.
@@ -1895,6 +1925,7 @@ export interface TenantForge {
 export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const { registry, provisioning, defaultRegion, secretStore, exporter, migrationRunner } = deps;
   const usageProvider = deps.usageProvider;
+  const certificateSigner = deps.certificateSigner;
   const allowedRegions = deps.allowedRegions ?? [];
   const baseRouter = createConnectionRouter({ registry, secretStore });
   // Optional process-local resolution cache (control-plane cost at fleet scale). When enabled, the
@@ -2141,6 +2172,34 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     } catch {
       // An alert send must never break the action it reports on.
     }
+  };
+
+  /**
+   * Compose the verified-, **signed**-erasure engine over the already-injected ports. Fails closed
+   * when no certificate signer is configured — **erasure is always signed**, so there is no path
+   * that erases a tenant without producing a verifiable certificate (master §2; ADR-0010 B8w). The
+   * engine's `alertOperator` hook fires only in the rare fail-soft case (signing throws *after* the
+   * irreversible erasure already completed — the cert is recorded unsigned and we alert, never roll
+   * back).
+   */
+  const buildErasureEngine = (): ReturnType<typeof createErasureEngine> => {
+    if (certificateSigner === undefined) {
+      throw new Error(
+        'erasure requires a configured certificate signer (TENANTFORGE_ERASURE_SIGNING_KEY) — ' +
+          'an erasure is always cryptographically signed',
+      );
+    }
+    return createErasureEngine({
+      registry,
+      provisioning,
+      secretStore,
+      signer: certificateSigner,
+      ...(exporter ? { exporter } : {}),
+      emit: (event) => eventSink.emit(event),
+      alertOperator: (message) => {
+        void alertOperator(message);
+      },
+    });
   };
 
   /**
@@ -3253,19 +3312,15 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return purgeTenant(await requireTenant(id));
     },
 
-    async erase(id: string, options: EraseOptions): Promise<ErasureCertificate> {
-      // Compose the ErasureEngine over the already-injected ports; audit through the same sink.
-      const engine = createErasureEngine({
-        registry,
-        provisioning,
-        secretStore,
-        ...(exporter ? { exporter } : {}),
-        emit: (event) => eventSink.emit(event),
-      });
-      const certificate = await engine.erase(id, options);
+    async erase(id: string, options: EraseOptions): Promise<SignedErasureCertificate> {
+      const signed = await buildErasureEngine().erase(id, options);
       // The engine sets status directly (bypassing `transition`) — drop any cached resolution.
       invalidateConnection(id);
-      return certificate;
+      return signed;
+    },
+
+    async erasureCertificatePublicKey(): Promise<import('jose').JWK | null> {
+      return certificateSigner === undefined ? null : certificateSigner.publicKeyJwk();
     },
 
     async rehome(id: string, options: RehomeOptions): Promise<RehomeResult> {
@@ -4130,6 +4185,14 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     ): Promise<TenantErasureRequestResult> {
       const store = deps.pendingErasureStore;
       if (store === undefined) throw new Error('self-serve erasure is not configured');
+      // Always-signed: never SCHEDULE an erasure that can't later be signed (so there is never an
+      // erased-but-unsignable case). Fail closed at request time if no signer is configured.
+      if (certificateSigner === undefined) {
+        throw new Error(
+          'self-serve erasure requires a configured certificate signer ' +
+            '(TENANTFORGE_ERASURE_SIGNING_KEY) — an erasure is always cryptographically signed',
+        );
+      }
       const tenant = await requireTenant(tenantId);
       const windowMs = deps.erasureUndoWindowMs ?? 48 * 60 * 60 * 1000;
       const requestedAt = new Date();
@@ -4187,7 +4250,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return { requestedAt: rec.requestedAt, executeAt: rec.executeAt, status: rec.status };
     },
 
-    async executePendingErasure(id: string): Promise<ErasureCertificate | null> {
+    async executePendingErasure(id: string): Promise<SignedErasureCertificate | null> {
       const store = deps.pendingErasureStore;
       if (store === undefined) throw new Error('self-serve erasure is not configured');
       // The SINGLE point that gates destruction: win pending → processing or do nothing. A lost flip
@@ -4195,34 +4258,31 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       // erasing — idempotent across redelivery, and a cancel that raced us already won (red-team F2).
       const claimed = await store.claimForProcessing(id);
       if (claimed === null) return null;
-      const engine = createErasureEngine({
-        registry,
-        provisioning,
-        secretStore,
-        ...(exporter ? { exporter } : {}),
-        emit: (event) => eventSink.emit(event),
-      });
+      // Always-signed engine (fails closed without a signer). A scheduled erasure could only have
+      // been created while a signer was configured (requestTenantErasure gates it), so this is sound.
+      const engine = buildErasureEngine();
       // A claimed (formerly `pending`) record always carries the reason set at request time; the `??`
       // is a type-level guard now that `reason` is optional (cleared only on the terminal transition).
-      const certificate = await engine.erase(claimed.tenantId, {
+      const signed = await engine.erase(claimed.tenantId, {
         reason: claimed.reason ?? 'self-serve erasure',
       });
+      const certificate = signed.certificate;
       invalidateConnection(claimed.tenantId);
       await store.markDone(id);
       observe('tenant.erased', {
         tenantId: claimed.tenantId,
-        outcome: certificate.verified ? 'ok' : 'error',
-        context: { verified: certificate.verified },
+        outcome: certificate.verified && signed.jws !== undefined ? 'ok' : 'error',
+        context: { verified: certificate.verified, signed: signed.jws !== undefined },
       });
       // Alert operator AND the tenant that the erasure executed (threat-model B8w: both alerted on
       // execution). The tenant record is now gone, so the tenant notice uses the email CAPTURED at
       // request time (`claimed.tenantEmail`) — review L2. Both are best-effort and never throw, so a
       // notifier failure cannot fail/roll back the already-completed erasure.
       await alertOperator(
-        `Self-serve erasure executed for tenant ${claimed.tenantId} (verified: ${certificate.verified}).`,
+        `Self-serve erasure executed for tenant ${claimed.tenantId} (verified: ${certificate.verified}, signed: ${signed.jws !== undefined}).`,
       );
       await alertTenantErased(claimed.tenantEmail, certificate);
-      return certificate;
+      return signed;
     },
 
     async duePendingErasures(limit = 100): Promise<{ id: string; tenantId: string }[]> {
@@ -4418,6 +4478,41 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
 }
 
 /**
+ * Build the erasure-certificate signer from config. With a configured Ed25519 key → a real signer
+ * (fails fast on malformed key material). In a **non-production** context with no key → an
+ * **ephemeral** keypair (a clear stderr warning is emitted; not verifiable across restarts).
+ *
+ * Production with no key fails closed **here, independently** of {@link loadConfig}'s validation
+ * (defense in depth / complete mediation — the guard must not be action-at-a-distance). Exported so
+ * the guard is directly testable against a `Config` that bypasses `loadConfig`/superRefine.
+ *
+ * @param config - Validated configuration.
+ * @returns The certificate signer.
+ * @throws Error if production has no key, or a configured key is malformed (startup fail-fast).
+ */
+export async function buildCertificateSigner(config: Config): Promise<CertificateSigner> {
+  if (config.erasureSigningKey !== undefined) {
+    return createEd25519CertificateSigner({ privateKey: config.erasureSigningKey });
+  }
+  // No key configured → the ephemeral-key path. `loadConfig`'s superRefine already rejects this in
+  // production, but DO NOT rely on that action-at-a-distance: re-check locally so the guard holds for
+  // ANY Config (a hand-built object, a future construction path, a test) that bypasses superRefine.
+  // Complete mediation / fail closed (master §2) — an ephemeral signing key in prod is exactly the
+  // always-signed-but-unverifiable failure this design forbids.
+  if (config.env === 'production') {
+    throw new Error(
+      'refusing an ephemeral erasure-signing key in production: set TENANTFORGE_ERASURE_SIGNING_KEY',
+    );
+  }
+  process.stderr.write(
+    `[tenantforge] WARNING: TENANTFORGE_ERASURE_SIGNING_KEY is not set (TENANTFORGE_ENV=${config.env}). ` +
+      `Generating an EPHEMERAL Ed25519 erasure-signing key for this process — NON-PRODUCTION ONLY. ` +
+      `Certificates signed now are NOT verifiable across restarts. Set a real key for any persistent deployment.\n`,
+  );
+  return createEphemeralCertificateSigner();
+}
+
+/**
  * Build a {@link TenantForge} wired to the production adapters (Neon API + Postgres registry) from
  * validated configuration. This is the production composition root.
  *
@@ -4426,14 +4521,18 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
  *   fan-out of JSON + a metrics sink at the composition root).
  * @returns A control-plane API backed by live adapters.
  */
-export function tenantForgeFromConfig(
+export async function tenantForgeFromConfig(
   config: Config,
   opts?: { eventSink?: EventSink },
-): TenantForge {
+): Promise<TenantForge> {
   // Transport-security opt-outs (default false → TLS enforced everywhere). These are the documented
   // "leaky endpoint" escape hatches for local dev only (README §TLS, master §5).
   const allowInsecureDb = config.allowInsecureDb;
   const allowInsecureUrls = config.allowInsecureUrls;
+  // Build the erasure-certificate signer up front so a bad key FAILS FAST at startup (not at erasure
+  // time). Always-signed: a configured key → Ed25519 signer; in non-prod with no key → an EPHEMERAL
+  // keypair (with a clear warning). Production with no key is already rejected by loadConfig.
+  const certificateSigner = await buildCertificateSigner(config);
   const registry = createPgTenantRegistry({
     connectionString: config.databaseUrl,
     allowInsecure: allowInsecureDb,
@@ -4566,6 +4665,7 @@ export function tenantForgeFromConfig(
     registry,
     provisioning,
     secretStore,
+    certificateSigner,
     migrationRunner: createPgMigrationRunner({ allowInsecure: allowInsecureDb }),
     exporter,
     eventSink,
@@ -4681,7 +4781,7 @@ export function tenantForgeFromConfig(
  * @param env - The environment to read (defaults to `process.env`).
  * @returns A control-plane API backed by live adapters.
  */
-export function tenantForgeFromEnv(env: NodeJS.ProcessEnv = process.env): TenantForge {
+export function tenantForgeFromEnv(env: NodeJS.ProcessEnv = process.env): Promise<TenantForge> {
   return tenantForgeFromConfig(loadConfig(env));
 }
 

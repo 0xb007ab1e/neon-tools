@@ -59,7 +59,7 @@ export async function runWorkerCycle(
  */
 async function main(): Promise<void> {
   const config = loadConfig();
-  const tf = tenantForgeFromConfig(config);
+  const tf = await tenantForgeFromConfig(config);
   await tf.migrate(); // ensure the queue + registry tables exist
   const queue = createPgMessageQueue({
     connectionString: config.databaseUrl,

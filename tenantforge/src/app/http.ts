@@ -24,7 +24,7 @@ function readMigrationCatalog(dir: string): { version: string; sql: string }[] {
 }
 
 /** Entry point: serve the TenantForge HTTP control-plane API. Fails closed without a way to authenticate. */
-function main(): void {
+async function main(): Promise<void> {
   const config = loadConfig();
   if (
     config.authMode === 'token' &&
@@ -54,7 +54,7 @@ function main(): void {
       }),
     );
   }
-  const tf = tenantForgeFromConfig(config, { eventSink: createFanOutEventSink(sinks) });
+  const tf = await tenantForgeFromConfig(config, { eventSink: createFanOutEventSink(sinks) });
   // Shared (cross-instance) rate-limit counter when configured; else the in-memory default.
   const rateLimitStore =
     config.rateLimitStore === 'pg'
@@ -186,4 +186,7 @@ function main(): void {
   process.on('SIGTERM', shutdown);
 }
 
-main();
+main().catch((error: unknown) => {
+  process.stderr.write(`fatal: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
+});

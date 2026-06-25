@@ -181,6 +181,13 @@ export {
   type ErasureSteps,
 } from './erasure.js';
 export {
+  verifyErasureCertificate,
+  erasureCertClaims,
+  ERASURE_CERT_ALG,
+  ERASURE_CERT_TYP,
+  type SignedErasureCertificate,
+} from './erasure-cert.js';
+export {
   assertPeriod,
   aggregateConsumption,
   type BillingPeriod,

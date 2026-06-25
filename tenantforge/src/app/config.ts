@@ -145,6 +145,18 @@ const EnvSchema = z
     TENANTFORGE_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(30),
     // Worker poll interval (ms) between lifecycle-queue drains.
     TENANTFORGE_QUEUE_POLL_MS: z.coerce.number().int().positive().default(5000),
+    // Deployment context. `production` is fail-fast/secure-by-default: it requires a real erasure
+    // signing key (no ephemeral fallback). Anything else (default `development`) is a non-prod
+    // context where, if no signing key is set, an EPHEMERAL Ed25519 keypair is generated at startup
+    // for dev/test/CI ergonomics (with a clear warning; not verifiable across restarts).
+    TENANTFORGE_ENV: z
+      .enum(['development', 'test', 'staging', 'production'])
+      .default('development'),
+    // **Ed25519 private signing key for erasure certificates** (EdDSA compact JWS). A secret — from
+    // the secret manager / env, never committed or logged (`@rules/workflow-secrets.md`). Accepts a
+    // PKCS#8 PEM (`-----BEGIN PRIVATE KEY-----…`) or a private JWK (JSON: kty=OKP, crv=Ed25519, d).
+    // **Required in production** (enforced below); in non-prod an ephemeral key is generated if unset.
+    TENANTFORGE_ERASURE_SIGNING_KEY: z.string().min(1).optional(),
     // HTTP entrypoint auth. TENANTFORGE_HTTP_TOKEN is the single-admin shorthand. For per-operator
     // identity + RBAC, set TENANTFORGE_HTTP_CREDENTIALS as comma-separated `id:role:token` entries
     // (role = admin | readonly; the token may itself contain colons — only the first two split).
@@ -386,6 +398,18 @@ const EnvSchema = z
         });
       }
     }
+    // Production must ship a real erasure signing key — an ephemeral key would not be verifiable
+    // across restarts (no published, stable public key), defeating the certificate's purpose. Fail
+    // fast at startup (12-Factor; secure-by-default) rather than silently degrade.
+    if (env.TENANTFORGE_ENV === 'production' && env.TENANTFORGE_ERASURE_SIGNING_KEY === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TENANTFORGE_ERASURE_SIGNING_KEY'],
+        message:
+          'TENANTFORGE_ERASURE_SIGNING_KEY is required when TENANTFORGE_ENV=production (erasure ' +
+          'certificates are always signed; an ephemeral key is non-prod only)',
+      });
+    }
     // OIDC mode needs the issuer, audience, and JWKS endpoint to verify tokens (fail fast).
     if (env.TENANTFORGE_AUTH_MODE === 'oidc') {
       if (env.TENANTFORGE_OIDC_ISSUER === undefined) {
@@ -466,6 +490,13 @@ export interface Config {
   allowInsecureDb: boolean;
   /** Permit non-https outbound URLs (Neon API / Vault / KV / OIDC / Stripe). Local dev only; default false. */
   allowInsecureUrls: boolean;
+  /** Deployment context; `production` forbids the ephemeral erasure-signing-key fallback (fail-fast). */
+  env: 'development' | 'test' | 'staging' | 'production';
+  /**
+   * Ed25519 **private** signing key for erasure certificates (PKCS#8 PEM or private JWK; a secret).
+   * Required in production. Absent in non-prod ⇒ an ephemeral keypair is generated at startup.
+   */
+  erasureSigningKey?: string;
   /** Which backend stores per-tenant connection secrets. */
   secretBackend: 'neon-pg' | 'vault';
   /** AES passphrase for the `neon-pg` secret backend (separate from the DB cred); set when that backend is used. */
@@ -632,6 +663,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowedRegions: parsed.TENANTFORGE_ALLOWED_REGIONS,
     allowInsecureDb: parsed.TENANTFORGE_ALLOW_INSECURE_DB,
     allowInsecureUrls: parsed.TENANTFORGE_ALLOW_INSECURE_URLS,
+    env: parsed.TENANTFORGE_ENV,
+    ...(parsed.TENANTFORGE_ERASURE_SIGNING_KEY !== undefined
+      ? { erasureSigningKey: parsed.TENANTFORGE_ERASURE_SIGNING_KEY }
+      : {}),
     secretBackend: parsed.TENANTFORGE_SECRET_BACKEND,
     exporter: parsed.TENANTFORGE_EXPORTER,
     retentionDays: parsed.TENANTFORGE_RETENTION_DAYS,

@@ -39,8 +39,8 @@ radius:
 - **Erasure** (irreversible): typed confirmation **+ a control-plane-owned second factor**
   (single-use email/TOTP code — _not_ IdP `auth_time`) **+ a mandatory undo window** during which the
   tenant **keeps serving** and may cancel; execution is a single atomic conditional flip
-  (no cancel/executor race), idempotent across redelivery; emits the signed erasure certificate and
-  alerts operator + the tenant's verified email.
+  (no cancel/executor race), idempotent across redelivery; emits the **cryptographically signed
+  erasure certificate** (see below) and alerts operator + the tenant's verified email.
 - **Rollout:** cancel + erasure ship behind a **feature flag, off** until their abuse tests are green
   and security-reviewed (deploy decoupled from release); the other actions go live first.
 
@@ -77,6 +77,34 @@ customer portal only.
   `TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE` in a multi-replica/restart-sensitive deployment — the flag
   itself remains a separate, default-OFF go/no-go decision, and CI must exercise the integration suite
   (a skipped suite counts as failure) for the cross-replica guarantee to be relied upon.
+
+## Signed erasure certificate (implemented 2026-06)
+
+The erasure certificate is now **cryptographically signed and independently verifiable**, not just an
+attestation object. Mechanism:
+
+- **Format:** a **compact JWS over the certificate claims, signed with EdDSA (Ed25519)** via `jose`
+  (mirrors the OIDC authenticator's vetted-library, alg-allow-list conventions — no hand-rolled
+  crypto, master §1 / `topic-cryptography`). The protected header pins `alg: EdDSA` + a domain `typ`
+  (`application/erasure-cert+jws`). Verification (`verifyErasureCertificate`) **pins EdDSA** and
+  rejects `alg:none`/`HS*`/any non-EdDSA (no alg-confusion — CWE-347/std-cwe), checks the `typ`, and
+  re-hydrates the claims with allow-list validation (fail closed on any tamper/forgery).
+- **Always-signed (no unsigned fallback).** There is one path: a `CertificateSigner` port is injected
+  into the erasure engine. The signing key is **validated at startup (fail-fast)**; production
+  **requires** `TENANTFORGE_ERASURE_SIGNING_KEY` (config `superRefine`), and scheduling a self-serve
+  erasure **fails closed** without a signer, so there is never an erased-but-unsignable tenant. For
+  dev/test/CI ergonomics, a non-prod context with no key generates an **ephemeral** Ed25519 keypair at
+  startup (with a stderr warning; not verifiable across restarts).
+- **Post-erasure fail-soft.** Erasure is irreversible and runs **before** signing; if signing throws
+  after the data is gone (rare — the key was validated at startup), the engine records the certificate
+  **unsigned**, emits an `error`-outcome audit event, and **alerts the operator** — it never rolls back
+  (the data cannot be un-erased).
+- **Verification surface.** The operator publishes the **public Ed25519 JWK**
+  (`tenantforge erasure-cert-pubkey` / `TenantForge.erasureCertificatePublicKey()`); an auditor/data
+  subject verifies a certificate offline with `tenantforge erasure-cert-verify --jws … --pubkey …`
+  (or the pure `verifyErasureCertificate(jws, jwk)` function).
+- **Deferred — KMS/HSM signer.** A KMS-resident signer can drop in behind the same `CertificateSigner`
+  port later (the engine depends on the abstraction, not the in-process key); not built now.
 
 ## Dashboard parity (per-feature web-view rule)
 
