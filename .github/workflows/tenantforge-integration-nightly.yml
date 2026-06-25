@@ -1,0 +1,72 @@
+name: TenantForge Integration (nightly, live Neon)
+
+# Runs the tenantforge integration suite (`test:int`) against the LIVE, NON-PROD Neon org on a nightly
+# schedule, so the integration guarantees — the cross-replica pending-erasure store, provisioning,
+# lifecycle, fleet, queue/rate-limit/idempotency — are an AUTOMATIC gate, not only the manual game-day
+# (`tenantforge-game-day.yml`). Per @rules/topic-testing.md, integration coverage that only runs on a
+# manual trigger can silently regress; this closes that gap.
+#
+# Same Environment (`tenantforge-game-day`) + secrets as the game-day, and the SAME fail-closed
+# Preflight: a run with missing credentials FAILS rather than letting the int suite self-skip and
+# report a misleading green (a skipped security/integration stage counts as a failure).
+#
+# Prerequisites (configured once in the `tenantforge-game-day` Environment — see
+# tenantforge/docs/runbooks/game-day.md):
+#   - DATABASE_URL  — a THROWAWAY non-prod control-plane registry Postgres (never prod).
+#   - NEON_API_KEY  — least-privilege key whose account is a member of the non-prod org.
+#   - NEON_ORG_ID   — the non-prod org id.
+# The Environment must NOT require manual approval (no required reviewers), or scheduled runs will hang
+# awaiting approval instead of running unattended.
+
+on:
+  schedule:
+    # 08:17 UTC nightly (~03:17 America/Chicago). Off-the-hour to avoid GitHub cron congestion.
+    - cron: "17 8 * * *"
+  # Allow on-demand runs too (e.g. to validate after a change to the store/provisioning).
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Serialize with the manual game-day: both touch the SAME shared non-prod org + control-plane
+# registry, so they must never run concurrently (the int suite is non-hermetic and runs files
+# sequentially against one DB). Queue rather than cancel so a run in progress finishes.
+concurrency:
+  group: tenantforge-game-day
+  cancel-in-progress: false
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    environment: tenantforge-game-day
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Fail loudly if the Environment secrets are missing. Without them the integration suite
+      # self-skips (describe.skipIf(!DATABASE_URL)) and would report a misleading green — so refuse.
+      - name: Preflight — require live-Neon credentials
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_ORG_ID: ${{ secrets.NEON_ORG_ID }}
+        run: |
+          missing=()
+          [ -z "$DATABASE_URL" ] && missing+=(DATABASE_URL)
+          [ -z "$NEON_API_KEY" ] && missing+=(NEON_API_KEY)
+          [ -z "$NEON_ORG_ID" ] && missing+=(NEON_ORG_ID)
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing integration secrets: ${missing[*]}. Configure them in the tenantforge-game-day Environment."
+            exit 1
+          fi
+          echo "All live-Neon credentials present; running the integration suite."
+      - name: Integration suite (live Neon)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_ORG_ID: ${{ secrets.NEON_ORG_ID }}
+        run: pnpm --filter tenantforge test:int
