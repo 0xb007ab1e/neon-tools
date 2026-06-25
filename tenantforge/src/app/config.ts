@@ -209,12 +209,15 @@ const EnvSchema = z
     // TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE on in multi-replica / restart-sensitive production
     // (threat-model B8w / red-team F2, ADR-0010).
     TENANTFORGE_PENDING_ERASURE_STORE: z.enum(['memory', 'pg']).default('memory'),
-    // Evidence-at-rest store for signed compliance bundles (ADR-0011 Phase 3a): `memory` (default,
-    // per-instance dev/test) or `object-store` (persist the signed bundle body durably to the export
-    // object store — requires TENANTFORGE_EXPORT_DIR; encrypt-at-rest is the object store's concern).
-    // Non-guessable, tenant-scoped keys + a queryable manifest index. Persistence only — the
-    // access-controlled retrieval surface is Phase 3b. Mirrors TENANTFORGE_PENDING_ERASURE_STORE.
-    TENANTFORGE_EVIDENCE_STORE: z.enum(['memory', 'object-store']).default('memory'),
+    // Evidence-at-rest store for signed compliance bundles (ADR-0011 Phase 3a/3b): `memory` (default,
+    // per-instance dev/test); `object-store` (persist the signed bundle body durably to the export
+    // object store — requires TENANTFORGE_EXPORT_DIR; encrypt-at-rest is the object store's concern,
+    // but the manifest INDEX is in-process so get/list do NOT survive restart — Phase 3a limitation);
+    // or `pg` (Phase 3b — the **durable** index: manifest + no-secret signed body in Postgres
+    // `tf_evidence_bundles` (migration 0013), so get/list/prune survive restart and hold across
+    // replicas — the production backend for the Phase 3b retrieval surface). Non-guessable,
+    // tenant-scoped keys. Mirrors TENANTFORGE_PENDING_ERASURE_STORE.
+    TENANTFORGE_EVIDENCE_STORE: z.enum(['memory', 'object-store', 'pg']).default('memory'),
     // Default retention window (days) recorded on a persisted evidence bundle's manifest; `0`
     // (default) ⇒ indefinite retention (auditors keep evidence durably — data-lifecycle). Drives
     // `retentionUntil` + the `evidencePrune` sweep.
@@ -606,11 +609,14 @@ export interface Config {
    */
   pendingErasureStore: 'memory' | 'pg';
   /**
-   * Evidence-at-rest store (ADR-0011 Phase 3a): in-memory (per-instance dev/test) or `object-store`
-   * (persist the signed bundle body to the export object store; requires {@link exportDir}). Non-
-   * guessable, tenant-scoped keys + a manifest index; persistence only (retrieval is Phase 3b).
+   * Evidence-at-rest store (ADR-0011 Phase 3a/3b): `memory` (per-instance dev/test); `object-store`
+   * (signed body to the export object store; requires {@link exportDir}; index in-process — get/list
+   * do not survive restart, the 3a limitation); or `pg` (the **durable** index — manifest + no-secret
+   * signed body in Postgres `tf_evidence_bundles`, so get/list/prune survive restart and hold across
+   * replicas — the production backend for the Phase 3b retrieval surface). Non-guessable, tenant-
+   * scoped keys.
    */
-  evidenceStore: 'memory' | 'object-store';
+  evidenceStore: 'memory' | 'object-store' | 'pg';
   /** Default retention window (days) for a persisted evidence bundle; `0` ⇒ indefinite retention. */
   evidenceRetentionDays: number;
   /** Persisted audit trail: none (stdout only) or Postgres (durable, queryable). */

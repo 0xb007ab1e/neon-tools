@@ -1,10 +1,11 @@
 # ADR 0011 — Compliance & governance evidence layer
 
 - **Status:** Accepted (2026-06-25) — Phase 0 (design + threat model) + Phase 1 (signed compliance
-  report) + Phase 2 (evidence bundle assembly + sign + verify, fleet + per-tenant) + **Phase 3a
-  (evidence-at-rest persistence: `EvidenceStore` + manifest index + retention + generate webhook)**
-  implemented; the **access-controlled retrieval surface (CLI/HTTP/MCP + public-key endpoint) is Phase
-  3b** and the **dashboard panel is Phase 3c** (neither built here)
+  report) + Phase 2 (evidence bundle assembly + sign + verify, fleet + per-tenant) + Phase 3a
+  (evidence-at-rest persistence: `EvidenceStore` + manifest index + retention + generate webhook) +
+  **Phase 3b (operator-only retrieval surface: CLI/HTTP/MCP + public-key endpoint, and the durable
+  pg-backed `EvidenceStore`)** implemented; the **dashboard panel is Phase 3c** (not built here) and
+  **tenant self-serve retrieval remains DEFERRED**
 - **Relates to:** [ADR-0010](0010-self-scoped-customer-portal-write-surface.md) (the EdDSA signing
   primitive this reuses), [ADR-0001](0001-database-per-tenant-physical-isolation.md) (physical isolation),
   [ADR-0004](0004-secret-and-money-ops-off-the-agent-surface.md) (surface gating)
@@ -172,13 +173,68 @@ retentionUntil? }`. **Facts only** — never the JWS body, never secrets/connect
   notifications). The payload is **manifest facts only** (`bundleId`/`scope`/`tenantId`/`generatedAt`/
   `storedAt`/`retentionUntil`) — **never the bundle body or any secret** (master §5).
 
-### Deferred (Phase 3b / 3c — not built here)
+### Phase 3b (implemented in this slice — operator-only retrieval surface + durable index)
 
-- **Phase 3b — retrieval surface + access control.** CLI/HTTP retrieval of a stored bundle
-  (operator-only v1, **no cross-tenant** — BOLA on _fetch_; the _content_ is scoped from Phase 2 and
-  the _key/index_ from Phase 3a), MCP read-only, and the **public-key publication endpoint**. The
-  access-control decision (which scope a caller gets) lives here — the Phase 3a store only enforces the
-  scope it is **told** to (`get(bundleId, tenantScope)`). **Deferred and confirmed out of scope here.**
+- **Operator-only retrieval surface (locked decision #5).** The consumers are authenticated
+  **operators** (admin role-tier). **Tenant self-serve retrieval via the portal stays DEFERRED** — no
+  portal/tenant-facing fetch path here. The surfaces:
+  - **HTTP (Hono), operator-gated, deny-by-default, RFC-9457 errors:**
+    - `GET /v1/evidence/bundles` — list manifests (**facts only**), **bounded/paginated** (`?limit`
+      validated + clamped by the store to `[1, 1000]`; `?scope=fleet|tenant`). No client-supplied
+      tenant-id param.
+    - `GET /v1/evidence/bundles/:bundleId` — fetch the signed bundle (`{ bundle, jws }`).
+    - `GET /v1/evidence/public-key` — the Ed25519 **public** JWK for offline verification; the **one
+      unauthenticated** read (it is a public key), exposing **only** the public JWK (never the private
+      `d`).
+  - **CLI (citty):** `evidence-list`, `evidence-get <bundleId> [--verify]` (the `--verify` runs
+    `verifyEvidenceBundle` against the published public key locally), and `evidence-pubkey`.
+  - **MCP (read-only, ADR-0004-consistent):** `tf_evidence_list` (manifest **facts only**) +
+    `tf_evidence_public_key` (the public JWK). The full signed bundle **body** — **confidential**
+    evidence — is **NOT** exposed to the agent context (ADR-0004 disclosure-risk); fetch it over
+    CLI/HTTP. `tf_evidence_get` is deliberately **absent** (pinned by a test).
+- **Access control (the crux) — a new dedicated `evidence:read` permission**, held by `admin` +
+  `operator` but **NOT** `readonly`, evaluated **server-side** on every retrieval route/command/tool
+  except the public-key endpoint (deny by default — std-owasp-api API5). So evidence retrieval is
+  genuinely **operator-gated**, not merely "any authenticated reader" (a `readonly` token → 403,
+  pinned). **BOLA:** the tenant scope passed to the store is **server-derived** — the operator surface
+  passes the **fleet scope (`null`)**; there is **no client-supplied tenant-id parameter** anywhere.
+  The `:bundleId` is a non-guessable handle, never a tenant selector. This is **BOLA-ready groundwork
+  for the deferred tenant-self-serve path**: it will pass the **authenticated tenant's** id as
+  `tenantScope`, and the store already refuses another tenant's (or a fleet) bundle under a tenant
+  scope (the store-level half of BOLA defense, Phase 3a).
+- **Audit every access.** `evidenceList`/`evidenceGet` emit redacted `compliance.evidence_list` /
+  `compliance.evidence_fetch` events (operator id from the actor context, `bundleId`, outcome/`found`)
+  via the existing event sink — **facts only**, never the body/JWS/key (master §5).
+- **Durable manifest index — a pg-backed `EvidenceStore` (closes the 3a gap).** Phase 3a's
+  object-store adapter kept its manifest index **in-process** (the write-only `ObjectStore` port), so
+  `get`/`list`/`pruneExpired` did **not** survive a restart. Phase 3b adds
+  `createPgEvidenceStore` (`adapters/neon-pg/evidence-store.ts`, migration **0013**
+  `tf_evidence_bundles`), mirroring `neon-pg/pending-erasure-store.ts`: it persists the manifest **and**
+  the **no-secret** signed body as `jsonb`, indexed on `(scope)`, `(tenant_id)`, `(stored_at)`,
+  `(retention_until)`, so retrieval + prune are **durable and cross-replica**. `tenant_id` has **no
+  FK** to `tf_tenants` — **evidence must outlive the tenant** it attests (a purge must not
+  cascade-delete evidence). TLS-enforced at construction (`assertPostgresTls`), fail-closed. The
+  config selector **`TENANTFORGE_EVIDENCE_STORE`** is extended to include **`pg`** (mirroring
+  `TENANTFORGE_PENDING_ERASURE_STORE`); `pg` is the production backend for the retrieval surface.
+  `object-store` (body-at-rest + in-process index) and `memory` (dev/test) remain.
+- **Durable-index design decision (recorded).** Body-vs-index split, explicit: `pg` holds **both** the
+  manifest index and the no-secret signed body in one row (durable + atomic); `object-store` holds the
+  body at rest in the object store with an in-process index (the 3a limitation — documented); `memory`
+  holds both in-process (dev/test). A future read-capable object-store port could combine a durable
+  object body with a pg index, but the single-table `pg` backend is the simplest durable closure of the
+  3a gap and is what 3b retrieval uses in production.
+- **MCP decision (recorded, confirmed against ADR-0004).** ADR-0004 keeps money/secret/irreversible
+  ops off the agent surface and routes **disclosure-risk** material away from agent context. Evidence
+  retrieval is read-only with **no secrets**, so a **read tool is acceptable** — but the bundle
+  **body** is **confidential** evidence (tenant ids/residency/audit excerpt). Decision: **expose
+  manifest facts + the public key** on MCP (`tf_evidence_list`, `tf_evidence_public_key`); **defer the
+  full-body fetch** to the operator CLI/HTTP (consistent with ADR-0004's disclosure-risk principle).
+
+### Deferred (Phase 3c + tenant self-serve — not built here)
+
+- **Tenant self-serve retrieval.** A portal/tenant-facing "download my evidence" path
+  (self-scoped). The store/API are **BOLA-ready** for it (the server-derived `tenantScope` already
+  scopes `get`/`list`), but it is **DEFERRED and confirmed out of scope here** (locked decision #5).
 - **Phase 3c — dashboard panel.** The human-facing web view of stored evidence (per the per-feature
   dashboard rule). **Deferred and confirmed out of scope here.**
 

@@ -11,6 +11,7 @@ import {
   encodeCursor,
   formatOperatorDigest,
   verifyErasureCertificate,
+  verifyEvidenceBundle,
 } from '../core/index.js';
 import { runWithActor } from './actor-context.js';
 import { runWithTrace, startTrace } from './trace-context.js';
@@ -1768,6 +1769,139 @@ const erasureCertVerify = defineCommand({
   },
 });
 
+const evidenceList = defineCommand({
+  meta: {
+    name: 'evidence-list',
+    description:
+      'List persisted signed compliance evidence bundles (operator-only; manifest facts, no body)',
+  },
+  args: {
+    scope: { type: 'string', description: 'Filter by scope: fleet | tenant' },
+    limit: { type: 'string', description: 'Max manifests to list (clamped to 1000)' },
+    json: { type: 'boolean', description: 'Emit the manifests as JSON', default: false },
+  },
+  async run({ args }) {
+    if (args.scope !== undefined && args.scope !== 'fleet' && args.scope !== 'tenant') {
+      process.stderr.write('evidence-list: --scope must be "fleet" or "tenant"\n');
+      process.exitCode = 1;
+      return;
+    }
+    const limit = args.limit !== undefined ? Number(args.limit) : undefined;
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      process.stderr.write('evidence-list: --limit must be a positive integer\n');
+      process.exitCode = 1;
+      return;
+    }
+    await withTenantForge(async (tf) => {
+      // Operator/fleet scope — no client-supplied tenant id (BOLA). Tenant self-serve is deferred.
+      const manifests = await tf.evidenceList({
+        ...(args.scope === 'fleet' || args.scope === 'tenant' ? { scope: args.scope } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify({ manifests }, null, 2)}\n`);
+        return;
+      }
+      if (manifests.length === 0) {
+        process.stdout.write('no evidence bundles stored\n');
+        return;
+      }
+      for (const m of manifests) {
+        process.stdout.write(
+          `${m.bundleId}  scope=${m.scope}${m.tenantId !== undefined ? ` tenant=${m.tenantId}` : ''} ` +
+            `stored=${m.storedAt} kid=${m.signerKid}` +
+            `${m.retentionUntil !== undefined ? ` retainUntil=${m.retentionUntil}` : ' retain=indefinite'}\n`,
+        );
+      }
+    });
+  },
+});
+
+const evidenceGet = defineCommand({
+  meta: {
+    name: 'evidence-get',
+    description:
+      'Fetch a stored signed evidence bundle by id (operator-only); --verify checks the signature ' +
+      'against the published public key',
+  },
+  args: {
+    bundleId: {
+      type: 'positional',
+      description: 'The bundle id (from evidence-list)',
+      required: true,
+    },
+    verify: {
+      type: 'boolean',
+      description: 'Verify the bundle JWS against the operator public key before printing',
+      default: false,
+    },
+    json: { type: 'boolean', description: 'Emit the signed bundle as JSON', default: false },
+  },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      // Operator/fleet scope (`null`) — never a client-supplied tenant id (BOLA). The bundle id is a
+      // non-guessable handle, not a tenant selector.
+      const signed = await tf.evidenceGet(args.bundleId, null);
+      if (signed === null) {
+        process.stderr.write(`evidence-get: bundle ${args.bundleId} not found\n`);
+        process.exitCode = 1;
+        return;
+      }
+      if (args.verify) {
+        // Locally verify the JWS against the operator's published public key (verification is the
+        // product — fail closed on any tamper/forgery/wrong-key/alg-confusion).
+        const jwk = await tf.evidenceBundlePublicKey();
+        if (jwk === null) {
+          process.stderr.write('evidence-get: no evidence-bundle signer is configured to verify\n');
+          process.exitCode = 1;
+          return;
+        }
+        try {
+          await verifyEvidenceBundle(signed.jws, jwk);
+          process.stderr.write('VALID signature\n');
+        } catch (error) {
+          process.stderr.write(
+            `INVALID: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+      }
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(signed, null, 2)}\n`);
+      } else {
+        const b = signed.bundle;
+        process.stdout.write(
+          `bundle scope=${b.scope}${b.tenantId !== undefined ? ` tenant=${b.tenantId}` : ''} ` +
+            `generated=${b.generatedAt} tenants=${b.artifacts.inventory.total} ` +
+            `isolation=${b.artifacts.isolation.compliant ? 'OK' : 'VIOLATION'} ` +
+            `residency=${b.artifacts.residency.compliant ? 'OK' : 'VIOLATION'} ` +
+            `erasureCerts=${b.artifacts.erasureCertificates.length}\n` +
+            `jws=${signed.jws.slice(0, 24)}…\n`,
+        );
+      }
+    });
+  },
+});
+
+const evidencePublicKey = defineCommand({
+  meta: {
+    name: 'evidence-pubkey',
+    description: 'Print the public Ed25519 JWK used to verify signed evidence bundles',
+  },
+  async run() {
+    await withTenantForge(async (tf) => {
+      const jwk = await tf.evidenceBundlePublicKey();
+      if (jwk === null) {
+        process.stderr.write('no evidence-bundle signer is configured\n');
+        process.exitCode = 1;
+        return;
+      }
+      process.stdout.write(`${JSON.stringify(jwk, null, 2)}\n`);
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -1829,6 +1963,9 @@ const main = defineCommand({
     'credit-balance': creditBalance,
     'erasure-cert-pubkey': erasureCertPublicKey,
     'erasure-cert-verify': erasureCertVerify,
+    'evidence-list': evidenceList,
+    'evidence-get': evidenceGet,
+    'evidence-pubkey': evidencePublicKey,
   },
 });
 

@@ -298,6 +298,88 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/evidence/bundles:
+    get:
+      tags: [reports]
+      summary: >
+        List persisted signed compliance evidence bundles (ADR-0011 Phase 3b — **operator-only**,
+        requires `evidence:read`; NOT `readonly`). Returns manifest **facts only** (no JWS body),
+        newest-stored first, bounded/paginated (limit clamped to 1000). No client-supplied tenant
+        id — the scope is server-derived (BOLA). Tenant self-serve retrieval is deferred.
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          description: Filter by bundle scope.
+          schema: { type: string, enum: [fleet, tenant] }
+        - name: limit
+          in: query
+          required: false
+          description: Max manifests to return (positive integer; clamped to 1000 by the store).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: The matching evidence manifests (facts only), newest-stored first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [manifests]
+                properties:
+                  manifests: { type: array, items: { type: object } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/evidence/bundles/{bundleId}:
+    get:
+      tags: [reports]
+      summary: >
+        Fetch a stored signed evidence bundle by id (ADR-0011 Phase 3b — **operator-only**, requires
+        `evidence:read`). Returns the signed bundle `{ bundle, jws }`; an auditor verifies the JWS
+        offline with the public key from `/v1/evidence/public-key`. The bundleId is a non-guessable
+        handle (operator/fleet scope) — never a tenant selector (BOLA). 404 for unknown/out-of-scope.
+      parameters:
+        - name: bundleId
+          in: path
+          required: true
+          description: The non-guessable bundle id from a manifest.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The signed evidence bundle.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bundle, jws]
+                properties:
+                  bundle: { type: object }
+                  jws: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/evidence/public-key:
+    get:
+      tags: [reports]
+      summary: >
+        The Ed25519 **public** JWK used to verify signed evidence bundles (ADR-0011 Phase 3b). The
+        single **unauthenticated** evidence read — it serves a **public** key for offline
+        verification, exposing ONLY the public JWK (never the private `d`). 404 when no signer is
+        configured.
+      security: []
+      responses:
+        '200':
+          description: The public Ed25519 JWK (public key only — no private material).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [publicKey]
+                properties:
+                  publicKey: { type: object }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/operator/digest:
     get:
       tags: [reports]

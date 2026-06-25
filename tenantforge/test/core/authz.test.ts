@@ -21,14 +21,17 @@ describe('authz', () => {
     expect(can(grant, 'tenant:offboard')).toBe(true);
     expect(can(grant, 'webhooks:read')).toBe(true); // operators manage integrations
     expect(can(grant, 'webhooks:manage')).toBe(true);
+    expect(can(grant, 'evidence:read')).toBe(true); // operators retrieve compliance evidence (ADR-0011 3b)
     expect(can(grant, 'tenant:purge')).toBe(false); // the irreversible op is admin-only
   });
 
-  it('readonly may only read', () => {
+  it('readonly may only read tenant facts — NOT confidential evidence', () => {
     expect(can({ role: 'readonly' }, 'tenant:read')).toBe(true);
     expect(can({ role: 'readonly' }, 'tenant:provision')).toBe(false);
     expect(can({ role: 'readonly' }, 'webhooks:read')).toBe(false);
     expect(can({ role: 'readonly' }, 'webhooks:manage')).toBe(false);
+    // Evidence retrieval is genuinely operator-gated — a readonly reader cannot fetch evidence (B11).
+    expect(can({ role: 'readonly' }, 'evidence:read')).toBe(false);
     expect(can({ role: 'readonly' }, 'tenant:purge')).toBe(false);
   });
 

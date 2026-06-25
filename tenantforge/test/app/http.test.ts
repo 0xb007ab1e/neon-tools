@@ -1010,6 +1010,134 @@ describe('HTTP with an injected authenticator (e.g. OIDC)', () => {
   });
 });
 
+describe('HTTP evidence retrieval surface (ADR-0011 Phase 3b — operator-only)', () => {
+  const manifest = {
+    bundleId: 'bid-abc',
+    scope: 'fleet' as const,
+    generatedAt: '2026-06-25T00:00:00.000Z',
+    storedAt: '2026-06-25T00:00:01.000Z',
+    signerKid: 'tenantforge-evidence-bundle',
+    contentHashes: {
+      inventory: 'h1',
+      isolation: 'h2',
+      residency: 'h3',
+      auditExcerpt: 'h4',
+      erasureCertificates: 'h5',
+    },
+  };
+  const signed = {
+    bundle: { scope: 'fleet' as const, generatedAt: '2026-06-25T00:00:00.000Z' },
+    jws: 'eyJhbGciOiJFZERTQSJ9.payload.sig',
+  };
+  const publicJwk = { kty: 'OKP', crv: 'Ed25519', x: 'PUBLIC_KEY_BYTES' };
+  const tf = (over: Partial<TenantForge> = {}): TenantForge =>
+    fakeTf({
+      evidenceList: async () => [manifest] as never,
+      evidenceGet: async (id: string) => (id === 'bid-abc' ? (signed as never) : null),
+      evidenceBundlePublicKey: async () => publicJwk,
+      ...over,
+    });
+  // alice=admin, bob=readonly, carol=operator.
+  const creds = [
+    { id: 'alice', token: 'tok-admin', role: 'admin' as const },
+    { id: 'bob', token: 'tok-read', role: 'readonly' as const },
+    { id: 'carol', token: 'tok-op', role: 'operator' as const },
+  ];
+  const server = (over: Partial<TenantForge> = {}) =>
+    createHttpServer(tf(over), { credentials: creds });
+  const opAuth = { authorization: 'Bearer tok-op' };
+
+  it('GET /v1/evidence/public-key needs NO auth and returns ONLY the public JWK (no private d)', async () => {
+    const res = await server().request('/v1/evidence/public-key');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { publicKey: Record<string, unknown> };
+    expect(body.publicKey).toMatchObject({ kty: 'OKP', crv: 'Ed25519' });
+    // The private scalar `d` must NEVER appear.
+    expect(JSON.stringify(body)).not.toContain('"d"');
+    expect(body.publicKey).not.toHaveProperty('d');
+  });
+
+  it('GET /v1/evidence/public-key returns 404 when no signer is configured', async () => {
+    const res = await server({ evidenceBundlePublicKey: async () => null }).request(
+      '/v1/evidence/public-key',
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('unauthenticated → 401 on list + get', async () => {
+    expect((await server().request('/v1/evidence/bundles')).status).toBe(401);
+    expect((await server().request('/v1/evidence/bundles/bid-abc')).status).toBe(401);
+  });
+
+  it('a readonly operator is FORBIDDEN (403) — evidence retrieval is operator-gated, not any reader', async () => {
+    const ro = { authorization: 'Bearer tok-read' };
+    const list = await server().request('/v1/evidence/bundles', { headers: ro });
+    expect(list.status).toBe(403);
+    const get = await server().request('/v1/evidence/bundles/bid-abc', { headers: ro });
+    expect(get.status).toBe(403);
+  });
+
+  it('an operator can list (200, facts only) and fetch (200, the signed bundle)', async () => {
+    const list = await server().request('/v1/evidence/bundles', { headers: opAuth });
+    expect(list.status).toBe(200);
+    const listBody = (await list.json()) as { manifests: unknown[] };
+    expect(listBody.manifests).toHaveLength(1);
+    // The list response carries no JWS body.
+    expect(JSON.stringify(listBody)).not.toContain('eyJ');
+    const get = await server().request('/v1/evidence/bundles/bid-abc', { headers: opAuth });
+    expect(get.status).toBe(200);
+    expect(await get.json()).toEqual({ bundle: signed.bundle, jws: signed.jws });
+  });
+
+  it('an admin can also retrieve (200)', async () => {
+    const res = await server().request('/v1/evidence/bundles', {
+      headers: { authorization: 'Bearer tok-admin' },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('a fetch of an unknown id is a uniform 404 (no existence oracle)', async () => {
+    const res = await server().request('/v1/evidence/bundles/does-not-exist', { headers: opAuth });
+    expect(res.status).toBe(404);
+  });
+
+  it('list ?limit must be a positive integer (400) and ?scope is validated (400)', async () => {
+    expect(
+      (await server().request('/v1/evidence/bundles?limit=0', { headers: opAuth })).status,
+    ).toBe(400);
+    expect(
+      (await server().request('/v1/evidence/bundles?limit=abc', { headers: opAuth })).status,
+    ).toBe(400);
+    expect(
+      (await server().request('/v1/evidence/bundles?scope=bogus', { headers: opAuth })).status,
+    ).toBe(400);
+  });
+
+  it('list passes a huge ?limit to the facade where the store clamps it (no unbounded scan)', async () => {
+    let seenLimit: number | undefined;
+    const res = await server({
+      evidenceList: async (f) => {
+        seenLimit = f?.limit;
+        return [manifest] as never;
+      },
+    }).request('/v1/evidence/bundles?limit=999999', { headers: opAuth });
+    expect(res.status).toBe(200);
+    // The route forwards the (validated positive) limit; the store/facade clamps to MAX_LIMIT.
+    expect(seenLimit).toBe(999999);
+  });
+
+  it('the get route fetches under operator/fleet scope (null) — no client-supplied tenant id (BOLA)', async () => {
+    let seenScope: string | null | undefined;
+    await server({
+      evidenceGet: async (_id: string, scope: string | null) => {
+        seenScope = scope;
+        return signed as never;
+      },
+    }).request('/v1/evidence/bundles/bid-abc', { headers: opAuth });
+    expect(seenScope).toBeNull();
+  });
+});
+
 describe('HTTP rate limiting (per principal, fixed window)', () => {
   const server = (nowRef: { t: number }) =>
     createHttpServer(fakeTf({ listTenants: async () => [] }), {
