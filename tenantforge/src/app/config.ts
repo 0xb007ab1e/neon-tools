@@ -184,6 +184,12 @@ const EnvSchema = z
     // dev/single-instance), or `pg` (durable — tf_signup_tokens, migration 0008). Enables
     // issue/redeem/list signup tokens. Only the token hash is stored.
     TENANTFORGE_SIGNUP_TOKEN_STORE: z.enum(['none', 'memory', 'pg']).default('none'),
+    // Pending-erasure (undo-window) store: `memory` (default, per-instance) or `pg` (durable +
+    // cross-replica — `tf_pending_erasures`, migration 0012). `pg` makes the cancel/claim flips
+    // atomic across replicas and survive restarts — the prerequisite for flipping
+    // TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE on in multi-replica / restart-sensitive production
+    // (threat-model B8w / red-team F2, ADR-0010).
+    TENANTFORGE_PENDING_ERASURE_STORE: z.enum(['memory', 'pg']).default('memory'),
     // Transport-security escape hatches (default false — fail closed). `..._DB` permits a non-TLS
     // Postgres connection (no `sslmode=require`); `..._URLS` permits a non-https outbound URL
     // (Neon API / Vault / Azure Key Vault / OIDC JWKS / Stripe). Set ONLY for local development
@@ -512,6 +518,12 @@ export interface Config {
   rateLimitStore: 'memory' | 'pg';
   /** Idempotency-key store: in-memory (per-instance) or Postgres (shared across instances). */
   idempotencyStore: 'memory' | 'pg';
+  /**
+   * Pending-erasure (undo-window) store: in-memory (per-instance) or Postgres (durable +
+   * cross-replica). `pg` is the prerequisite for the portal's destructive self-serve flag in
+   * multi-replica / restart-sensitive production (threat-model B8w / red-team F2, ADR-0010).
+   */
+  pendingErasureStore: 'memory' | 'pg';
   /** Persisted audit trail: none (stdout only) or Postgres (durable, queryable). */
   auditLog: 'none' | 'pg';
   /** Credit ledger backend: none (off), memory (per-instance), or pg (durable, authoritative). */
@@ -630,6 +642,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     rateLimitStore: parsed.TENANTFORGE_RATE_LIMIT_STORE,
     idempotencyStore: parsed.TENANTFORGE_IDEMPOTENCY_STORE,
+    pendingErasureStore: parsed.TENANTFORGE_PENDING_ERASURE_STORE,
     auditLog: parsed.TENANTFORGE_AUDIT_LOG,
     creditLedger: parsed.TENANTFORGE_CREDIT_LEDGER,
     signupTokenStore: parsed.TENANTFORGE_SIGNUP_TOKEN_STORE,

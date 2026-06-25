@@ -39,6 +39,11 @@ export {
   createInMemoryPendingErasureStore,
   type InMemoryPendingErasureStore,
 } from './pending-erasure-store.js';
+export {
+  createPgPendingErasureStore,
+  type PgPendingErasureStore,
+  type PgPendingErasureStoreOptions,
+} from './neon-pg/pending-erasure-store.js';
 export type {
   PendingErasureStore,
   PendingErasureRecord,
