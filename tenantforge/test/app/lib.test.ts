@@ -15,6 +15,8 @@ import type {
   ProvisionRequest,
 } from '../../src/ports/provisioning-provider.js';
 import { createInMemorySecretStore } from '../../src/adapters/secret-store.js';
+import { createEphemeralCertificateSigner } from '../../src/adapters/certificate-signer.js';
+import { verifyErasureCertificate } from '../../src/core/erasure-cert.js';
 import { createInMemoryAuditLogStore } from '../../src/adapters/audit-log-store.js';
 import { createInMemoryCreditLedger } from '../../src/adapters/credit-ledger.js';
 import { createInMemorySignupTokenStore } from '../../src/adapters/signup-token-store.js';
@@ -296,7 +298,36 @@ describe('createTenantForge.provision', () => {
 });
 
 describe('createTenantForge.erase', () => {
-  it('erases an active tenant (override path) and returns a verified certificate', async () => {
+  it('erases an active tenant (override path) and returns a verified, signed certificate', async () => {
+    const registry = fakeRegistry();
+    const provisioning = fakeProvisioning();
+    const secretStore = createInMemorySecretStore();
+    const certificateSigner = await createEphemeralCertificateSigner();
+    const tf = createTenantForge({
+      registry,
+      provisioning,
+      secretStore,
+      certificateSigner,
+      defaultRegion: 'aws-us-east-1',
+    });
+    const { tenant } = await tf.provision({ slug: 'acme' });
+    expect(tenant.status).toBe('active');
+
+    const signed = await tf.erase(tenant.id, { reason: 'GDPR Art.17 #7' });
+    expect(signed.certificate.tenantId).toBe(tenant.id);
+    expect(signed.certificate.reason).toBe('GDPR Art.17 #7');
+    expect(signed.certificate.projectDeleted).toBe(true);
+    expect(signed.certificate.verified).toBe(true);
+    expect(await secretStore.get(tenant.id)).toBeNull();
+    expect((await tf.getTenant(tenant.id))?.status).toBe('deleted');
+    // The JWS verifies against the published public key, returning the same certificate.
+    const pub = await tf.erasureCertificatePublicKey();
+    expect(pub).not.toBeNull();
+    expect(signed.jws).toBeDefined();
+    await expect(verifyErasureCertificate(signed.jws!, pub!)).resolves.toEqual(signed.certificate);
+  });
+
+  it('fails closed when no certificate signer is configured (erasure is always signed)', async () => {
     const registry = fakeRegistry();
     const provisioning = fakeProvisioning();
     const secretStore = createInMemorySecretStore();
@@ -307,15 +338,13 @@ describe('createTenantForge.erase', () => {
       defaultRegion: 'aws-us-east-1',
     });
     const { tenant } = await tf.provision({ slug: 'acme' });
-    expect(tenant.status).toBe('active');
-
-    const cert = await tf.erase(tenant.id, { reason: 'GDPR Art.17 #7' });
-    expect(cert.tenantId).toBe(tenant.id);
-    expect(cert.reason).toBe('GDPR Art.17 #7');
-    expect(cert.projectDeleted).toBe(true);
-    expect(cert.verified).toBe(true);
-    expect(await secretStore.get(tenant.id)).toBeNull();
-    expect((await tf.getTenant(tenant.id))?.status).toBe('deleted');
+    await expect(tf.erase(tenant.id, { reason: 'r' })).rejects.toThrow(
+      /requires a configured certificate signer/,
+    );
+    // Fail-closed BEFORE any destruction: the tenant is untouched.
+    expect((await tf.getTenant(tenant.id))?.status).toBe('active');
+    expect(await secretStore.get(tenant.id)).not.toBeNull();
+    expect(await tf.erasureCertificatePublicKey()).toBeNull();
   });
 });
 

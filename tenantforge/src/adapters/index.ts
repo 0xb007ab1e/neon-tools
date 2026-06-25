@@ -13,6 +13,11 @@ export {
   type PgMigrationRunnerOptions,
 } from './neon-pg/migration-runner.js';
 export { createInMemorySecretStore } from './secret-store.js';
+export {
+  createEd25519CertificateSigner,
+  createEphemeralCertificateSigner,
+  type Ed25519CertificateSignerOptions,
+} from './certificate-signer.js';
 export { createTokenAuthenticator } from './auth/token-authenticator.js';
 export {
   createOidcAuthenticator,

@@ -1,10 +1,17 @@
 import { readFileSync, readdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { defineCommand, runMain } from 'citty';
+import type { JWK } from 'jose';
 import type { TenantRecord } from '../core/index.js';
-import { decodeCursor, encodeCursor, formatOperatorDigest } from '../core/index.js';
+import {
+  decodeCursor,
+  encodeCursor,
+  formatOperatorDigest,
+  verifyErasureCertificate,
+} from '../core/index.js';
 import { runWithActor } from './actor-context.js';
 import { runWithTrace, startTrace } from './trace-context.js';
 import { parseLifecycleCommand } from '../adapters/lifecycle-command.js';
@@ -19,7 +26,7 @@ import { type TenantForge, tenantForgeFromConfig } from './lib.js';
  * @returns The operation's result.
  */
 async function withTenantForge<T>(fn: (tf: TenantForge) => Promise<T>): Promise<T> {
-  const tf = tenantForgeFromConfig(loadConfig());
+  const tf = await tenantForgeFromConfig(loadConfig());
   // Attribute CLI actions to the invoking OS user in the audit stream.
   const actor = { id: `cli:${userInfo().username}`, role: 'admin' };
   // A fresh trace per CLI invocation so the command's events share a correlation id and any Neon
@@ -1693,6 +1700,74 @@ const creditBalance = defineCommand({
   },
 });
 
+const erasureCertPublicKey = defineCommand({
+  meta: {
+    name: 'erasure-cert-pubkey',
+    description: 'Print the public Ed25519 JWK used to verify signed erasure certificates',
+  },
+  async run() {
+    await withTenantForge(async (tf) => {
+      const jwk = await tf.erasureCertificatePublicKey();
+      if (jwk === null) {
+        process.stderr.write('no erasure certificate signer is configured\n');
+        process.exitCode = 1;
+        return;
+      }
+      process.stdout.write(`${JSON.stringify(jwk, null, 2)}\n`);
+    });
+  },
+});
+
+const erasureCertVerify = defineCommand({
+  meta: {
+    name: 'erasure-cert-verify',
+    description:
+      'Verify a signed erasure certificate (compact JWS) against a published Ed25519 public JWK',
+  },
+  args: {
+    jws: { type: 'string', description: 'Path to the compact JWS file', required: true },
+    pubkey: {
+      type: 'string',
+      description: 'Path to the public Ed25519 JWK (JSON) file',
+      required: true,
+    },
+    json: { type: 'boolean', description: 'Emit the verified certificate as JSON', default: false },
+  },
+  async run({ args }) {
+    // Pure, offline verification — no control-plane wiring needed (an auditor can run this with just
+    // the JWS + the operator's published public key). Treats both inputs as untrusted (fail closed).
+    // Async file reads (non-blocking I/O) since the handler is already async.
+    const [jwsRaw, pubRaw] = await Promise.all([
+      readFile(args.jws, 'utf8'),
+      readFile(args.pubkey, 'utf8'),
+    ]);
+    const jws = jwsRaw.trim();
+    let publicKeyJwk: JWK;
+    try {
+      publicKeyJwk = JSON.parse(pubRaw) as JWK;
+    } catch {
+      process.stderr.write('erasure-cert-verify: --pubkey is not valid JWK JSON\n');
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      const cert = await verifyErasureCertificate(jws, publicKeyJwk);
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(cert, null, 2)}\n`);
+      } else {
+        process.stdout.write(
+          `VALID signature — tenant=${cert.tenantId} slug=${cert.slug} erasedAt=${cert.erasedAt} ` +
+            `verified=${cert.verified}\n`,
+        );
+      }
+    } catch (error) {
+      // Forged / tampered / wrong-key / alg-confusion all land here — reject loudly, exit non-zero.
+      process.stderr.write(`INVALID: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 1;
+    }
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: 'tenantforge',
@@ -1752,6 +1827,8 @@ const main = defineCommand({
     'assign-plan': assignPlan,
     'credit-grant': creditGrant,
     'credit-balance': creditBalance,
+    'erasure-cert-pubkey': erasureCertPublicKey,
+    'erasure-cert-verify': erasureCertVerify,
   },
 });
 

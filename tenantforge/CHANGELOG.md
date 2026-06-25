@@ -8,6 +8,21 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Cryptographically signed, verifiable erasure certificates** (GDPR Art. 17 evidence;
+  threat-model **B8w**, ADR-0010). Every erasure now emits an **EdDSA (Ed25519) compact JWS** over the
+  certificate claims (via `jose` — no hand-rolled crypto). New `CertificateSigner` port +
+  `createEd25519CertificateSigner` adapter (loads a PKCS#8 PEM or private JWK from
+  `TENANTFORGE_ERASURE_SIGNING_KEY`) and a pure `verifyErasureCertificate(jws, publicJwk)` that
+  **pins EdDSA** on verify (rejects `alg:none`/`HS*`/non-EdDSA — alg-confusion, CWE-347), checks a
+  domain `typ`, and validates the claim shape (fail closed). **Always-signed:** the key is validated
+  at **startup (fail-fast)** — production **requires** `TENANTFORGE_ERASURE_SIGNING_KEY`, and
+  scheduling a self-serve erasure fails closed without a signer (never an erased-but-unsignable
+  tenant); a post-erasure signing failure **fails soft** (cert recorded unsigned + operator alerted,
+  never rolled back). Non-prod with no key generates an **ephemeral** keypair at startup (warned; not
+  verifiable across restarts). New CLI: `erasure-cert-pubkey` (publish the public JWK) and
+  `erasure-cert-verify` (offline verify); `TenantForge.erasureCertificatePublicKey()` exposes the
+  public key. A KMS/HSM signer can drop in behind the same port later (deferred).
+
 - **Postgres-backed `PendingErasureStore`** (`TENANTFORGE_PENDING_ERASURE_STORE=pg`, migration 0012
   `tf_pending_erasures`) — the erasure undo-window now survives process restarts and its cancel/claim
   flips are atomic **across replicas** (each is a single SQL conditional `UPDATE … WHERE
@@ -91,6 +106,14 @@ status='pending'` whose rowcount decides the single winner), satisfying the mult
     `docs/a11y/portal-manual-test-plan.md` (the manual SR pass is an outstanding human task).
   - **Dashboard parity:** the customer portal is the customer-facing window onto these self-serve
     features (the per-feature web-view rule); the operator dashboard remains read-only (ADR-0004).
+
+### Changed
+
+- **BREAKING (pre-release — no backward-compat preserved):** `TenantForge.erase` and
+  `executePendingErasure` now return a **`SignedErasureCertificate`** (`{ certificate, jws }`) instead
+  of a bare `ErasureCertificate` (the signed JWS travels with the certificate). `tenantForgeFromConfig`
+  and `tenantForgeFromEnv` are now **async** (they build and validate the erasure signing key at
+  startup). Callers `await` the factory and read `.certificate` / `.jws`.
 
 ## [0.38.1] - 2026-06-22
 

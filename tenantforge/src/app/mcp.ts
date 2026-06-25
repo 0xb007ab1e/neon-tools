@@ -5,7 +5,7 @@ import { createMcpServer } from './mcp-server.js';
 
 /** Entry point: wire TenantForge from config and serve the control plane over MCP stdio. */
 async function main(): Promise<void> {
-  const tf = tenantForgeFromConfig(loadConfig());
+  const tf = await tenantForgeFromConfig(loadConfig());
   const server = createMcpServer(tf);
 
   const shutdown = (): void => {

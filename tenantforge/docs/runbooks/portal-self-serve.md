@@ -49,6 +49,20 @@
   enabling `…_DESTRUCTIVE=true` in a multi-replica deployment.** With the in-memory store, a sweep on
   replica B cannot see or atomically claim a record scheduled on replica A — the atomicity guarantee
   is lost. (Single-instance dev/staging is fine on the in-memory store.)
+- **Erasure certificate signing key (hard prerequisite — erasure is always-signed):**
+  `TENANTFORGE_ERASURE_SIGNING_KEY` is an **Ed25519 private key** (PKCS#8 PEM or private JWK; a
+  secret from the secret manager — never committed/logged). **Production requires it** — the process
+  **fails fast at startup** without it (`TENANTFORGE_ENV=production`), and scheduling a self-serve
+  erasure **fails closed** without a signer, so a tenant can never be erased without a verifiable
+  certificate. In non-prod with no key, an **ephemeral** key is generated at startup (logged warning;
+  not verifiable across restarts) — fine for dev/staging, **not** production. Generate one:
+  `openssl genpkey -algorithm ED25519`. **Verifying a certificate:** publish the public key with
+  `tenantforge cli erasure-cert-pubkey > pub.jwk`, then an auditor/data subject runs
+  `tenantforge cli erasure-cert-verify --jws cert.jws --pubkey pub.jwk` (offline; exits non-zero on
+  any tamper/forgery/wrong-key/alg-confusion). A **post-erasure signing failure fails soft** (the
+  data is already gone): the certificate is recorded **unsigned**, the `tenant.erased` event carries
+  `signed:false`/`outcome:error`, and the operator is alerted — investigate the signing key, do not
+  attempt to re-erase.
 - CLI access to run `erasure-sweep` (it irreversibly deletes tenant DBs → `--yes` gated). Worker
   process access (logs) for the loop. Least-privilege Neon API key + registry credential from the
   secret manager (`secret-rotation.md`).

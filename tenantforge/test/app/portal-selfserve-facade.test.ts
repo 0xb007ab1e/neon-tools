@@ -8,7 +8,18 @@ import type { TenantExporter } from '../../src/ports/tenant-exporter.js';
 import { createInMemorySecretStore } from '../../src/adapters/secret-store.js';
 import { createInMemoryOneTimeCodeStore } from '../../src/adapters/one-time-code-store.js';
 import { createInMemoryPendingErasureStore } from '../../src/adapters/pending-erasure-store.js';
+import type { CertificateSigner } from '../../src/ports/certificate-signer.js';
 import { createTenantForge, type TenantForge, type TenantForgeDeps } from '../../src/app/lib.js';
+
+/**
+ * A deterministic stub certificate signer (no real crypto) — these facade tests assert the
+ * always-signed wiring + certificate contents, not the EdDSA round-trip (that lives in the core /
+ * adapter suites). Erasure is always-signed, so every erasure path must be given a signer.
+ */
+const stubSigner: CertificateSigner = {
+  sign: () => Promise.resolve('stub.jws.token'),
+  publicKeyJwk: () => Promise.resolve({ kty: 'OKP', crv: 'Ed25519', x: 'stub' }),
+};
 
 /** Minimal TenantRegistry fake supporting the portal self-serve paths. */
 function fakeRegistry(): TenantRegistry & {
@@ -323,6 +334,7 @@ describe('portal self-serve facade — erasure undo window (F2)', () => {
       allowedRegions: ['aws-us-east-1'],
       exporter: fakeExporter(),
       pendingErasureStore: store,
+      certificateSigner: stubSigner,
       erasureUndoWindowMs: 0, // zero window so executeAt = now → immediately due for the execute path
       ...over,
     });
@@ -403,6 +415,7 @@ describe('portal self-serve facade — erasure-completion alert (L2)', () => {
       allowedRegions: ['aws-us-east-1'],
       exporter: fakeExporter(),
       pendingErasureStore: store,
+      certificateSigner: stubSigner,
       erasureUndoWindowMs: 0,
       operatorEmail: 'ops@operator.example',
       notifier,
@@ -430,7 +443,7 @@ describe('portal self-serve facade — erasure-completion alert (L2)', () => {
     expect(tenantNote).toBeDefined();
     expect(tenantNote!.subject).toMatch(/erased/i);
     // References the certificate (its completion instant) — booleans/refs only, never a secret.
-    expect(tenantNote!.body).toContain(cert!.erasedAt);
+    expect(tenantNote!.body).toContain(cert!.certificate.erasedAt);
   });
 
   it('alerts only the operator when no tenant email was on file at request time', async () => {
@@ -475,6 +488,7 @@ describe('portal self-serve facade — erasure-executor sweep (M2)', () => {
       allowedRegions: ['aws-us-east-1'],
       exporter: fakeExporter(),
       pendingErasureStore: store,
+      certificateSigner: stubSigner,
       erasureUndoWindowMs: 0,
       ...over,
     });
@@ -554,6 +568,7 @@ describe('portal self-serve facade — erasure-executor sweep (M2)', () => {
       allowedRegions: ['aws-us-east-1'],
       exporter: fakeExporter(),
       pendingErasureStore: store,
+      certificateSigner: stubSigner,
       erasureUndoWindowMs: 0,
     });
     await tf.requestTenantErasure('t-a', 'r');
@@ -612,6 +627,7 @@ describe('portal self-serve facade — erasure-executor sweep (M2)', () => {
       allowedRegions: ['aws-us-east-1'],
       exporter: fakeExporter(),
       pendingErasureStore: racingStore,
+      certificateSigner: stubSigner,
       erasureUndoWindowMs: 0,
     });
     await tf.requestTenantErasure('t-a', 'r');
