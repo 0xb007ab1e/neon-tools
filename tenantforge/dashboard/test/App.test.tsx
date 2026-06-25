@@ -80,6 +80,50 @@ const reconcileHistory = [
     context: { target: '0003', reconciled: 4, partial: 0 },
   },
 ];
+const evidenceManifests = [
+  {
+    bundleId: 'evb-abc123def456789',
+    scope: 'fleet',
+    generatedAt: '2026-06-20T00:00:00.000Z',
+    storedAt: '2026-06-20T00:00:01.000Z',
+    signerKid: 'compliance-evidence-2026',
+    contentHashes: {
+      inventory: 'h1',
+      isolation: 'h2',
+      residency: 'h3',
+      auditExcerpt: 'h4',
+      erasureCertificates: 'h5',
+    },
+    retentionUntil: '2026-09-18T00:00:01.000Z',
+  },
+];
+const evidenceBundle = {
+  bundle: {
+    scope: 'fleet',
+    generatedAt: '2026-06-20T00:00:00.000Z',
+    artifacts: {
+      inventory: { total: 2, byStatus: {} },
+      isolation: { compliant: true, missingProject: [], sharedProjects: [] },
+      residency: { compliant: true, allowedRegions: [], byJurisdiction: {}, violations: [] },
+      auditExcerpt: [],
+      erasureCertificates: ['cert.jws.one'],
+    },
+    contentHashes: {
+      inventory: 'h1',
+      isolation: 'h2',
+      residency: 'h3',
+      auditExcerpt: 'h4',
+      erasureCertificates: 'h5',
+    },
+  },
+  jws: 'eyJhbGciOiJFZERTQSJ9.payload.signature',
+};
+const evidencePublicKey = {
+  kty: 'OKP',
+  crv: 'Ed25519',
+  x: 'publickeybytes',
+  kid: 'compliance-evidence-2026',
+};
 const invoices = {
   generatedAt: '2026-06-20T00:00:00.000Z',
   invoices: [
@@ -299,6 +343,12 @@ beforeEach(() => {
             ],
           }),
         );
+      if (url.endsWith('/evidence/public-key'))
+        return Promise.resolve(json({ publicKey: evidencePublicKey }));
+      if (url.includes('/evidence/bundles/'))
+        return Promise.resolve(json({ bundle: evidenceBundle.bundle, jws: evidenceBundle.jws }));
+      if (url.endsWith('/evidence/bundles'))
+        return Promise.resolve(json({ manifests: evidenceManifests }));
       if (url.endsWith('/compliance'))
         return Promise.resolve(json({ report, digest: 'abc123def456' }));
       if (url.endsWith('/drift')) return Promise.resolve(json(drift));
@@ -393,8 +443,39 @@ describe('dashboard App', () => {
       await screen.findByRole('heading', { name: 'Retention (scheduled purges)' }),
     ).toBeInTheDocument();
     expect(await screen.findByText('tenant-archived')).toBeInTheDocument();
+    // Signed evidence bundles panel renders its manifest list (facts only).
+    expect(
+      await screen.findByRole('heading', { name: 'Signed evidence bundles' }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText('Persisted evidence-bundle manifests (facts only — no bundle body)'),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('compliance-evidence-2026')).toBeInTheDocument();
     // Reconcile execution is not enabled by default → preview-only, no Run button.
     expect(screen.queryByRole('button', { name: 'Run reconcile' })).toBeNull();
+    expect((await axe(container)).violations).toEqual([]);
+  });
+
+  it('views a signed evidence bundle and loads the public verification key, no a11y violations', async () => {
+    const { container } = render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Fleet' }));
+
+    // Open the bundle detail via the per-row View action; the signed JWS is offered as a download.
+    fireEvent.click(await screen.findByRole('button', { name: 'View bundle evb-abc123def456789' }));
+    expect(
+      await screen.findByRole('button', { name: 'Download signed bundle' }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText('Signed bundle (compact JWS — verify offline, do not edit)'),
+    ).toHaveValue('eyJhbGciOiJFZERTQSJ9.payload.signature');
+
+    // The public key loads on demand (public material only) and is downloadable.
+    fireEvent.click(screen.getByRole('button', { name: 'Show public verification key' }));
+    expect(
+      await screen.findByLabelText('Ed25519 public JWK (verify bundles offline)'),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Download public key' })).toBeInTheDocument();
     expect((await axe(container)).violations).toEqual([]);
   });
 

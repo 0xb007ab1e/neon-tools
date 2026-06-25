@@ -8,6 +8,24 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Compliance evidence dashboard panel** — Phase 3c (final slice) of the **compliance & governance
+  evidence layer** (ADR-0011), **completing Phase 3 end-to-end (library → CLI → HTTP → MCP →
+  dashboard)**. The operator dashboard gains an **`EvidencePanel`** (Fleet section, beside the
+  compliance panel) that surfaces stored evidence in the browser, satisfying the per-feature-dashboard
+  rule. **Dashboard-only** — no new core/port/store logic; it consumes the existing Phase 3b facade.
+  - **Lists** persisted evidence-bundle **manifests** (facts only — never the JWS body) in an
+    accessible table.
+  - **View a bundle** shows its manifest summary and offers the **signed JWS as a download** (a
+    labelled read-only artifact, not rendered as content) so an auditor can verify it offline.
+  - **Public key** — loads the Ed25519 **public** JWK on demand with a download affordance and a note
+    that it verifies bundles offline; no private material is shown.
+  - New `/dashboard`-scoped backend routes (`GET /dashboard/api/evidence/bundles`,
+    `/bundles/:bundleId`, `/public-key`) reuse the dashboard's signed-cookie session and the same
+    server-side `evidence:read` gate as the HTTP API (admin+operator, **not** readonly → 403); the
+    public key needs only a session. **WCAG 2.2 AA**: semantic tables, labelled controls, keyboard
+    operability with visible focus, `aria-live` async regions (not color-only) — asserted with
+    `vitest-axe` in the dashboard suite.
+
 - **Compliance evidence retrieval surface (operator-only) + durable index** — Phase 3b of the
   **compliance & governance evidence layer** (ADR-0011; threat-model **B11**). Authenticated
   **operators** can now retrieve persisted, signed evidence bundles, and an auditor can verify them

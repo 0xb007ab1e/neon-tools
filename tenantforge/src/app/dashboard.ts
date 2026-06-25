@@ -152,6 +152,48 @@ export function createDashboard(options: DashboardOptions): Hono {
     return c.json({ report, digest });
   });
 
+  // Evidence-bundle manifests panel data (ADR-0011 Phase 3c). FACTS ONLY (no JWS body) — the same
+  // operator-gated `evidence:read` the HTTP API uses (held by admin+operator, NOT readonly). The
+  // tenant scope is server-derived (operator surface = fleet-wide); there is NO client-supplied
+  // tenant-id (BOLA — the project's #1 risk). `?scope` is validated here; the result set is bounded by
+  // the store's default page size (the dashboard route does not expose `?limit`).
+  app.get('/api/evidence/bundles', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'evidence:read')) return c.json({ error: 'forbidden' }, 403);
+    const scopeParam = c.req.query('scope');
+    if (scopeParam !== undefined && scopeParam !== 'fleet' && scopeParam !== 'tenant') {
+      return c.json({ error: 'scope must be "fleet" or "tenant"' }, 400);
+    }
+    const manifests = await options.tf.evidenceList({
+      ...(scopeParam === 'fleet' || scopeParam === 'tenant' ? { scope: scopeParam } : {}),
+    });
+    return c.json({ manifests });
+  });
+
+  // A single signed evidence bundle (`{ bundle, jws }`) by id — for offline verification / download.
+  // Operator/fleet scope (`null`): the `:bundleId` is a non-guessable handle, never a tenant selector.
+  // A 404 (unknown or out-of-scope) reveals nothing about whether the id exists elsewhere.
+  app.get('/api/evidence/bundles/:bundleId', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    if (!can(principal, 'evidence:read')) return c.json({ error: 'forbidden' }, 403);
+    const signed = await options.tf.evidenceGet(c.req.param('bundleId'), null);
+    if (signed === null) return c.json({ error: 'not found' }, 404);
+    return c.json({ bundle: signed.bundle, jws: signed.jws });
+  });
+
+  // The evidence-bundle PUBLIC verification key (Ed25519 JWK). This is the deliberately *public* key
+  // an auditor uses to verify a bundle offline — no extra permission beyond a valid dashboard session
+  // (it carries no private material). 404 when no evidence-bundle signer is wired.
+  app.get('/api/evidence/public-key', async (c) => {
+    const principal = session(c);
+    if (principal === null) return c.json({ error: 'not authenticated' }, 401);
+    const jwk = await options.tf.evidenceBundlePublicKey();
+    if (jwk === null) return c.json({ error: 'no evidence-bundle signer is configured' }, 404);
+    return c.json({ publicKey: jwk });
+  });
+
   // Operator alert digest panel data (read-only roll-up of all detectors).
   app.get('/api/operator-digest', async (c) => {
     const principal = session(c);

@@ -70,6 +70,98 @@ export async function fetchCompliance(): Promise<{ report: ComplianceReport; dig
   return (await res.json()) as { report: ComplianceReport; digest: string };
 }
 
+/** Whether an evidence bundle covers the whole fleet or a single tenant (mirrors core EvidenceScope). */
+export type EvidenceScope = 'fleet' | 'tenant';
+
+/**
+ * The queryable index record for a persisted evidence bundle (mirrors core EvidenceManifest) —
+ * facts only, never the JWS body, never secrets, from GET /dashboard/api/evidence/bundles.
+ */
+export interface EvidenceManifestEntry {
+  bundleId: string;
+  scope: EvidenceScope;
+  tenantId?: string;
+  generatedAt: string;
+  storedAt: string;
+  signerKid: string;
+  contentHashes: {
+    inventory: string;
+    isolation: string;
+    residency: string;
+    auditExcerpt: string;
+    erasureCertificates: string;
+  };
+  retentionUntil?: string;
+}
+
+/**
+ * A signed evidence bundle (mirrors core SignedEvidenceBundle): the verified attestation facts plus
+ * the compact JWS authenticity anchor an auditor verifies offline with the public key. No secrets.
+ */
+export interface SignedEvidenceBundle {
+  bundle: {
+    scope: EvidenceScope;
+    tenantId?: string;
+    generatedAt: string;
+    artifacts: {
+      inventory: { total: number; byStatus: Record<string, number> };
+      isolation: {
+        compliant: boolean;
+        missingProject: string[];
+        sharedProjects: { neonProjectId: string; tenantIds: string[] }[];
+      };
+      residency: {
+        compliant: boolean;
+        allowedRegions: string[];
+        byJurisdiction: Record<string, number>;
+        violations: { tenantId: string; region: string; reason: string }[];
+      };
+      auditExcerpt: AuditEntry[];
+      erasureCertificates: string[];
+    };
+    contentHashes: EvidenceManifestEntry['contentHashes'];
+  };
+  jws: string;
+}
+
+/** A public JSON Web Key (Ed25519 / OKP) — public material only; never carries a private `d`. */
+export interface PublicJwk {
+  kty: string;
+  crv?: string;
+  x?: string;
+  kid?: string;
+  alg?: string;
+  use?: string;
+}
+
+/** Load persisted evidence-bundle manifests (facts only — never the JWS body). */
+export async function fetchEvidenceBundles(): Promise<EvidenceManifestEntry[]> {
+  const res = await fetch(`${BASE}/evidence/bundles`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Could not load evidence bundles');
+  return ((await res.json()) as { manifests: EvidenceManifestEntry[] }).manifests;
+}
+
+/** Fetch one signed evidence bundle by id (for offline verification / download). Null when unknown. */
+export async function fetchEvidenceBundle(bundleId: string): Promise<SignedEvidenceBundle | null> {
+  const res = await fetch(`${BASE}/evidence/bundles/${encodeURIComponent(bundleId)}`, {
+    credentials: 'include',
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('Could not load the evidence bundle');
+  return (await res.json()) as SignedEvidenceBundle;
+}
+
+/**
+ * Load the evidence-bundle public verification key (Ed25519 JWK), or null when no signer is wired.
+ * Public material only — the auditor uses it to verify a bundle's JWS offline.
+ */
+export async function fetchEvidencePublicKey(): Promise<PublicJwk | null> {
+  const res = await fetch(`${BASE}/evidence/public-key`, { credentials: 'include' });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('Could not load the evidence public key');
+  return ((await res.json()) as { publicKey: PublicJwk }).publicKey;
+}
+
 /** Operational severity (mirrors core DigestSeverity), ascending urgency. */
 export type DigestSeverity = 'ok' | 'info' | 'warning' | 'critical';
 

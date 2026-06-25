@@ -3,9 +3,10 @@
 - **Status:** Accepted (2026-06-25) — Phase 0 (design + threat model) + Phase 1 (signed compliance
   report) + Phase 2 (evidence bundle assembly + sign + verify, fleet + per-tenant) + Phase 3a
   (evidence-at-rest persistence: `EvidenceStore` + manifest index + retention + generate webhook) +
-  **Phase 3b (operator-only retrieval surface: CLI/HTTP/MCP + public-key endpoint, and the durable
-  pg-backed `EvidenceStore`)** implemented; the **dashboard panel is Phase 3c** (not built here) and
-  **tenant self-serve retrieval remains DEFERRED**
+  Phase 3b (operator-only retrieval surface: CLI/HTTP/MCP + public-key endpoint, and the durable
+  pg-backed `EvidenceStore`) + **Phase 3c (the operator dashboard panel — the human-facing web view)**
+  implemented. **Phase 3 (the evidence layer) is now complete end-to-end (library → CLI → HTTP → MCP →
+  dashboard).** **Tenant self-serve retrieval remains DEFERRED**
 - **Relates to:** [ADR-0010](0010-self-scoped-customer-portal-write-surface.md) (the EdDSA signing
   primitive this reuses), [ADR-0001](0001-database-per-tenant-physical-isolation.md) (physical isolation),
   [ADR-0004](0004-secret-and-money-ops-off-the-agent-surface.md) (surface gating)
@@ -230,13 +231,52 @@ retentionUntil? }`. **Facts only** — never the JWS body, never secrets/connect
   manifest facts + the public key** on MCP (`tf_evidence_list`, `tf_evidence_public_key`); **defer the
   full-body fetch** to the operator CLI/HTTP (consistent with ADR-0004's disclosure-risk principle).
 
-### Deferred (Phase 3c + tenant self-serve — not built here)
+### Phase 3c (implemented in this slice — the operator dashboard panel)
+
+- **Per-feature web view (the project's dashboard rule).** The evidence layer gains a browser-facing
+  **`EvidencePanel`** in the operator dashboard (Fleet section, beside `CompliancePanel`), so an
+  operator can _see_ stored evidence — not only call the CLI/HTTP/MCP surfaces. **Dashboard-only slice:**
+  no new core/port/store logic; it consumes the existing Phase 3b facade methods.
+- **Dashboard backend (sibling routes, same cookie-session auth).** Three read routes on the
+  `/dashboard` sub-app (`src/app/dashboard.ts`), mirroring the compliance route exactly — the signed,
+  HttpOnly, `SameSite=Strict` session cookie (no token in client storage), `can()` evaluated
+  server-side per route:
+  - `GET /dashboard/api/evidence/bundles` — list manifests (**facts only** — no JWS body), gated by
+    the same **`evidence:read`** permission as the HTTP API (admin+operator, **not** readonly → 403).
+  - `GET /dashboard/api/evidence/bundles/:bundleId` — fetch one signed bundle (`{ bundle, jws }`) at
+    **fleet scope (`null`)**; the `:bundleId` is a non-guessable handle, never a tenant selector (BOLA).
+    Unknown/out-of-scope → uniform 404.
+  - `GET /dashboard/api/evidence/public-key` — the Ed25519 **public** JWK (public material only; a
+    valid session suffices, no extra permission). 404 when no signer is wired.
+- **The panel (React, mirrors `CompliancePanel`).** Same `usePanelData` hook, `Panel` shell, accessible
+  tables, and status patterns:
+  - **List** of manifests in an accessible table (`<caption>`, `<th scope>`): bundleId (truncated),
+    scope, tenantId, generatedAt, storedAt, retentionUntil, signerKid, and a per-row **View** action.
+  - **View** loads the signed bundle and shows its manifest summary (inventory/isolation/residency
+    status, embedded-cert + audit-excerpt counts) plus the **signed JWS as a downloadable artifact**
+    (a read-only, labelled `<textarea>` + a "Download signed bundle" action — presented as an artifact,
+    not rendered as human content) so an auditor can **verify it offline**.
+  - **Public key** loaded on demand and offered as a labelled read-only block + a "Download public key"
+    action, with a note that it verifies bundles offline. **No private material** is ever shown.
+  - The async detail/key fetches use **`aria-live="polite"` status regions** (not color-only); a missing
+    bundle surfaces as a `role="alert"`. Downloads use a Blob object URL (CSP-safe — no `data:`/inline).
+- **No secrets in the bundle/build.** The panel ships only non-secret facts (the signed bundle + the
+  public JWK are non-secret by design — master §5); the dashboard backend reuses the operator
+  authenticator + `can()` (it never bypasses the dashboard session).
+- **A11y (acceptance criterion).** Semantic structure + landmarks (the existing skip-link / `<nav>` /
+  focus-managed `<main>`), one panel `<h2>` with a nested `<h3>` for the selected-bundle detail,
+  keyboard-operable controls with visible focus, labelled inputs, `aria-live` async regions, sufficient
+  contrast, no meaning-by-color. **Asserted by `vitest-axe`** in `dashboard/test/App.test.tsx` (the Fleet
+  section render + a dedicated view/download/public-key flow, both `expect((await axe(...)).violations)
+.toEqual([])`).
+
+### Deferred (tenant self-serve — not built here)
 
 - **Tenant self-serve retrieval.** A portal/tenant-facing "download my evidence" path
   (self-scoped). The store/API are **BOLA-ready** for it (the server-derived `tenantScope` already
   scopes `get`/`list`), but it is **DEFERRED and confirmed out of scope here** (locked decision #5).
-- **Phase 3c — dashboard panel.** The human-facing web view of stored evidence (per the per-feature
-  dashboard rule). **Deferred and confirmed out of scope here.**
+  A tenant-facing evidence panel would live in the **customer portal** (ADR-0010), not this operator
+  dashboard.
 
 ## Alternatives considered
 

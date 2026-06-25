@@ -339,6 +339,28 @@ code {
   padding: 0.05rem 0.3rem;
   font-size: 0.88em;
 }
+/* Read-only artifact block (an evidence-bundle JWS / public JWK) — monospaced, wraps, selectable. */
+.evidence-blob {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82em;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+  resize: vertical;
+}
+.evidence-detail {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+.evidence-detail h3 {
+  font-size: 1rem;
+  margin: 0 0 var(--sp-2);
+}
 
 /* ---- Status / errors ---- */
 .status {

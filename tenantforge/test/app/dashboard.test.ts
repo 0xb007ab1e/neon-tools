@@ -30,6 +30,32 @@ const app = () =>
   createHttpServer(
     fakeTf({
       complianceReport: async () => report as never,
+      evidenceList: async () =>
+        [
+          {
+            bundleId: 'evb-1',
+            scope: 'fleet',
+            generatedAt: 'x',
+            storedAt: 'y',
+            signerKid: 'kid-1',
+            contentHashes: {
+              inventory: 'h1',
+              isolation: 'h2',
+              residency: 'h3',
+              auditExcerpt: 'h4',
+              erasureCertificates: 'h5',
+            },
+          },
+        ] as never,
+      evidenceGet: async (bundleId: string, tenantScope: string | null) => {
+        // BOLA: the operator dashboard surface must always fetch at FLEET scope (`null`) — never a
+        // client-supplied tenant id. Lock that boundary at the dashboard layer (throws → 500 → fails).
+        expect(tenantScope).toBeNull();
+        return bundleId === 'evb-1'
+          ? ({ bundle: { scope: 'fleet', generatedAt: 'x' }, jws: 'a.b.c' } as never)
+          : null;
+      },
+      evidenceBundlePublicKey: async () => ({ kty: 'OKP', crv: 'Ed25519', x: 'pub', kid: 'kid-1' }),
       operatorDigest: async () =>
         ({ severity: 'ok', headline: 'ok: all clear', categories: [] }) as never,
       listWebhookSubscriptions: async () =>
@@ -101,6 +127,70 @@ describe('dashboard backend', () => {
     const data = await server.request('/dashboard/api/compliance', { headers: { cookie } });
     expect(data.status).toBe(200);
     expect(await data.json()).toEqual(report);
+  });
+
+  it('serves the evidence-bundle manifests, a single signed bundle, and the public key to a session', async () => {
+    const server = app();
+    const cookie = cookieOf(await login(server, TOKEN));
+
+    const list = await server.request('/dashboard/api/evidence/bundles', { headers: { cookie } });
+    expect(list.status).toBe(200);
+    const listBody = await list.json();
+    expect(listBody).toMatchObject({ manifests: [{ bundleId: 'evb-1', scope: 'fleet' }] });
+    // Facts only — never the JWS body in the list.
+    expect(JSON.stringify(listBody)).not.toContain('a.b.c');
+
+    const one = await server.request('/dashboard/api/evidence/bundles/evb-1', {
+      headers: { cookie },
+    });
+    expect(one.status).toBe(200);
+    expect(await one.json()).toEqual({
+      bundle: { scope: 'fleet', generatedAt: 'x' },
+      jws: 'a.b.c',
+    });
+
+    // An unknown id is a uniform 404 (reveals nothing).
+    const missing = await server.request('/dashboard/api/evidence/bundles/nope', {
+      headers: { cookie },
+    });
+    expect(missing.status).toBe(404);
+
+    const key = await server.request('/dashboard/api/evidence/public-key', { headers: { cookie } });
+    expect(key.status).toBe(200);
+    const keyBody = (await key.json()) as { publicKey: Record<string, unknown> };
+    expect(keyBody.publicKey).toMatchObject({ kty: 'OKP', crv: 'Ed25519' });
+    // The public key carries no private material (`d`).
+    expect(keyBody.publicKey.d).toBeUndefined();
+  });
+
+  it('rejects unauthenticated evidence panel data (401)', async () => {
+    const server = app();
+    expect((await server.request('/dashboard/api/evidence/bundles')).status).toBe(401);
+    expect((await server.request('/dashboard/api/evidence/bundles/evb-1')).status).toBe(401);
+    expect((await server.request('/dashboard/api/evidence/public-key')).status).toBe(401);
+  });
+
+  it('forbids evidence reads for a readonly session (403 — requires evidence:read)', async () => {
+    const server = createHttpServer(
+      fakeTf({
+        evidenceList: async () => [] as never,
+        evidenceGet: async () => null,
+        evidenceBundlePublicKey: async () => null,
+      }),
+      { credentials: [{ id: 'ro', role: 'readonly', token: 'ro-token' }], dashboardSecret: 's' },
+    );
+    const cookie = cookieOf(await login(server, 'ro-token'));
+    expect(
+      (await server.request('/dashboard/api/evidence/bundles', { headers: { cookie } })).status,
+    ).toBe(403);
+    expect(
+      (await server.request('/dashboard/api/evidence/bundles/evb-1', { headers: { cookie } }))
+        .status,
+    ).toBe(403);
+    // The public key is public — a session suffices (no evidence:read needed); 404 when unsigned.
+    expect(
+      (await server.request('/dashboard/api/evidence/public-key', { headers: { cookie } })).status,
+    ).toBe(404);
   });
 
   it('serves the operator-digest panel data to an authenticated session', async () => {
