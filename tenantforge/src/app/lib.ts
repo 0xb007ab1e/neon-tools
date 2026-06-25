@@ -50,6 +50,7 @@ import {
   buildComplianceReport,
   type ComplianceReport,
   type ComplianceReportOptions,
+  type SignedComplianceReport,
   type AuditQueryInput,
   type AnomalyThresholds,
   type AuditAnomaly,
@@ -92,6 +93,11 @@ import {
   createEd25519CertificateSigner,
   createEphemeralCertificateSigner,
 } from '../adapters/certificate-signer.js';
+import type { ComplianceReportSigner } from '../ports/compliance-report-signer.js';
+import {
+  createEd25519ComplianceReportSigner,
+  createEphemeralComplianceReportSigner,
+} from '../adapters/compliance-report-signer.js';
 import { createCachingConnectionRouter } from '../adapters/caching-connection-router.js';
 import {
   createRehomeEngine,
@@ -513,6 +519,17 @@ export interface TenantForgeDeps {
    * validates the key at startup (fail-fast) and, in non-prod only, generates an ephemeral key.
    */
   certificateSigner?: CertificateSigner;
+  /**
+   * **Cryptographic signer for compliance reports** (EdDSA/Ed25519 compact JWS; ADR-0011 Phase 1).
+   * When present, {@link TenantForge.signedComplianceReport} emits a **signed** report (the `.jws` an
+   * auditor verifies with `verifyComplianceReport` against {@link TenantForge.complianceReportPublicKey}).
+   * Absent ⇒ `signedComplianceReport` **fails closed** (no unsigned signed-report path). The plain,
+   * unsigned {@link TenantForge.complianceReport} does **not** require this signer — existing callers
+   * that consume the digest-only result are unaffected. The composition root validates the key at
+   * startup (fail-fast) and, in non-prod only, generates an ephemeral key. Reuses the Ed25519
+   * mechanism behind {@link certificateSigner} but is a **distinct purpose/kid** (not confusable).
+   */
+  complianceReportSigner?: ComplianceReportSigner;
   /** Erasure undo window (ms): how long a tenant may cancel a scheduled erasure. Defaults to 48h. */
   erasureUndoWindowMs?: number;
   /**
@@ -1248,6 +1265,35 @@ export interface TenantForge {
   complianceReport(): Promise<ComplianceReportResult>;
 
   /**
+   * Generate a point-in-time **signed compliance report** over the fleet — the same attestation as
+   * {@link TenantForge.complianceReport}, but with the integrity anchor upgraded to an **EdDSA
+   * (Ed25519) compact JWS** that an auditor can verify **offline with only the published public key**
+   * (`verifyComplianceReport` against {@link TenantForge.complianceReportPublicKey}) — ADR-0011 Phase 1
+   * of the compliance evidence layer. The legacy SHA-256 `digest` is retained alongside the `jws` for
+   * backward compatibility. The JWS uses a domain `typ`/`kid` distinct from the erasure certificate's,
+   * so the two artifact classes are never confusable.
+   *
+   * **Fails closed** if no compliance-report signer is configured (no unsigned signed-report path) —
+   * production requires `TENANTFORGE_COMPLIANCE_SIGNING_KEY` (validated at startup); non-prod with no
+   * key uses an ephemeral key (not verifiable across restarts). The plain {@link
+   * TenantForge.complianceReport} is unaffected and needs no signer.
+   *
+   * @returns The report, its JWS authenticity anchor, and the legacy SHA-256 digest.
+   * @throws Error if no compliance-report signer is configured.
+   */
+  signedComplianceReport(): Promise<SignedComplianceReport>;
+
+  /**
+   * The **public** verification key (Ed25519 JWK) for **compliance reports** — publish this to
+   * auditors so they can verify a signed report's `.jws` with `verifyComplianceReport`. Contains no
+   * private material. Distinct from {@link TenantForge.erasureCertificatePublicKey} (different
+   * purpose/kid), though both may be backed by the same physical key.
+   *
+   * @returns The public Ed25519 JWK, or `null` when no compliance-report signer is configured.
+   */
+  complianceReportPublicKey(): Promise<import('jose').JWK | null>;
+
+  /**
    * **Query the audit trail** — the general, filterable view over the operator-attributed,
    * append-only control-plane event stream (who-did-what-when; NIST AU / SOC2 / OWASP A09). Filter
    * by event name(s), tenant, and a `since` lower bound; results are newest-first and bounded
@@ -1926,6 +1972,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const { registry, provisioning, defaultRegion, secretStore, exporter, migrationRunner } = deps;
   const usageProvider = deps.usageProvider;
   const certificateSigner = deps.certificateSigner;
+  const complianceReportSigner = deps.complianceReportSigner;
   const allowedRegions = deps.allowedRegions ?? [];
   const baseRouter = createConnectionRouter({ registry, secretStore });
   // Optional process-local resolution cache (control-plane cost at fleet scale). When enabled, the
@@ -2042,6 +2089,43 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       ...(fields.context !== undefined ? { context: redactSecrets(fields.context) } : {}),
       ...(fields.error !== undefined ? { error: fields.error } : {}),
     });
+  };
+
+  /**
+   * Assemble the point-in-time compliance report + its SHA-256 integrity digest from the registry
+   * (and the audit store when wired). Shared by {@link TenantForge.complianceReport} (unsigned) and
+   * {@link TenantForge.signedComplianceReport} (which adds the JWS over the same canonical bytes), so
+   * the report content + digest are byte-identical across both surfaces. Emits the
+   * `compliance.report_generated` audit event (unchanged behaviour for existing callers).
+   */
+  const assembleComplianceReport = async (): Promise<ComplianceReportResult> => {
+    const tenants = await registry.list({ limit: MAX_SWEEP });
+    // When an audit store is wired, attest erasure history (transitions to `deleted` — the
+    // right-to-erasure evidence) plus a recent excerpt of control-plane activity.
+    let audit: ComplianceReportOptions['audit'];
+    if (auditLog !== undefined) {
+      const transitions = await auditLog.query({ events: ['tenant.transition'], limit: 500 });
+      const erasures = transitions.filter((e) => e.context?.['to'] === 'deleted');
+      const recent = await auditLog.query({ limit: 25 });
+      audit = { erasures, recent };
+    }
+    const report = buildComplianceReport(tenants, {
+      allowedRegions,
+      now: new Date(),
+      ...(audit !== undefined ? { audit } : {}),
+    });
+    // Integrity anchor over the canonical report JSON (deterministic field order from the builder).
+    const digest = createHash('sha256').update(JSON.stringify(report)).digest('hex');
+    observe('compliance.report_generated', {
+      outcome: report.isolation.compliant && report.residency.compliant ? 'ok' : 'error',
+      context: {
+        digest,
+        tenants: report.inventory.total,
+        isolationCompliant: report.isolation.compliant,
+        residencyCompliant: report.residency.compliant,
+      },
+    });
+    return { report, digest };
   };
 
   /** Load a tenant by id or throw (offboard/suspend operate on a known tenant). */
@@ -3613,24 +3697,21 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     },
 
     async complianceReport(): Promise<ComplianceReportResult> {
-      const tenants = await registry.list({ limit: MAX_SWEEP });
-      // When an audit store is wired, attest erasure history (transitions to `deleted` — the
-      // right-to-erasure evidence) plus a recent excerpt of control-plane activity.
-      let audit: ComplianceReportOptions['audit'];
-      if (auditLog !== undefined) {
-        const transitions = await auditLog.query({ events: ['tenant.transition'], limit: 500 });
-        const erasures = transitions.filter((e) => e.context?.['to'] === 'deleted');
-        const recent = await auditLog.query({ limit: 25 });
-        audit = { erasures, recent };
+      return assembleComplianceReport();
+    },
+
+    async signedComplianceReport(): Promise<SignedComplianceReport> {
+      // Fail closed without a signer — there is no unsigned "signed report" path (the JWS IS the
+      // product; mirrors the always-signed erasure discipline — master §2 fail-closed / ADR-0011).
+      if (complianceReportSigner === undefined) {
+        throw new Error(
+          'signedComplianceReport: no compliance-report signer configured (set TENANTFORGE_COMPLIANCE_SIGNING_KEY)',
+        );
       }
-      const report = buildComplianceReport(tenants, {
-        allowedRegions,
-        now: new Date(),
-        ...(audit !== undefined ? { audit } : {}),
-      });
-      // Integrity anchor over the canonical report JSON (deterministic field order from the builder).
-      const digest = createHash('sha256').update(JSON.stringify(report)).digest('hex');
-      observe('compliance.report_generated', {
+      const { report, digest } = await assembleComplianceReport();
+      // Authenticity anchor: EdDSA JWS over the SAME canonical report bytes the digest covers.
+      const jws = await complianceReportSigner.signReport(report);
+      observe('compliance.report_signed', {
         outcome: report.isolation.compliant && report.residency.compliant ? 'ok' : 'error',
         context: {
           digest,
@@ -3639,7 +3720,11 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
           residencyCompliant: report.residency.compliant,
         },
       });
-      return { report, digest };
+      return { report, jws, digest };
+    },
+
+    async complianceReportPublicKey(): Promise<import('jose').JWK | null> {
+      return complianceReportSigner === undefined ? null : complianceReportSigner.publicKeyJwk();
     },
 
     async queryAudit(query: AuditQueryInput = {}): Promise<TenantEvent[]> {
@@ -4513,6 +4598,37 @@ export async function buildCertificateSigner(config: Config): Promise<Certificat
 }
 
 /**
+ * Build the compliance-report signer from config (ADR-0011 Phase 1). Mirrors
+ * {@link buildCertificateSigner} discipline exactly: a configured Ed25519 key → a real signer (fails
+ * fast on malformed material); a **non-production** context with no key → an **ephemeral** keypair
+ * (stderr warning; not verifiable across restarts).
+ *
+ * Production with no key fails closed **here, independently** of {@link loadConfig}'s validation
+ * (defense in depth / complete mediation — the guard must not be action-at-a-distance). Exported so
+ * the guard is directly testable against a `Config` that bypasses `loadConfig`/superRefine.
+ *
+ * @param config - Validated configuration.
+ * @returns The compliance-report signer.
+ * @throws Error if production has no key, or a configured key is malformed (startup fail-fast).
+ */
+export async function buildComplianceReportSigner(config: Config): Promise<ComplianceReportSigner> {
+  if (config.complianceSigningKey !== undefined) {
+    return createEd25519ComplianceReportSigner({ privateKey: config.complianceSigningKey });
+  }
+  if (config.env === 'production') {
+    throw new Error(
+      'refusing an ephemeral compliance-signing key in production: set TENANTFORGE_COMPLIANCE_SIGNING_KEY',
+    );
+  }
+  process.stderr.write(
+    `[tenantforge] WARNING: TENANTFORGE_COMPLIANCE_SIGNING_KEY is not set (TENANTFORGE_ENV=${config.env}). ` +
+      `Generating an EPHEMERAL Ed25519 compliance-signing key for this process — NON-PRODUCTION ONLY. ` +
+      `Signed reports are NOT verifiable across restarts. Set a real key for any persistent deployment.\n`,
+  );
+  return createEphemeralComplianceReportSigner();
+}
+
+/**
  * Build a {@link TenantForge} wired to the production adapters (Neon API + Postgres registry) from
  * validated configuration. This is the production composition root.
  *
@@ -4533,6 +4649,8 @@ export async function tenantForgeFromConfig(
   // time). Always-signed: a configured key → Ed25519 signer; in non-prod with no key → an EPHEMERAL
   // keypair (with a clear warning). Production with no key is already rejected by loadConfig.
   const certificateSigner = await buildCertificateSigner(config);
+  // The compliance-report signer (ADR-0011) — same fail-fast discipline, distinct key/purpose.
+  const complianceReportSigner = await buildComplianceReportSigner(config);
   const registry = createPgTenantRegistry({
     connectionString: config.databaseUrl,
     allowInsecure: allowInsecureDb,
@@ -4666,6 +4784,7 @@ export async function tenantForgeFromConfig(
     provisioning,
     secretStore,
     certificateSigner,
+    complianceReportSigner,
     migrationRunner: createPgMigrationRunner({ allowInsecure: allowInsecureDb }),
     exporter,
     eventSink,

@@ -8,6 +8,24 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Signed, independently-verifiable compliance reports** — Phase 1 of the **compliance & governance
+  evidence layer** (ADR-0011; threat-model **B9**). The fleet compliance report's integrity anchor is
+  upgraded from a bare SHA-256 digest to an **EdDSA (Ed25519) compact JWS** over the same canonical
+  report JSON, so an auditor can verify it **offline with only the published public key**. New
+  `TenantForge.signedComplianceReport()` (returns `{ report, jws, digest }`) and
+  `complianceReportPublicKey()`; a new `ComplianceReportSigner` port +
+  `createEd25519ComplianceReportSigner` adapter (loads a PKCS#8 PEM or private JWK from
+  `TENANTFORGE_COMPLIANCE_SIGNING_KEY`) that **reuses the Ed25519 mechanism** behind the erasure
+  `CertificateSigner` but under a **distinct purpose** — a distinct `typ`
+  (`application/compliance-report+jws`) + `kid`, so the two artifact classes are never confusable
+  (cross-type confusion — std-cwe). A pure `verifyComplianceReport(jws, publicJwk)` **pins EdDSA** on
+  verify (rejects `alg:none`/`HS*`/non-EdDSA — CWE-347), checks the domain `typ`, and allow-list-
+  validates the report shape (fail closed). **Always-signed:** `signedComplianceReport()` fails closed
+  without a signer; production **requires** `TENANTFORGE_COMPLIANCE_SIGNING_KEY` (validated at
+  startup), non-prod with no key uses an ephemeral key (warned; not verifiable across restarts). The
+  unsigned `complianceReport()` (digest-only) is **unchanged** — existing callers are unaffected. The
+  evidence bundle, per-tenant scoping, persistence, and retrieval surface are deferred to Phase 2/3.
+
 - **Cryptographically signed, verifiable erasure certificates** (GDPR Art. 17 evidence;
   threat-model **B8w**, ADR-0010). Every erasure now emits an **EdDSA (Ed25519) compact JWS** over the
   certificate claims (via `jose` — no hand-rolled crypto). New `CertificateSigner` port +
