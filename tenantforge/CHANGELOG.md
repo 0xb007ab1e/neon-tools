@@ -8,6 +8,14 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Postgres-backed `PendingErasureStore`** (`TENANTFORGE_PENDING_ERASURE_STORE=pg`, migration 0012
+  `tf_pending_erasures`) — the erasure undo-window now survives process restarts and its cancel/claim
+  flips are atomic **across replicas** (each is a single SQL conditional `UPDATE … WHERE
+status='pending'` whose rowcount decides the single winner), satisfying the multi-replica/durability
+  prerequisite for enabling `TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE` in production (threat-model
+  **B8w** / red-team F2, ADR-0010). Default remains `memory`; the destructive portal flag stays OFF by
+  default. PII (`tenant_email`, `reason`) is cleared on the terminal transition (data minimization, L3).
+
 - **Customer self-serve portal write surface (Phase 1 — backend).** The customer portal
   (`/portal`) gains self-serve **own-account** JSON endpoints alongside its read-only page
   (ADR-0010 amends ADR-0004; threat-model **B8w**). MINOR — additive.

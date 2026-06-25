@@ -69,6 +69,14 @@ customer portal only.
   every feature). Cross-tenant **mutation** attempts join the abuse-test suite (threat-model B8w).
 - Revisit if the portal ever needs to act beyond the calling tenant (it must not) or if a customer
   action gains operator-level blast radius (it must not).
+- **Durability/multi-replica prerequisite now satisfiable.** With `TENANTFORGE_PENDING_ERASURE_STORE=pg`
+  (migration 0012, `tf_pending_erasures`) each undo-window cancel/claim flip is a single SQL conditional
+  `UPDATE … WHERE status='pending'` whose rowcount decides the winner, so the at-most-once invariant
+  holds **across replicas and survives restarts** (not only within one single-threaded process, as the
+  in-memory adapter did). This removes the operational blocker on flipping
+  `TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE` in a multi-replica/restart-sensitive deployment — the flag
+  itself remains a separate, default-OFF go/no-go decision, and CI must exercise the integration suite
+  (a skipped suite counts as failure) for the cross-replica guarantee to be relied upon.
 
 ## Dashboard parity (per-feature web-view rule)
 

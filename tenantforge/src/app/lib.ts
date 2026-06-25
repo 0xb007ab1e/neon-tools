@@ -168,6 +168,7 @@ import { createInMemorySignupRequestStore } from '../adapters/signup-request-sto
 import { createPgSignupRequestStore } from '../adapters/neon-pg/signup-request-store.js';
 import { createInMemoryOneTimeCodeStore } from '../adapters/one-time-code-store.js';
 import { createInMemoryPendingErasureStore } from '../adapters/pending-erasure-store.js';
+import { createPgPendingErasureStore } from '../adapters/neon-pg/pending-erasure-store.js';
 import { createPgMessageQueue } from '../adapters/neon-pg/message-queue.js';
 import { createPgWebhookSubscriptionStore } from '../adapters/neon-pg/webhook-subscription-store.js';
 import { createSubscriptionWebhookEventSink } from '../adapters/subscription-webhook-event-sink.js';
@@ -4652,11 +4653,21 @@ export function tenantForgeFromConfig(
           }),
         }
       : {}),
-    // Self-serve portal step-up + erasure-undo stores (no external deps; in-memory by default —
-    // single-instance correct, swap a Postgres-backed adapter for multi-replica). The portal's
-    // destructive actions ship behind a feature flag (ADR-0010 / red-team F6) regardless.
+    // Self-serve portal step-up + erasure-undo stores. The step-up code store is in-memory (short-
+    // lived second-factor codes; per-instance is acceptable). The pending-erasure store selects
+    // `pg` (durable + cross-replica — the cancel/claim flips are atomic SQL conditional updates that
+    // hold across replicas and survive restarts) or `memory` (default; single-instance correct).
+    // `pg` is the operational prerequisite for flipping TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE on
+    // in multi-replica / restart-sensitive production (ADR-0010 / threat-model B8w / red-team F2);
+    // the destructive actions ship behind that feature flag (OFF by default) regardless.
     oneTimeCodeStore: createInMemoryOneTimeCodeStore(),
-    pendingErasureStore: createInMemoryPendingErasureStore(),
+    pendingErasureStore:
+      config.pendingErasureStore === 'pg'
+        ? createPgPendingErasureStore({
+            connectionString: config.databaseUrl,
+            allowInsecure: allowInsecureDb,
+          })
+        : createInMemoryPendingErasureStore(),
     ...(config.stepUpCodeTtlMs !== undefined ? { stepUpCodeTtlMs: config.stepUpCodeTtlMs } : {}),
     ...(config.erasureUndoWindowMs !== undefined
       ? { erasureUndoWindowMs: config.erasureUndoWindowMs }
