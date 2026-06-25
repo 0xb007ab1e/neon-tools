@@ -16,9 +16,6 @@ import type { CertificateSigner } from '../ports/certificate-signer.js';
 /** A private signing key as accepted by `jose`: a `CryptoKey`/`KeyObject` (the Ed25519 private key). */
 export type Ed25519PrivateKey = CryptoKey | KeyObject;
 
-/** @deprecated Internal alias retained for the original erasure signer; prefer {@link Ed25519PrivateKey}. */
-type PrivateKey = Ed25519PrivateKey;
-
 /** Options for {@link createEd25519CertificateSigner}. */
 export interface Ed25519CertificateSignerOptions {
   /**
@@ -100,7 +97,7 @@ export async function generateEphemeralEd25519(): Promise<{
  * Build a {@link CertificateSigner} from a key + its public JWK — the shared signer construction for
  * both the configured and the dev-ephemeral paths.
  */
-function signerFrom(key: PrivateKey, publicJwk: JWK): CertificateSigner {
+function signerFrom(key: Ed25519PrivateKey, publicJwk: JWK): CertificateSigner {
   // Freeze the published public JWK so a caller can't mutate the shared object.
   const frozenPublic: JWK = Object.freeze({ ...publicJwk });
   return {

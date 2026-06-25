@@ -1,0 +1,23 @@
+# gitleaks configuration for neon-tools.
+#
+# Extends the full upstream default ruleset (so every built-in detector stays active — this is
+# NOT a relaxation of secret scanning) and adds a single, narrowly-scoped allowlist for a
+# confirmed false positive.
+#
+# The entropy-based `generic-api-key` rule matches the public TypeScript type identifier
+# `Ed25519PrivateKey` (17 alphanumeric chars sitting immediately after `key:` / `=`) in
+# tenantforge's signing adapters. It is a type name, not key material — no secret is present
+# (the actual keys are injected at runtime from the secret manager; only ephemeral dev keys are
+# generated in-process, never committed). Allowlisting the literal identifier cannot mask a real
+# secret. See tenantforge/src/adapters/certificate-signer.ts and compliance-report-signer.ts.
+
+title = "neon-tools gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Confirmed false positives: public type identifiers flagged by the entropy heuristic."
+regexes = [
+  '''Ed25519PrivateKey''',
+]
