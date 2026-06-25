@@ -22,6 +22,10 @@ export default {
     'src/core/cost-anomaly.ts', // FinOps anomaly classification
     'src/core/dunning.ts', // retry / suspend decisions
     'src/core/authz.ts', // role → permission authorization
+    'src/core/erasure.ts', // GDPR erasure certificate + verified post-conditions (privacy/data-handling)
+    'src/core/signup-request.ts', // self-serve signup state + one-time connection-reveal gate
+    'src/core/signup-token.ts', // signup-token status / redeemability logic
+    'src/core/email-verification.ts', // emailed-code verification (identity)
   ],
   reporters: ['clear-text', 'progress', 'html'],
   htmlReporter: { fileName: 'reports/mutation/index.html' },

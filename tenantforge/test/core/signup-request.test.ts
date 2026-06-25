@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canRevealConnection } from '../../src/core/signup-request.js';
+import { canRevealConnection, SIGNUP_REQUEST_STATUSES } from '../../src/core/signup-request.js';
 import type { SignupRequestRecord } from '../../src/core/signup-request.js';
 
 const base: SignupRequestRecord = {
@@ -9,6 +9,19 @@ const base: SignupRequestRecord = {
   createdAt: '2026-06-01T00:00:00.000Z',
   updatedAt: '2026-06-01T00:00:00.000Z',
 };
+
+describe('SIGNUP_REQUEST_STATUSES', () => {
+  it('is the ordered funnel-state list (operator panel + validation depend on the exact values/order)', () => {
+    expect(SIGNUP_REQUEST_STATUSES).toEqual([
+      'started',
+      'email_verified',
+      'payment_ready',
+      'provisioning',
+      'active',
+      'failed',
+    ]);
+  });
+});
 
 describe('canRevealConnection', () => {
   it('allows reveal when active and not yet revealed', () => {
