@@ -26,3 +26,4 @@ export type {
   PendingErasureRecord,
   PendingErasureStatus,
 } from './pending-erasure-store.js';
+export type { EvidenceStore, EvidencePutOptions } from './evidence-store.js';

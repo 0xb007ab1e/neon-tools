@@ -1,8 +1,10 @@
 # ADR 0011 — Compliance & governance evidence layer
 
 - **Status:** Accepted (2026-06-25) — Phase 0 (design + threat model) + Phase 1 (signed compliance
-  report) + **Phase 2 (evidence bundle assembly + sign + verify, fleet + per-tenant)** implemented;
-  persistence / retrieval surface / public-key endpoint / webhook / dashboard panel are Phase 3 (not built)
+  report) + Phase 2 (evidence bundle assembly + sign + verify, fleet + per-tenant) + **Phase 3a
+  (evidence-at-rest persistence: `EvidenceStore` + manifest index + retention + generate webhook)**
+  implemented; the **access-controlled retrieval surface (CLI/HTTP/MCP + public-key endpoint) is Phase
+  3b** and the **dashboard panel is Phase 3c** (neither built here)
 - **Relates to:** [ADR-0010](0010-self-scoped-customer-portal-write-surface.md) (the EdDSA signing
   primitive this reuses), [ADR-0001](0001-database-per-tenant-physical-isolation.md) (physical isolation),
   [ADR-0004](0004-secret-and-money-ops-off-the-agent-surface.md) (surface gating)
@@ -116,12 +118,69 @@ auditExcerpt, erasureCertificates: string[] }, contentHashes }`. A single, audit
 - **No new HTTP/CLI/MCP/dashboard surface in this slice** — the facade method is added so the assembly
   - signing is testable now; the retrieval surface + access control are Phase 3.
 
-### Deferred (Phase 3 — not built here)
+### Phase 3a (implemented in this slice — persistence foundation)
 
-- **Phase 3 — persistence + retrieval + surfaces.** An `EvidenceStore` (object-store-backed,
-  tenant-scoped non-guessable keys), CLI/HTTP retrieval (operator, **no cross-tenant** — BOLA on
-  _fetch_; the _content_ is already scoped in Phase 2), public-key publication endpoint, retention, a
-  generate webhook, and the dashboard panel. **Deferred and confirmed out of scope for this slice.**
+- **`EvidenceManifest`** (pure core, `core/evidence-manifest.ts`) — the **queryable index record** for
+  a persisted bundle: `{ bundleId, scope, tenantId?, generatedAt, storedAt, signerKid, contentHashes,
+retentionUntil? }`. **Facts only** — never the JWS body, never secrets/connection URIs (master §5),
+  the same discipline as the bundle it indexes. Retention math is pure (`evidenceRetentionUntil`,
+  `isEvidenceExpired`) so every adapter agrees on eligibility (mutation-tested — `stryker.config.mjs`).
+- **`EvidenceStore` port** (`ports/evidence-store.ts`) — `put(signed, opts) → EvidenceManifest`,
+  `get(bundleId, tenantScope) → SignedEvidenceBundle | null`, `list(filter) → EvidenceManifest[]`,
+  `pruneExpired(now, limit?) → number`.
+  - **Non-guessable, tenant-scoped keys.** A `bundleId` is **128 bits of CSPRNG entropy**
+    (`mintEvidenceBundleId`), **never sequential/predictable** — a stored bundle can't be enumerated
+    by guessing ids (the **F7/L3 lesson**). For a per-tenant bundle the manifest's `tenantId` (taken
+    from the bundle's own server-derived id) makes the key/index tenant-scoped, so **Phase 3b's authz
+    can enforce ownership** (BOLA on fetch).
+  - **Access control is enforced at the 3b surface, not the store (BOUNDARY NOTE).** This port is a
+    **low-level capability**: `get`/`list` exist so 3b can be built on it, but in this slice they are
+    **not surfaced outward** (no CLI/HTTP/MCP read of a bundle). The store does **not decide who may
+    ask** — that is 3b's job. To stop 3b accidentally bypassing per-tenant ownership, `get` **still
+    takes a `tenantScope` argument**: a tenant-scoped fetch (`tenantScope = <tenantId>`) returns a
+    bundle iff it is that tenant's; `tenantScope = null` is the operator/fleet scope. A tenant-scoped
+    fetch of another tenant's (or a fleet) bundle returns `null` — the store-level half of BOLA
+    defense (complete mediation / defense in depth, even though the store doesn't authorize).
+- **Adapters.** An **in-memory** store (`adapters/evidence-store.ts`; dev/test, mirrors the
+  pending-erasure memory store) and an **object-store-backed** store
+  (`adapters/object-store-evidence-store.ts`) built on the **existing `ObjectStore` port** — the same
+  seam the off-Neon archive tier uses. It writes the signed bundle body durably at rest under a
+  **non-guessable, tenant-scoped key** (`{prefix}/{tenant|fleet}/{bundleId}.jws.json`) and keeps the
+  manifest index for `get`/`list`/`pruneExpired`. **Encrypt-at-rest is the object store's concern**
+  (S3/GCS SSE / KMS-backed bucket / encrypted volume) — the body carries no secrets regardless.
+  Config-selected via **`TENANTFORGE_EVIDENCE_STORE`** (`memory` default; `object-store` requires
+  `TENANTFORGE_EXPORT_DIR`), mirroring `TENANTFORGE_PENDING_ERASURE_STORE`. (The `ObjectStore` port is
+  **write-only** (`put`) — the archive-tier precedent where retrieval is the store's own
+  console/lifecycle — so this adapter keeps the index + a body copy in-process and writes the body
+  durably; a future read-capable object-store port, or a Postgres manifest index mirroring the
+  pending-erasure pg adapter, can make `get`/`list` survive a restart from the durable objects alone.)
+- **Persist-on-generate (deliberate, fail-closed).** `TenantForge.evidenceBundle(...)` now returns the
+  persisted **`manifest`** alongside `{ bundle, jws }` when an evidence store is wired (additive —
+  **non-breaking**: callers reading `{ bundle, jws }` are unaffected). **Without a store, generation
+  still succeeds** (returns the signed bundle, `manifest` omitted) and does **not** silently claim
+  persistence (master §2 — explicit, never implicit). With a store, a **persist failure fails the
+  call** (fail closed — an auditor must not believe a bundle is durably stored when it is not).
+- **Retention.** A default window (`TENANTFORGE_EVIDENCE_RETENTION_DAYS`, `0` ⇒ **indefinite** — the
+  conservative data-lifecycle default for evidence) sets each manifest's `retentionUntil`.
+  `TenantForge.evidencePrune(...)` is the scheduled retention sweep (idempotent, batched), wired
+  alongside the existing sweeps (`purgeExpired`/`erasureSweep`). A persistence-side **CLI
+  `evidence-prune`** (Phase 3b/ops wiring) is the acceptable persistence-side surface — there is **no
+  retrieval CLI** here. (Object-store body deletion is the object store's own lifecycle policy — the
+  write-only port exposes no delete, exactly as the archive tier documents.)
+- **Generate webhook.** Persisting emits a `compliance.evidence_bundle_persisted` event that fans out
+  to managed webhook subscriptions via the **existing webhooks port** (mirroring erasure/DSAR
+  notifications). The payload is **manifest facts only** (`bundleId`/`scope`/`tenantId`/`generatedAt`/
+  `storedAt`/`retentionUntil`) — **never the bundle body or any secret** (master §5).
+
+### Deferred (Phase 3b / 3c — not built here)
+
+- **Phase 3b — retrieval surface + access control.** CLI/HTTP retrieval of a stored bundle
+  (operator-only v1, **no cross-tenant** — BOLA on _fetch_; the _content_ is scoped from Phase 2 and
+  the _key/index_ from Phase 3a), MCP read-only, and the **public-key publication endpoint**. The
+  access-control decision (which scope a caller gets) lives here — the Phase 3a store only enforces the
+  scope it is **told** to (`get(bundleId, tenantScope)`). **Deferred and confirmed out of scope here.**
+- **Phase 3c — dashboard panel.** The human-facing web view of stored evidence (per the per-feature
+  dashboard rule). **Deferred and confirmed out of scope here.**
 
 ## Alternatives considered
 
