@@ -64,6 +64,17 @@ export interface PortalOptions {
    */
   enableDestructiveActions?: boolean;
   /**
+   * Enable the **self-serve compliance-evidence** surface (ADR-0011 Phase 3d / threat-model B8e): a
+   * tenant lists/downloads its **own** signed evidence bundles + the public key, and may
+   * **self-generate** its own current bundle. Defaults to **false** — a benign **default-OFF rollout
+   * flag** for staged rollout of a new customer-facing surface. It is **read-only/non-destructive**
+   * (server-scoped assembly + sign + persist), so it is **independent of**
+   * {@link PortalOptions.enableDestructiveActions} (which gates only cancel + erasure) — the two flags
+   * must never be entangled. The routes only exist when this is true (an SPA that respects the
+   * advertised capability never renders a control that would 404).
+   */
+  enableEvidence?: boolean;
+  /**
    * Stripe **publishable** key (public; handed to the browser for Stripe Elements). Surfaced via
    * `GET /api/config` and on the setup-intent response so the SPA can load Stripe.js with it. Optional:
    * when unset, the payment-method view degrades gracefully (the server still fails closed on the
@@ -404,7 +415,13 @@ ${receiptsTable(receipts)}
  * endpoint-level idempotent, and the two destructive actions (cancel, erasure) require a control-plane
  * second-factor and ship behind {@link PortalOptions.enableDestructiveActions} (OFF by default).
  *
- * @param options - The service, tenant authenticator, session secret, and optional ttl/clock/stores/flag.
+ * A separate, **read-only** self-serve **compliance-evidence** surface (ADR-0011 Phase 3d /
+ * threat-model B8e) lets a tenant list/download its **own** signed evidence bundles + the public key
+ * and **self-generate** its own current bundle — behind the benign {@link PortalOptions.enableEvidence}
+ * rollout flag (OFF by default), **independent** of the destructive flag. Like every other read, the
+ * tenant scope is the server-derived session tenant, so a tenant reaches only its own evidence.
+ *
+ * @param options - The service, tenant authenticator, session secret, and optional ttl/clock/stores/flags.
  * @returns A Hono sub-app (mount it under `/portal`).
  */
 export function createPortal(options: PortalOptions): Hono {
@@ -614,6 +631,11 @@ export function createPortal(options: PortalOptions): Hono {
   // it's true, so an SPA that respects this never renders a button that would 404. This advertises the
   // capability — it does NOT change any gating: the server still flag-gates the routes independently.
   const destructiveActions = options.enableDestructiveActions === true;
+  // Whether the self-serve compliance-evidence surface is advertised (ADR-0011 Phase 3d / B8e). A
+  // benign, default-OFF rollout flag — INDEPENDENT of `destructiveActions` (evidence is non-destructive).
+  const evidence = options.enableEvidence === true;
+  /** The advertised SPA capabilities (public; no tenant/secret) — both rollout flags. */
+  const features = { destructiveActions, evidence };
 
   /** Mint the session cookie + return the SPA's session view (shared by both login paths). */
   const grantSession = (c: Context, tenantId: string): Response => {
@@ -624,7 +646,7 @@ export function createPortal(options: PortalOptions): Hono {
       path: '/portal',
       maxAge: Math.floor(ttlMs / 1000),
     });
-    return c.json({ tenantId, features: { destructiveActions } });
+    return c.json({ tenantId, features });
   };
 
   // Public SPA config: the Stripe publishable key (public), advertised capabilities, and which login
@@ -633,7 +655,7 @@ export function createPortal(options: PortalOptions): Hono {
   app.get('/api/config', (c) =>
     c.json({
       ...(options.publishableKey !== undefined ? { publishableKey: options.publishableKey } : {}),
-      features: { destructiveActions },
+      features,
       auth: { mode: options.codeFlow !== undefined ? 'oidc' : 'token' },
     }),
   );
@@ -713,12 +735,12 @@ export function createPortal(options: PortalOptions): Hono {
     return grantSession(c, principal.tenantId);
   });
 
-  // Who am I (the SPA checks this on load) — 401 without a valid session; carries the capability flag.
+  // Who am I (the SPA checks this on load) — 401 without a valid session; carries the capability flags.
   app.get('/api/session', (c) => {
     const tenantId = session(c);
     return tenantId === null
       ? c.json({ error: 'not authenticated' }, 401)
-      : c.json({ tenantId, features: { destructiveActions } });
+      : c.json({ tenantId, features });
   });
 
   // Logout (SPA): clear the session cookie.
@@ -1014,6 +1036,95 @@ export function createPortal(options: PortalOptions): Hono {
       const tenantId = requireTenant(c);
       if (tenantId === null) return c.json({ error: 'not authenticated' });
       return c.json({ pending: await options.tf.pendingErasure(tenantId) });
+    });
+  }
+
+  // ---- Self-serve compliance evidence (ADR-0011 Phase 3d / threat-model B8e) ----------------------
+  // STRICTLY SELF-SCOPED: the tenant id is the SERVER-DERIVED session tenant, passed to the store as
+  // the scope on EVERY call — never `null`/fleet, never a client-supplied parameter. The store
+  // (`evidenceGet`/`evidenceList`) refuses another tenant's (or a fleet) bundle under a tenant scope
+  // (B10a), so a tenant can only ever list/download/generate its OWN evidence (BOLA — the project's #1
+  // risk). The `:bundleId` is a non-guessable handle, NEVER a tenant selector. Behind the benign,
+  // default-OFF `enableEvidence` rollout flag — INDEPENDENT of the destructive flag (this is
+  // non-destructive). The public-key endpoint stays available regardless (it serves a PUBLIC key).
+  if (options.enableEvidence === true) {
+    // The Ed25519 PUBLIC verification key — public material only, so a valid session suffices and no
+    // body/secret is exposed (the facade returns the public JWK; a private `d` is never present). 404
+    // when no signer is configured (the SPA degrades gracefully). Mirrors the operator/dashboard route.
+    app.get('/api/evidence/public-key', async (c) => {
+      const tenantId = requireTenant(c);
+      if (tenantId === null) return c.json({ error: 'not authenticated' });
+      const jwk = await options.tf.evidenceBundlePublicKey();
+      return jwk === null
+        ? c.json({ error: 'no evidence-bundle signer is configured' }, 404)
+        : c.json({ publicKey: jwk });
+    });
+
+    // List MY evidence-bundle manifests (FACTS ONLY — no JWS body). The store filter's `tenantId` is
+    // the SERVER-DERIVED session tenant, so the list can only ever contain this tenant's manifests
+    // (it can never enumerate another tenant's). `?limit` is validated (positive int → 400) and the
+    // store clamps it (DoS bound). Empty `[]` when no evidence store is wired (fail soft).
+    app.get('/api/evidence', async (c) => {
+      const tenantId = requireTenant(c);
+      if (tenantId === null) return c.json({ error: 'not authenticated' });
+      const limitParam = c.req.query('limit');
+      const limit = limitParam === undefined ? undefined : Number(limitParam);
+      if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+        return c.json({ error: 'limit must be a positive integer' }, 400);
+      }
+      try {
+        // tenantId is the SESSION tenant — this is the BOLA defense (server-derived scope, not input).
+        const manifests = await options.tf.evidenceList({
+          tenantId,
+          ...(limit !== undefined ? { limit } : {}),
+        });
+        return c.json({ manifests });
+      } catch (e) {
+        return fail(c, e);
+      }
+    });
+
+    // Self-GENERATE my own current evidence bundle (read-only assembly + sign + persist, scoped to the
+    // SESSION tenant). Non-destructive, but state-changing at the store → CSRF-protected + rate-limited
+    // like every other portal mutation. Independent of the destructive flag. Fails closed (503-class)
+    // when no signer is configured. NOTE: declared BEFORE `/:bundleId` so `generate` is not captured as
+    // a bundle id (Hono matches in registration order).
+    app.post('/api/evidence/generate', async (c) => {
+      const tenantId = requireTenant(c);
+      if (tenantId === null) return c.json({ error: 'not authenticated' });
+      if (await limited(c, 'evidence-generate', tenantId, 5)) {
+        return c.json({ error: 'too many requests' }, 429);
+      }
+      const csrf = csrfRejected(c, tenantId);
+      if (csrf !== null) return csrf;
+      try {
+        // scope:'tenant' + the SERVER-DERIVED session tenant id — the bundle can only ever carry THIS
+        // tenant's facts (B10 content-scoping) and is persisted under this tenant's scope (B10a).
+        const result = await options.tf.evidenceBundle({ scope: 'tenant', tenantId });
+        // Return the manifest (facts only) when persisted; never echo the signed body here — the SPA
+        // re-fetches it via the scoped GET so there is one download path with one BOLA check.
+        return c.json({ manifest: result.manifest ?? null });
+      } catch (e) {
+        return fail(c, e);
+      }
+    });
+
+    // Download MY signed bundle (`{ bundle, jws }`) by id. The scope is the SERVER-DERIVED session
+    // tenant — the store returns the bundle ONLY if it is this tenant's; another tenant's (or a fleet)
+    // bundle, or an unknown/pruned id, returns null → a UNIFORM 404 (no existence oracle). The
+    // `:bundleId` is a non-guessable handle, never interpreted as a tenant selector (BOLA).
+    app.get('/api/evidence/:bundleId', async (c) => {
+      const tenantId = requireTenant(c);
+      if (tenantId === null) return c.json({ error: 'not authenticated' });
+      try {
+        // tenantId (session) is the scope — the second argument is set by the SERVER, never the request.
+        const signed = await options.tf.evidenceGet(c.req.param('bundleId'), tenantId);
+        return signed === null
+          ? c.json({ error: 'not found' }, 404)
+          : c.json({ bundle: signed.bundle, jws: signed.jws });
+      } catch (e) {
+        return fail(c, e);
+      }
     });
   }
 

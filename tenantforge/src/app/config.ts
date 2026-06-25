@@ -284,6 +284,15 @@ const EnvSchema = z
       .enum(['true', 'false'])
       .default('false')
       .transform((v) => v === 'true'),
+    // Self-serve compliance-evidence surface (ADR-0011 Phase 3d / threat-model B8e): a tenant
+    // lists/downloads its OWN signed evidence bundles + the public key, and may self-generate its own
+    // current bundle. A benign, default-OFF rollout flag for staged rollout of a new customer-facing
+    // surface — INDEPENDENT of TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE (this read/self-generate path
+    // is non-destructive and must not entangle with the cancel/erasure gate).
+    TENANTFORGE_PORTAL_SELFSERVE_EVIDENCE: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
     // TTL (ms) for a portal step-up second-factor code (cancel/erasure). Default 10 minutes.
     TENANTFORGE_PORTAL_STEPUP_TTL_MS: z.coerce.number().int().positive().default(600_000),
     // Mandatory erasure undo window (ms) — how long a tenant may cancel a scheduled erasure.
@@ -643,6 +652,12 @@ export interface Config {
   portalAuthMode: 'token' | 'oidc';
   /** Enable the portal's destructive self-serve actions (cancel + erasure). Default false (ADR-0010 / red-team F6). */
   portalSelfServeDestructive: boolean;
+  /**
+   * Enable the portal's self-serve compliance-evidence surface (list/download/self-generate the
+   * tenant's own signed evidence bundles). Default false — a benign staged-rollout flag, independent
+   * of {@link Config.portalSelfServeDestructive} (ADR-0011 Phase 3d / threat-model B8e).
+   */
+  portalSelfServeEvidence: boolean;
   /** TTL (ms) for a portal step-up second-factor code. */
   stepUpCodeTtlMs: number;
   /** Mandatory erasure undo window (ms) — how long a tenant may cancel a scheduled erasure. */
@@ -783,6 +798,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     authMode: parsed.TENANTFORGE_AUTH_MODE,
     portalAuthMode: parsed.TENANTFORGE_PORTAL_AUTH_MODE,
     portalSelfServeDestructive: parsed.TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE,
+    portalSelfServeEvidence: parsed.TENANTFORGE_PORTAL_SELFSERVE_EVIDENCE,
     stepUpCodeTtlMs: parsed.TENANTFORGE_PORTAL_STEPUP_TTL_MS,
     erasureUndoWindowMs: parsed.TENANTFORGE_PORTAL_ERASURE_UNDO_WINDOW_MS,
     port: parsed.TENANTFORGE_PORT,

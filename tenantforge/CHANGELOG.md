@@ -8,6 +8,37 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Tenant self-serve compliance-evidence retrieval (customer portal)** — Phase 3d of the
+  **compliance & governance evidence layer** (ADR-0011 decision #5 → portal read path now built;
+  governed by ADR-0010; threat-model **B8e**). The deferred customer-facing half: a tenant can now
+  **list/download its OWN signed evidence bundles**, get the **public verification key**, and
+  **self-generate its own current bundle** from the portal. This is the **highest-BOLA-risk slice** in
+  the layer (a customer fetching per-tenant confidential evidence), so tenant scope is **server-derived
+  from the portal session, never client-supplied**, reusing the portal session / `TenantAuthenticator`
+  — **not** the operator RBAC `evidence:read`.
+  - **Portal backend (`src/app/portal.ts`):** `GET /portal/api/evidence` (list **my** manifests —
+    facts only, bounded `?limit`), `GET /portal/api/evidence/:bundleId` (download **my** signed
+    `{ bundle, jws }`), `GET /portal/api/evidence/public-key` (the Ed25519 **public** JWK), and
+    `POST /portal/api/evidence/generate` (self-generate **my** current bundle — CSRF-protected +
+    rate-limited). Every store call passes the **session tenant id** as scope
+    (`evidenceList({ tenantId })` / `evidenceGet(bundleId, tenantId)` /
+    `evidenceBundle({ scope:'tenant', tenantId })`) — never `null`/fleet. Another tenant's (or
+    unknown/pruned) `bundleId` → **uniform 404** (no existence oracle). Every fetch is audited with the
+    **tenant** principal.
+  - **Generate-on-demand: enabled + non-destructive.** A tenant may self-generate (not only download
+    operator-pre-persisted bundles) so the feature is useful immediately. Read-only assembly + sign +
+    persist, server-scoped → **NOT** gated by `TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE`; it sits behind
+    its own benign default-OFF rollout flag **`TENANTFORGE_PORTAL_SELFSERVE_EVIDENCE`**
+    (`PortalOptions.enableEvidence`).
+  - **Portal SPA (`portal/`):** a new "Compliance evidence" section — generate, an accessible manifest
+    table, per-row view/download of the **signed JWS as a labelled read-only/download artifact** (never
+    rendered as trusted HTML), and a public-key download for offline verification. **WCAG 2.2 AA**:
+    semantic structure, focus-managed heading, labelled controls, keyboard + visible focus, `aria-live`
+    async status (not color), CSP-safe Blob downloads — asserted with `vitest-axe`.
+  - **BOLA is the gate:** a mandatory cross-tenant abuse test (`test/app/portal-evidence.test.ts`,
+    backed by the real in-memory `EvidenceStore`) proves tenant A requesting tenant B's `bundleId` →
+    404 and A's list returns only A's manifests; unauthenticated → 401.
+
 - **Compliance evidence dashboard panel** — Phase 3c (final slice) of the **compliance & governance
   evidence layer** (ADR-0011), **completing Phase 3 end-to-end (library → CLI → HTTP → MCP →
   dashboard)**. The operator dashboard gains an **`EvidencePanel`** (Fleet section, beside the

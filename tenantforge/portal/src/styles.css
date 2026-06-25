@@ -349,3 +349,27 @@ code {
     transition: none !important;
   }
 }
+
+/* Compliance-evidence artifacts: the signed JWS + public JWK shown as read-only, monospaced blocks
+   (an artifact to verify/download, never rendered as trusted content). */
+.evidence-blob {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82em;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+  resize: vertical;
+}
+.evidence-detail {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.evidence-detail h3 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}

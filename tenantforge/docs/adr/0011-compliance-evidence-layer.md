@@ -6,9 +6,11 @@
   Phase 3b (operator-only retrieval surface: CLI/HTTP/MCP + public-key endpoint, and the durable
   pg-backed `EvidenceStore`) + **Phase 3c (the operator dashboard panel — the human-facing web view)**
   implemented. **Phase 3 (the evidence layer) is now complete end-to-end (library → CLI → HTTP → MCP →
-  dashboard).** **Tenant self-serve retrieval remains DEFERRED**
+  dashboard).** **Phase 3d (tenant self-serve retrieval via the customer portal) is now BUILT** (the
+  deferred customer-facing read path — decision #5 below + the Phase 3d section; threat-model **B8e**)
 - **Relates to:** [ADR-0010](0010-self-scoped-customer-portal-write-surface.md) (the EdDSA signing
-  primitive this reuses), [ADR-0001](0001-database-per-tenant-physical-isolation.md) (physical isolation),
+  primitive this reuses, **and** the governing self-scoped-portal-surface ADR for the Phase 3d
+  tenant-self-serve read path), [ADR-0001](0001-database-per-tenant-physical-isolation.md) (physical isolation),
   [ADR-0004](0004-secret-and-money-ops-off-the-agent-surface.md) (surface gating)
 - **Scope doc:** `docs/research/compliance-evidence-layer-plan.md`
 
@@ -41,8 +43,19 @@ ADR-0010 signing primitive. The five design decisions are **locked** (owner: joh
    future (the engine depends on the port abstraction, not the in-process key).
 4. **Framework mapping — framework-agnostic facts** for v1 ("evidence, not certification");
    SOC2/GDPR/HIPAA control-mapping is a later layer.
-5. **Customer-facing? — operator-only** (CLI/HTTP) v1; the portal self-serve "download my evidence"
-   (self-scoped) is deferred to a later phase.
+5. **Customer-facing? — operator-only v1, then tenant self-serve (NOW BUILT — Phase 3d).** The
+   operator retrieval surface (CLI/HTTP/MCP/dashboard) shipped first (Phases 3b/3c). The portal
+   self-serve **"download my compliance evidence"** (self-scoped) was deferred and is **now built**
+   (Phase 3d): the **customer portal** read path — list **my** manifests, download a specific **own**
+   signed bundle, the public key, and **self-generate the tenant's own current bundle on demand**.
+   Tenant scope is **server-derived from the portal session, never client-supplied** (BOLA; threat-
+   model **B8e**), reusing the portal session / `TenantAuthenticator` (ADR-0010) — **not** the
+   operator RBAC `evidence:read`. **Generate-on-demand decision: enabled.** A tenant may self-generate
+   its own bundle (not only download operator-pre-persisted ones) so the feature is useful even with no
+   pre-persisted per-tenant evidence; it is **read-only/non-destructive** (assembly + sign + persist,
+   server-scoped) so it is **NOT** gated by `TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE` (which gates only
+   cancel/erasure) — it sits behind its own benign **default-OFF rollout flag**
+   `TENANTFORGE_PORTAL_SELFSERVE_EVIDENCE` purely for staged rollout of a new customer-facing surface.
 
 ### Phase 1 (implemented in this slice)
 
@@ -270,13 +283,51 @@ retentionUntil? }`. **Facts only** — never the JWS body, never secrets/connect
   section render + a dedicated view/download/public-key flow, both `expect((await axe(...)).violations)
 .toEqual([])`).
 
-### Deferred (tenant self-serve — not built here)
+### Phase 3d (implemented — tenant self-serve retrieval via the customer portal)
 
-- **Tenant self-serve retrieval.** A portal/tenant-facing "download my evidence" path
-  (self-scoped). The store/API are **BOLA-ready** for it (the server-derived `tenantScope` already
-  scopes `get`/`list`), but it is **DEFERRED and confirmed out of scope here** (locked decision #5).
-  A tenant-facing evidence panel would live in the **customer portal** (ADR-0010), not this operator
-  dashboard.
+The deferred customer-facing half of the evidence layer. Reuses the **portal session /
+`TenantAuthenticator`** (ADR-0010) — **never** the operator RBAC `evidence:read`. Tenant scope is
+**server-derived from the session, never client-supplied** (BOLA; the project's #1 risk; threat-model
+**B8e**). Behind a benign **default-OFF rollout flag** `TENANTFORGE_PORTAL_SELFSERVE_EVIDENCE`
+(`PortalOptions.enableEvidence`) — **separate from** `TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE` (which
+gates only cancel/erasure; this read/self-generate path is non-destructive and must not entangle).
+
+- **Portal backend (sibling JSON routes on the `/portal` sub-app — `src/app/portal.ts`).** Reuse the
+  portal session middleware (`requireTenant` → the session tenant id); every store call passes the
+  **session tenant id** as scope:
+  - `GET /portal/api/evidence` — list **my** manifests (**facts only**, no JWS body) via
+    `evidenceList({ tenantId: <session> })`. `?limit` is validated (positive int → 400) and the store
+    clamps it (DoS bound). Empty `[]` when no store is wired (fail soft).
+  - `GET /portal/api/evidence/:bundleId` — download **my** signed bundle via
+    `evidenceGet(bundleId, <session>)`. The store refuses another tenant's (or fleet) bundle under a
+    tenant scope → **uniform 404** (no existence oracle). `:bundleId` is a non-guessable handle, never
+    a tenant selector.
+  - `GET /portal/api/evidence/public-key` — the Ed25519 **public** JWK
+    (`evidenceBundlePublicKey()`); public material only, valid session suffices; 404 when no signer.
+  - `POST /portal/api/evidence/generate` — **self-generate** the tenant's own current bundle via
+    `evidenceBundle({ scope:'tenant', tenantId: <session> })` (assembly + sign + persist, scoped to
+    the session tenant). **CSRF-protected** (signed per-session `X-TF-CSRF` token +
+    `Origin`/`Sec-Fetch-Site` allow-list) + **rate-limited** (tight per-session/IP cap). Non-destructive
+    → independent of the destructive flag. Fails closed (503-class) when no signer is configured.
+- **Generate-on-demand: ENABLED (decision recorded).** A tenant may self-generate, not only download
+  operator-pre-persisted bundles — the feature is useful even with no pre-persisted per-tenant
+  evidence. It is structurally self-scoped (server-derived tenant id), read-only/non-destructive, and
+  persisted so it appears in the tenant's own list.
+- **Portal SPA view ("Download my compliance evidence" — `portal/src/views.tsx`, `EvidenceView`).**
+  A new hash-routed `evidence` section: a **Generate** button (when the surface is enabled), a list of
+  **my** manifests in an accessible table (`<caption>`/`<th scope>`), per-row **View/Download** of the
+  **signed JWS as a labelled read-only/download artifact** (never rendered as trusted HTML), and a
+  **public-key** download for offline verification. Mirrors the dashboard `EvidencePanel`'s artifact
+  handling. **WCAG 2.2 AA**: semantic structure, focus-managed heading, labelled controls, keyboard +
+  visible focus, `aria-live` status for async, status by text (not color), CSP-safe Blob downloads.
+  Asserted by `vitest-axe` in `portal/test/App.test.tsx`.
+- **Audit (R).** `list`/`get`/`generate` run within the **tenant actor context**, so the facade's
+  `compliance.evidence_list`/`_fetch`/`evidence_bundle_signed`+`_persisted` events are attributed to
+  the **tenant** principal — facts only, never the body/JWS/key.
+- **Strictly self-scoped — no operator/fleet access from the portal.** No route accepts a `tenantId`;
+  scope is always the session tenant (never `null`/fleet). Pinned by the **mandatory cross-tenant
+  abuse test** (`test/app/portal-evidence.test.ts`): tenant A requesting tenant B's `bundleId` → 404;
+  A's `list` returns only A's manifests even when B's ids are tried; unauthenticated → 401.
 
 ## Alternatives considered
 

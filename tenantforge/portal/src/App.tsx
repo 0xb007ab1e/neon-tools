@@ -1,16 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Features, type SessionView } from './api.js';
 import { loadStripe } from './loaders.js';
-import { OverviewView, BillingView, PlanView, PaymentView, DangerZoneView } from './views.js';
+import {
+  OverviewView,
+  BillingView,
+  PlanView,
+  PaymentView,
+  DangerZoneView,
+  EvidenceView,
+} from './views.js';
 
-/** The portal sections (hash-routed). The Danger zone is conditional on `features.destructiveActions`. */
-export type Section = 'overview' | 'billing' | 'plan' | 'payment' | 'danger';
+/**
+ * The portal sections (hash-routed). The Evidence section is conditional on `features.evidence`; the
+ * Danger zone is conditional on `features.destructiveActions` (the two flags are independent).
+ */
+export type Section = 'overview' | 'billing' | 'plan' | 'payment' | 'evidence' | 'danger';
 
 const SECTION_LABELS: Record<Section, string> = {
   overview: 'Overview',
   billing: 'Billing',
   plan: 'Plan',
   payment: 'Payment method',
+  evidence: 'Compliance evidence',
   danger: 'Danger zone',
 };
 
@@ -270,12 +281,16 @@ function SignedInView(props: {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // Guard against landing on a hidden section (e.g. #danger when the flag is off): redirect to Overview.
+  // Guard against landing on a hidden section (a flag-gated section whose server flag is off):
+  // redirect to Overview, so a deep link / stale hash can't show a section with no data.
   useEffect(() => {
-    if (section === 'danger' && !features.destructiveActions) {
+    if (
+      (section === 'danger' && !features.destructiveActions) ||
+      (section === 'evidence' && !features.evidence)
+    ) {
       window.location.hash = '#/overview';
     }
-  }, [section, features.destructiveActions]);
+  }, [section, features.destructiveActions, features.evidence]);
 
   // Move focus to the section heading on each route change (a11y: announce + orient the screen reader).
   useEffect(() => {
@@ -283,7 +298,8 @@ function SignedInView(props: {
   }, [section]);
 
   const sections: Section[] = (Object.keys(SECTION_LABELS) as Section[]).filter(
-    (s) => s !== 'danger' || features.destructiveActions,
+    (s) =>
+      (s !== 'danger' || features.destructiveActions) && (s !== 'evidence' || features.evidence),
   );
 
   return (
@@ -323,6 +339,7 @@ function SignedInView(props: {
         {section === 'billing' && <BillingView />}
         {section === 'plan' && <PlanView />}
         {section === 'payment' && <PaymentView loadStripe={loadStripe} />}
+        {section === 'evidence' && features.evidence && <EvidenceView />}
         {section === 'danger' && features.destructiveActions && <DangerZoneView />}
       </main>
     </div>

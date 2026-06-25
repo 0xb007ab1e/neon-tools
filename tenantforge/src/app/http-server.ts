@@ -69,6 +69,8 @@ export interface HttpServerOptions {
   portalCodeFlow?: OidcCodeFlow;
   /** Enable the portal's destructive self-serve actions (cancel + erasure). Default false (ADR-0010 / red-team F6). */
   portalSelfServeDestructive?: boolean;
+  /** Enable the portal's self-serve compliance-evidence surface (ADR-0011 Phase 3d / B8e). Default false. */
+  portalSelfServeEvidence?: boolean;
   /** Allowed browser origins for portal mutations (CSRF defense in depth — red-team F4). */
   portalAllowedOrigins?: string[];
   /** Stripe publishable key (public) for the portal SPA's Stripe Elements payment-method view. */
@@ -294,6 +296,9 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
         idempotencyStore,
         ...(options.portalSelfServeDestructive !== undefined
           ? { enableDestructiveActions: options.portalSelfServeDestructive }
+          : {}),
+        ...(options.portalSelfServeEvidence !== undefined
+          ? { enableEvidence: options.portalSelfServeEvidence }
           : {}),
         ...(options.portalAllowedOrigins !== undefined
           ? { allowedOrigins: options.portalAllowedOrigins }
