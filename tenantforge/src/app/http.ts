@@ -147,6 +147,8 @@ async function main(): Promise<void> {
           ...(portalCodeFlow !== undefined ? { portalCodeFlow } : {}),
           // Destructive self-serve actions (cancel + erasure) ship OFF until proven (ADR-0010 / F6).
           portalSelfServeDestructive: config.portalSelfServeDestructive,
+          // Self-serve compliance-evidence surface (ADR-0011 Phase 3d / B8e) — benign, default OFF.
+          portalSelfServeEvidence: config.portalSelfServeEvidence,
           // Stripe publishable key (public) for the portal SPA's Elements payment-method view.
           ...(config.stripePublishableKey !== undefined
             ? { portalPublishableKey: config.stripePublishableKey }

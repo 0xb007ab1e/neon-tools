@@ -3,9 +3,12 @@ import {
   api,
   ApiError,
   type CreditBalance,
+  type EvidenceManifestEntry,
   type Invoice,
   type PendingErasure,
   type PlanPreview,
+  type PublicJwk,
+  type SignedEvidenceBundle,
   type TenantEvent,
   type TenantSummary,
   type Usage,
@@ -45,6 +48,19 @@ function usdMinor(minor: number): string {
 function fmtDate(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+/** Trigger a browser download of `text` as a named file (CSP-safe: a Blob object URL, revoked after). */
+function downloadText(filename: string, text: string, type: string): void {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // --- async-load hook + busy guard -----------------------------------------------------------------
@@ -929,5 +945,231 @@ function ErasurePanel(props: {
         </Modal>
       )}
     </div>
+  );
+}
+
+// --- Compliance evidence ---------------------------------------------------------------------------
+
+/**
+ * "Download my compliance evidence" (ADR-0011 Phase 3d / threat-model B8e): the self-serve,
+ * **self-scoped** evidence surface. Lists **my** persisted, signed evidence-bundle manifests (facts
+ * only — never the JWS body), lets me **self-generate** my own current bundle, **download** a specific
+ * own signed bundle's JWS for offline verification, and load the **public verification key**. Every
+ * fetch is server-scoped to my session tenant (the tenant id is never sent by the client — BOLA
+ * defence), so I only ever see my own evidence. Mirrors the operator dashboard `EvidencePanel`'s
+ * artifact handling: the signed JWS is a **labelled read-only/download artifact**, never rendered as
+ * trusted HTML; the public key carries no private material. WCAG 2.2 AA: semantic table, labelled
+ * controls, `aria-live` async status (not color), CSP-safe Blob downloads.
+ */
+export function EvidenceView(): React.ReactElement {
+  const list = useLoad<EvidenceManifestEntry[]>(
+    () => api.evidenceList(),
+    // No evidence store wired ⇒ empty rather than an error (fail soft, like the other reads).
+    () => [],
+  );
+  const [selected, setSelected] = useState<SignedEvidenceBundle | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [publicKey, setPublicKey] = useState<PublicJwk | null>(null);
+  const [keyStatus, setKeyStatus] = useState<string | null>(null);
+  const generate = useAction();
+  const view = useAction();
+
+  const onGenerate = (): Promise<void> =>
+    generate.run(async () => {
+      await api.evidenceGenerate();
+      list.reload();
+    });
+
+  const onView = (bundleId: string): Promise<void> =>
+    view.run(async () => {
+      setSelected(null);
+      setSelectedId(bundleId);
+      setSelected(await api.evidenceGet(bundleId));
+    });
+
+  const onLoadKey = async (): Promise<void> => {
+    setKeyStatus('Loading the public key…');
+    try {
+      const jwk = await api.evidencePublicKey();
+      setPublicKey(jwk);
+      setKeyStatus(
+        jwk === null
+          ? 'No evidence signer is configured — verification keys are unavailable.'
+          : 'Public key loaded. It verifies a bundle offline — it contains no private material.',
+      );
+    } catch (e) {
+      setPublicKey(null);
+      setKeyStatus(
+        e instanceof ApiError && e.status === 404
+          ? 'No evidence signer is configured — verification keys are unavailable.'
+          : e instanceof Error
+            ? e.message
+            : 'Could not load the public key',
+      );
+    }
+  };
+
+  return (
+    <section aria-labelledby="evidence-heading">
+      <h2 id="evidence-heading">My compliance evidence</h2>
+      <p className="lede">
+        Signed, independently verifiable evidence bundles for your workspace (Ed25519). Generate a
+        current bundle, then download it and verify its <code>jws</code> offline with the public
+        key. Each bundle contains only your own attestation facts — no secrets.
+      </p>
+
+      {/* Generate my own current bundle (non-destructive; server-scoped to my tenant). */}
+      <p>
+        <button type="button" onClick={() => void onGenerate()} disabled={generate.busy}>
+          {generate.busy ? 'Generating…' : 'Generate a current bundle'}
+        </button>
+      </p>
+      {generate.error !== null && (
+        <p className="alert" role="alert">
+          {generate.error}
+        </p>
+      )}
+
+      {/* Public verification key — public material only; loaded on demand. */}
+      <p>
+        <button type="button" className="secondary" onClick={() => void onLoadKey()}>
+          Show public verification key
+        </button>
+      </p>
+      <p role="status" aria-live="polite">
+        {keyStatus}
+      </p>
+      {publicKey !== null && (
+        <>
+          <p>
+            <label htmlFor="evidence-pubkey">Ed25519 public JWK (verify bundles offline)</label>
+          </p>
+          <textarea
+            id="evidence-pubkey"
+            className="evidence-blob"
+            readOnly
+            rows={4}
+            value={JSON.stringify(publicKey, null, 2)}
+          />
+          <p>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() =>
+                downloadText(
+                  'tenantforge-evidence-public-key.jwk.json',
+                  JSON.stringify(publicKey, null, 2),
+                  'application/json',
+                )
+              }
+            >
+              Download public key
+            </button>
+          </p>
+        </>
+      )}
+
+      <Async state={list}>
+        {(manifests) =>
+          manifests.length === 0 ? (
+            <p>
+              No evidence bundles yet. Use <strong>Generate a current bundle</strong> above to
+              create one.
+            </p>
+          ) : (
+            <table>
+              <caption>
+                My evidence bundles ({manifests.length}) — facts only, no bundle body
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Bundle</th>
+                  <th scope="col">Generated</th>
+                  <th scope="col">Stored</th>
+                  <th scope="col">Retention until</th>
+                  <th scope="col">Signer (kid)</th>
+                  <th scope="col">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {manifests.map((m) => (
+                  <tr key={m.bundleId}>
+                    <th scope="row">
+                      <code>{m.bundleId.slice(0, 12)}…</code>
+                    </th>
+                    <td>{fmtDate(m.generatedAt)}</td>
+                    <td>{fmtDate(m.storedAt)}</td>
+                    <td>
+                      {m.retentionUntil === undefined ? 'indefinite' : fmtDate(m.retentionUntil)}
+                    </td>
+                    <td>
+                      <code>{m.signerKid}</code>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => void onView(m.bundleId)}
+                        disabled={view.busy && selectedId === m.bundleId}
+                        aria-label={`View bundle ${m.bundleId}`}
+                      >
+                        {view.busy && selectedId === m.bundleId ? 'Loading…' : 'View'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        }
+      </Async>
+
+      {/* Selected-bundle detail — async region announced to assistive tech (not color-only). */}
+      <div role="region" aria-live="polite" aria-label="Selected evidence bundle">
+        {view.error !== null && (
+          <p className="alert" role="alert">
+            {view.error}
+          </p>
+        )}
+        {selected !== null && selectedId !== null && (
+          <div className="evidence-detail">
+            <h3>Bundle</h3>
+            <p>
+              Generated {fmtDate(selected.bundle.generatedAt)} · inventory{' '}
+              {selected.bundle.artifacts.inventory.total} ·{' '}
+              {selected.bundle.artifacts.erasureCertificates.length} embedded erasure certificate(s)
+              · {selected.bundle.artifacts.auditExcerpt.length} audit event(s) in the excerpt.
+            </p>
+            <p>
+              <label htmlFor="evidence-jws">
+                Signed bundle (compact JWS — verify offline, do not edit)
+              </label>
+            </p>
+            <textarea
+              id="evidence-jws"
+              className="evidence-blob"
+              readOnly
+              rows={4}
+              value={selected.jws}
+            />
+            <p>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() =>
+                  downloadText(
+                    `evidence-bundle-${selectedId}.jws`,
+                    selected.jws,
+                    'application/jose',
+                  )
+                }
+              >
+                Download signed bundle
+              </button>
+            </p>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }

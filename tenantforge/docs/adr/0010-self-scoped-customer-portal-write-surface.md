@@ -118,3 +118,18 @@ So parity is satisfied as: payment-method, plan, invoices/billing, usage, cancel
 (incl. the undo-window status) each have a portal SPA view (`tenantforge/portal/`); the operator
 dashboard stays **read-only** per ADR-0004. The CLI/HTTP/MCP automation surfaces remain as before
 (the destructive sweep executor is CLI/worker-only — `erasure-sweep`).
+
+## Tenant self-serve compliance evidence (added 2026-06-25 — ADR-0011 Phase 3d)
+
+The customer portal now also exposes a **self-scoped, read-only "Download my compliance evidence"**
+surface ([ADR-0011](0011-compliance-evidence-layer.md) decision #5 → portal read path; threat-model
+**B8e**): a tenant lists **its own** persisted evidence-bundle manifests, downloads a specific **own**
+signed bundle + the public verification key, and may **self-generate** its own current bundle on
+demand. This is governed by this ADR's invariant exactly like the other portal actions — the tenant
+id is **server-derived from the session, never client-supplied**, so it can only ever reach the
+calling tenant's own evidence (no cross-tenant/BOLA). It reuses the portal session /
+`TenantAuthenticator`, **not** the operator RBAC `evidence:read`. The self-generate is
+**read-only/non-destructive** (assembly + sign + persist, server-scoped), so it is **NOT** gated by
+`TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE` (that flag gates only the cancel/erasure pair); it sits
+behind its own benign default-OFF rollout flag `TENANTFORGE_PORTAL_SELFSERVE_EVIDENCE` purely for
+staged rollout. The operator evidence surfaces (dashboard/CLI/HTTP/MCP, fleet-scoped) are unchanged.

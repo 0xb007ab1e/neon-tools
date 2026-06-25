@@ -394,6 +394,88 @@ false` (the **404** also never reveals whether the id exists out of scope — un
   tenant-facing fetch path — design is BOLA-ready via the server-derived `tenantScope`, but not shipped)
   and the **Phase 3c dashboard panel**.
 
+### B8e — Tenant self-serve evidence retrieval (the portal fetch boundary) — Phase 3d SHIPPED (2026-06-25)
+
+> **Status: the deferred customer-facing half of the evidence layer landed (ADR-0011 decision #5 →
+> portal read path now built; ADR-0010 governs the portal surface).** This is the **highest-BOLA-risk
+> slice in the evidence layer** — a _customer_ fetching per-tenant **confidential** evidence over the
+> self-serve portal. It implements what B11's "groundwork for the deferred tenant-self-serve path"
+> prescribed: the portal passes the **server-derived tenant id** (from the authenticated portal
+> session) as the store `tenantScope`, **never `null`/fleet, never a client parameter**. Reuses the
+> **portal session / `TenantAuthenticator`** (B8/B8w) — **not** the operator RBAC `evidence:read` (B11).
+> New surface: `GET /portal/api/evidence` (list **my** manifests), `GET /portal/api/evidence/:bundleId`
+> (download a specific **own** signed bundle), `GET /portal/api/evidence/public-key` (the public JWK),
+> and `POST /portal/api/evidence/generate` (self-generate the tenant's **own** current bundle —
+> non-destructive). A self-serve "Download my compliance evidence" view in the portal SPA
+> (`portal/`). Behind a benign **default-OFF rollout flag** `TENANTFORGE_PORTAL_SELFSERVE_EVIDENCE`
+> (`PortalOptions.enableEvidence`) for staged rollout — **separate from**
+> `TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE`, which gates ONLY cancel/erasure (this read/self-generate
+> path is non-destructive and must not entangle with it). STRIDE on the tenant evidence-fetch path:
+
+- **E (EoP / BOLA — THE headline threat, the project's #1 risk):** the tenant id is taken **ONLY from
+  the authenticated portal session** (`sessionOf(c).tenantId`), **never** from request input — no
+  route accepts a `tenantId` param, and `:bundleId` is a **non-guessable handle, never a tenant
+  selector**. Every store call passes the **session tenant id** as `tenantScope`:
+  `evidenceList({ tenantId })` / `evidenceGet(bundleId, tenantId)` / `evidenceBundle({ scope:'tenant',
+tenantId })`. A tenant can therefore `list`/`get`/`generate`/download **only its own** bundles. The
+  store's `get(bundleId, tenantScope)` (B10a) refuses to return another tenant's (or a **fleet**)
+  bundle under a tenant scope — so even a leaked/guessed `bundleId` for tenant B, requested by tenant
+  A, returns **nothing** → a **uniform 404** (`Not Found`, no body) with **no existence oracle** (the
+  404 is byte-identical whether the id is unknown, pruned, fleet-scoped, or another tenant's). `list`
+  is server-filtered to the session tenant, so it can never enumerate another tenant's manifests. This
+  is **complete mediation + defense in depth**: the surface scopes (B8e) **and** the store re-checks
+  (B10a) **and** the bundle _content_ is already per-tenant-scoped (B10/Phase 2) — three independent
+  layers. **Pinned by the mandatory cross-tenant abuse test** (tenant A's session requesting tenant
+  B's `bundleId` → 404; A's `list` returns only A's manifests even when B's ids are tried).
+- **S (spoofing) / AuthN:** the surface is behind the existing portal **session** (signed, HttpOnly,
+  `SameSite=Strict` cookie minted from the `TenantAuthenticator` / OIDC code flow — B8/B8w). An
+  unauthenticated or invalid/expired/tampered session → **401** (fail closed; pinned by a negative
+  test), **except** the public-key endpoint which is intentionally **unauthenticated** (it serves a
+  **public** key). No `evidence:read` operator permission is involved — this is a distinct,
+  self-scoped customer surface (ADR-0010), never the operator/fleet plane.
+- **I (information disclosure):** an evidence bundle body is **confidential** (the tenant's own ids,
+  residency, a redacted audit excerpt) but carries **no secrets, no connection URIs** (master §5; the
+  Phase 2 canonicalization test pins this) — and a tenant bundle holds **only that tenant's** facts
+  (B10 content-scoping), so the customer sees only their own confidential evidence, served over TLS.
+  The **public-key endpoint exposes ONLY the public JWK** (`{kty,crv,x,kid,alg,use}` — never the
+  private `d`; the facade returns the public key and a test pins no-`d`). The manifest list is
+  **facts only** (no JWS body). Served fields are projected — no infra ids, no `billingCustomerRef`
+  (the bundle never carried them).
+- **R (repudiation) — audit every tenant fetch with the tenant principal:** `list`/`get`/`generate`
+  go through the facade (`evidenceList`/`evidenceGet`/`evidenceBundle`), which emit redacted
+  `compliance.evidence_list` / `compliance.evidence_fetch` / `compliance.evidence_bundle_signed` +
+  `…_persisted` events. Because the portal runs the facade call **within the tenant actor context**
+  (the session tenant as principal), the events are attributed to the **tenant**, not an operator —
+  facts only (`bundleId` handle, count, `found:true|false`), never the body/JWS/key. The public-key
+  read is **not** audited (unauthenticated, public material — no repudiation concern, consistent with
+  B11).
+- **T (tampering):** the served body is the **signed** bundle; the customer (or their auditor)
+  verifies it **offline with only the public key** (`verifyEvidenceBundle` against
+  `GET /portal/api/evidence/public-key`). Tamper in transit/at rest is signature-detected — the
+  retrieval surface adds no new channel trust (verification is the product).
+- **D (denial of service):** `list` is **bounded** — the store clamps `?limit` to `[1, 1000]`; the
+  portal also caps it and rejects a non-positive integer (400). `get` is one bounded lookup.
+  **Self-generate** is the only non-trivial op: it is **per-session/per-IP rate-limited** (a tight cap
+  via the existing portal limiter — bounded registry read + one EdDSA sign + one store write), behind
+  CSRF (it is a `POST`/state-changing-at-the-store request → a signed per-session token in
+  `X-TF-CSRF` + `Origin`/`Sec-Fetch-Site` allow-list, like every other portal mutation). The 8 KB
+  body cap applies. No unbounded surface.
+- **Generate-on-demand (DECISION — enabled, non-destructive):** the portal **may self-generate** the
+  tenant's **own** current evidence bundle (`evidenceBundle({ scope:'tenant', tenantId:<session> })`)
+  in addition to downloading already-persisted ones — read-only assembly + sign, scoped to the
+  session tenant, persisted so it appears in the tenant's own list. **Rationale:** the feature is
+  useful even when operators haven't pre-persisted per-tenant bundles (B11's deferred note assumed
+  operator pre-generation); it is **structurally incapable of affecting another tenant** (server-
+  derived scope, like every other portal action). It is **non-destructive**, so it is **NOT** gated by
+  `TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE` (that flag gates only the cancel/erasure destructive
+  pair); it sits behind its own benign rollout flag. The flag is OFF by default purely for **staged
+  rollout** of a new customer-facing surface, not because the path is risky.
+- **Fail-closed / fail-soft:** with no evidence store wired, `list` returns `[]` and `get` returns
+  `null` → the SPA shows an empty/"no evidence yet" state (never a 500). With no signer wired,
+  `generate` fails closed (the facade throws "no evidence-bundle signer configured" → a safe 503-class
+  error) and the public-key endpoint returns 404 — the SPA degrades gracefully (the generate button
+  reports it's unavailable). An unknown/out-of-scope/pruned `bundleId` → uniform 404.
+
 ## Residual risks (tracked)
 
 - **R1 — closed.** Per-operator credentials + RBAC are in-app (admin/readonly, constant-time compare),

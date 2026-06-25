@@ -90,6 +90,10 @@ const planPreview = {
 
 /** Whether the (mocked) server advertises + mounts the destructive endpoints. */
 let destructive = false;
+/** Whether the (mocked) server advertises + mounts the self-serve evidence endpoints. */
+let evidence = false;
+/** When set, the evidence public-key endpoint 404s (simulate no signer configured). */
+let evidenceNoSigner = false;
 /** When set, POST /api/session returns 401 (simulate a rejected login). */
 let loginFails = false;
 /** When set, the payment setup-intent fails (simulate no gateway configured). */
@@ -104,6 +108,8 @@ let lastSessionBody: unknown = null;
 beforeEach(() => {
   resetCsrf();
   destructive = false;
+  evidence = false;
+  evidenceNoSigner = false;
   loginFails = false;
   paymentSetupFails = false;
   authMode = 'token';
@@ -116,13 +122,46 @@ beforeEach(() => {
   document.documentElement.removeAttribute('data-theme');
   let authed = false;
   let erasurePending: unknown = null;
+  // The tenant's own persisted evidence manifests (facts only). `generate` appends one.
+  const evidenceManifest = (bundleId: string): Record<string, unknown> => ({
+    bundleId,
+    scope: 'tenant',
+    tenantId: 't1',
+    generatedAt: '2026-06-25T00:00:00.000Z',
+    storedAt: '2026-06-25T00:00:00.000Z',
+    signerKid: 'tenantforge-evidence-bundle',
+    contentHashes: {
+      inventory: 'h1',
+      isolation: 'h2',
+      residency: 'h3',
+      auditExcerpt: 'h4',
+      erasureCertificates: 'h5',
+    },
+  });
+  let evidenceManifests: Record<string, unknown>[] = [evidenceManifest('bundleAAAA1111')];
+  const evidenceBundleBody = (bundleId: string): Record<string, unknown> => ({
+    bundle: {
+      scope: 'tenant',
+      tenantId: 't1',
+      generatedAt: '2026-06-25T00:00:00.000Z',
+      artifacts: {
+        inventory: { total: 1, byStatus: { active: 1 } },
+        isolation: { compliant: true },
+        residency: { compliant: true },
+        auditExcerpt: [],
+        erasureCertificates: [],
+      },
+      contentHashes: evidenceManifest(bundleId).contentHashes,
+    },
+    jws: `jws-${bundleId}`,
+  });
 
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = String(input);
       const method = init?.method ?? 'GET';
-      const features = { destructiveActions: destructive };
+      const features = { destructiveActions: destructive, evidence };
 
       if (url.endsWith('/api/config'))
         return Promise.resolve(
@@ -201,6 +240,32 @@ beforeEach(() => {
       }
       if (url.endsWith('/api/erasure'))
         return Promise.resolve(destructive ? json({ pending: erasurePending }) : json({}, 404));
+
+      // Self-serve evidence endpoints: 404 when the flag is off (the SPA must not show the section).
+      if (url.includes('/api/evidence/public-key'))
+        return Promise.resolve(
+          !evidence || evidenceNoSigner
+            ? json({ error: 'not found' }, 404)
+            : json({ publicKey: { kty: 'OKP', crv: 'Ed25519', x: 'pub-x', kid: 'evk' } }),
+        );
+      if (url.endsWith('/api/evidence/generate') && method === 'POST') {
+        if (!evidence) return Promise.resolve(json({}, 404));
+        const m = evidenceManifest('bundleBBBB2222');
+        evidenceManifests = [...evidenceManifests, m];
+        return Promise.resolve(json({ manifest: m }));
+      }
+      // Download a specific bundle by id (the SPA only ever requests its own — server enforces scope).
+      const getMatch = /\/api\/evidence\/([^/?]+)$/.exec(url);
+      if (getMatch !== null && method === 'GET') {
+        const id = getMatch[1]!;
+        if (!evidence) return Promise.resolve(json({}, 404));
+        const known = evidenceManifests.some((m) => m['bundleId'] === id);
+        return Promise.resolve(
+          known ? json(evidenceBundleBody(id)) : json({ error: 'not found' }, 404),
+        );
+      }
+      if (url.includes('/api/evidence'))
+        return Promise.resolve(evidence ? json({ manifests: evidenceManifests }) : json({}, 404));
 
       return Promise.resolve(json({ error: 'not found' }, 404));
     }),
@@ -539,5 +604,76 @@ describe('portal App — a11y coverage of every screen + modal (axe)', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Schedule erasure' }));
     await screen.findByText(/Erasure scheduled\./);
     expect((await axe(container)).violations).toEqual([]);
+  });
+});
+
+describe('portal App — flag-gated compliance-evidence view (B8e)', () => {
+  it('hides the Compliance evidence section when the flag is OFF (no dead link)', async () => {
+    evidence = false;
+    render(<App />);
+    await signIn();
+    expect(screen.queryByRole('link', { name: 'Compliance evidence' })).toBeNull();
+  });
+
+  it('redirects away from #evidence when the flag is off (graceful)', async () => {
+    evidence = false;
+    window.location.hash = '#/evidence';
+    render(<App />);
+    await signIn();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Overview' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'My compliance evidence' })).toBeNull();
+  });
+
+  it('lists my evidence bundles + generates a new one, no a11y violations', async () => {
+    evidence = true;
+    const { container } = render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Compliance evidence' }));
+    expect(
+      await screen.findByRole('heading', { name: 'My compliance evidence' }),
+    ).toBeInTheDocument();
+    // The seeded manifest renders (truncated bundle id, 12 chars + ellipsis).
+    expect(await screen.findByText(/bundleAAAA11…/)).toBeInTheDocument();
+    expect((await axe(container)).violations).toEqual([]);
+
+    // Generate a current bundle → it appears in the list (the view reloads).
+    fireEvent.click(screen.getByRole('button', { name: 'Generate a current bundle' }));
+    expect(await screen.findByText(/bundleBBBB22…/)).toBeInTheDocument();
+    // The generate POST carried the CSRF header (it's a state-changing request).
+    const calls = (fetch as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls;
+    const gen = calls.find((c) => String(c[0]).endsWith('/api/evidence/generate'));
+    expect(new Headers(gen?.[1]?.headers).get('X-TF-CSRF')).toBe('csrf-xyz');
+  });
+
+  it('views a bundle (signed JWS as a download artifact) and loads the public key, downloads work', async () => {
+    evidence = true;
+    const { container } = render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Compliance evidence' }));
+    // Open the bundle detail via the per-row View action; the signed JWS is offered as a download.
+    fireEvent.click(await screen.findByRole('button', { name: /View bundle bundleAAAA1111/ }));
+    expect(
+      await screen.findByLabelText('Signed bundle (compact JWS — verify offline, do not edit)'),
+    ).toHaveValue('jws-bundleAAAA1111');
+    // Download the signed bundle (CSP-safe Blob path runs under the stubbed object-URL).
+    fireEvent.click(screen.getByRole('button', { name: 'Download signed bundle' }));
+
+    // Public key loads on demand (public material only) and is downloadable.
+    fireEvent.click(screen.getByRole('button', { name: 'Show public verification key' }));
+    expect(
+      await screen.findByLabelText('Ed25519 public JWK (verify bundles offline)'),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Download public key' }));
+    expect((await axe(container)).violations).toEqual([]);
+  });
+
+  it('degrades gracefully when no signer is configured (public-key status, no crash)', async () => {
+    evidence = true;
+    evidenceNoSigner = true;
+    render(<App />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Compliance evidence' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Show public verification key' }));
+    expect(await screen.findByText(/No evidence signer is configured/)).toBeInTheDocument();
   });
 });

@@ -14,6 +14,12 @@ const CSRF_HEADER = 'X-TF-CSRF';
 export interface Features {
   /** Whether cancel + erasure self-serve endpoints exist (server feature flag — default OFF). */
   destructiveActions: boolean;
+  /**
+   * Whether the self-serve compliance-evidence surface exists (list/download/self-generate the
+   * tenant's own signed bundles). A benign server rollout flag — default OFF, INDEPENDENT of
+   * `destructiveActions` (evidence is non-destructive). Gates the Evidence section.
+   */
+  evidence: boolean;
 }
 
 /** Public SPA config (no secrets): the Stripe publishable key (when configured) + capabilities. */
@@ -142,6 +148,63 @@ export interface PendingErasure {
 export interface ExportResult {
   location: string;
   bytes: number | null;
+}
+
+/** Per-artifact SHA-256 (hex) content hashes recorded on an evidence manifest (spot-check aid). */
+export interface EvidenceContentHashes {
+  inventory: string;
+  isolation: string;
+  residency: string;
+  auditExcerpt: string;
+  erasureCertificates: string;
+}
+
+/**
+ * The **facts-only** index record for one of the tenant's persisted evidence bundles
+ * (GET /api/evidence) — never the JWS body, never secrets. The `bundleId` is a non-guessable handle
+ * the download route dereferences (scoped server-side to this tenant — BOLA defense).
+ */
+export interface EvidenceManifestEntry {
+  bundleId: string;
+  scope: 'fleet' | 'tenant';
+  tenantId?: string;
+  generatedAt: string;
+  storedAt: string;
+  signerKid: string;
+  contentHashes: EvidenceContentHashes;
+  retentionUntil?: string;
+}
+
+/**
+ * A signed evidence bundle (`{ bundle, jws }`, GET /api/evidence/:bundleId) — the tenant's own
+ * verified attestation facts plus the compact JWS authenticity anchor an auditor verifies offline
+ * with the public key. No secrets; a tenant bundle carries only this tenant's facts.
+ */
+export interface SignedEvidenceBundle {
+  bundle: {
+    scope: 'fleet' | 'tenant';
+    tenantId?: string;
+    generatedAt: string;
+    artifacts: {
+      inventory: { total: number; byStatus: Record<string, number> };
+      isolation: { compliant: boolean };
+      residency: { compliant: boolean };
+      auditExcerpt: unknown[];
+      erasureCertificates: string[];
+    };
+    contentHashes: EvidenceContentHashes;
+  };
+  jws: string;
+}
+
+/** A public JSON Web Key (Ed25519 / OKP) — public material ONLY; never carries a private `d`. */
+export interface PublicJwk {
+  kty: string;
+  crv?: string;
+  x?: string;
+  kid?: string;
+  alg?: string;
+  use?: string;
 }
 
 /** A typed error carrying the HTTP status so views can branch (e.g. 404 ⇒ feature absent). */
@@ -277,4 +340,18 @@ export const api = {
   cancelErasure: (): Promise<{ cancelled: true }> => mutate('/erasure/cancel'),
   pendingErasure: (): Promise<PendingErasure | null> =>
     call<{ pending: PendingErasure | null }>('/erasure').then((b) => b.pending),
+
+  // --- compliance evidence (only mounted server-side when `evidence` is ON) ------------------------
+  /** List MY persisted evidence-bundle manifests (facts only — never the JWS body). */
+  evidenceList: (): Promise<EvidenceManifestEntry[]> =>
+    call<{ manifests: EvidenceManifestEntry[] }>('/evidence').then((b) => b.manifests),
+  /** Download MY signed bundle by id (server-scoped to my session tenant — 404 if not mine). */
+  evidenceGet: (bundleId: string): Promise<SignedEvidenceBundle> =>
+    call(`/evidence/${encodeURIComponent(bundleId)}`),
+  /** The Ed25519 PUBLIC verification key (public material only); null when no signer is configured. */
+  evidencePublicKey: (): Promise<PublicJwk | null> =>
+    call<{ publicKey: PublicJwk }>('/evidence/public-key').then((b) => b.publicKey),
+  /** Self-generate MY current evidence bundle (non-destructive; CSRF-protected). Returns its manifest. */
+  evidenceGenerate: (): Promise<{ manifest: EvidenceManifestEntry | null }> =>
+    mutate('/evidence/generate'),
 };
