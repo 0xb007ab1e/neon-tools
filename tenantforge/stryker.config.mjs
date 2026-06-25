@@ -24,6 +24,7 @@ export default {
     'src/core/authz.ts', // role → permission authorization
     'src/core/erasure.ts', // GDPR erasure certificate + verified post-conditions (privacy/data-handling)
     'src/core/compliance-cert.ts', // signed-compliance-report claim canonicalization + alg-pinned verifier (crypto/privacy)
+    'src/core/evidence-bundle.ts', // evidence-bundle assembly + per-tenant scoping + alg-pinned verifier (crypto/privacy/BOLA)
     'src/core/signup-request.ts', // self-serve signup state + one-time connection-reveal gate
     'src/core/signup-token.ts', // signup-token status / redeemability logic
     'src/core/email-verification.ts', // emailed-code verification (identity)

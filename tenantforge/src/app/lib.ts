@@ -48,9 +48,12 @@ import {
   findPlan,
   planAssignment,
   buildComplianceReport,
+  buildEvidenceBundle,
   type ComplianceReport,
   type ComplianceReportOptions,
   type SignedComplianceReport,
+  type EvidenceScope,
+  type SignedEvidenceBundle,
   type AuditQueryInput,
   type AnomalyThresholds,
   type AuditAnomaly,
@@ -98,6 +101,11 @@ import {
   createEd25519ComplianceReportSigner,
   createEphemeralComplianceReportSigner,
 } from '../adapters/compliance-report-signer.js';
+import type { EvidenceBundleSigner } from '../ports/evidence-bundle-signer.js';
+import {
+  createEd25519EvidenceBundleSigner,
+  createEphemeralEvidenceBundleSigner,
+} from '../adapters/evidence-bundle-signer.js';
 import { createCachingConnectionRouter } from '../adapters/caching-connection-router.js';
 import {
   createRehomeEngine,
@@ -530,6 +538,17 @@ export interface TenantForgeDeps {
    * mechanism behind {@link certificateSigner} but is a **distinct purpose/kid** (not confusable).
    */
   complianceReportSigner?: ComplianceReportSigner;
+  /**
+   * **Cryptographic signer for evidence bundles** (EdDSA/Ed25519 compact JWS; ADR-0011 Phase 2).
+   * When present, {@link TenantForge.evidenceBundle} emits a **signed** bundle (the `.jws` an auditor
+   * verifies with `verifyEvidenceBundle` against {@link TenantForge.evidenceBundlePublicKey}). Absent
+   * ⇒ `evidenceBundle` **fails closed** (no unsigned bundle path). Per ADR-0011 this **reuses the
+   * compliance evidence signing key** (`TENANTFORGE_COMPLIANCE_SIGNING_KEY`) — no third prod key — but
+   * is a **distinct purpose/kid/typ** (not confusable with a compliance report or erasure certificate).
+   * The composition root validates the key at startup (fail-fast) and, in non-prod only, generates an
+   * ephemeral key.
+   */
+  evidenceBundleSigner?: EvidenceBundleSigner;
   /** Erasure undo window (ms): how long a tenant may cancel a scheduled erasure. Defaults to 48h. */
   erasureUndoWindowMs?: number;
   /**
@@ -1294,6 +1313,49 @@ export interface TenantForge {
   complianceReportPublicKey(): Promise<import('jose').JWK | null>;
 
   /**
+   * Assemble a point-in-time, signed **evidence bundle** (ADR-0011 Phase 2) — a single,
+   * auditor-consumable pack of the isolation proof, residency attestation, a PII-minimized audit
+   * excerpt, and the embedded **signed** erasure certificate(s), for either the whole **fleet** or a
+   * single **tenant**. The bundle is signed as an **EdDSA (Ed25519) compact JWS** that an auditor
+   * verifies **offline with only the published public key** (`verifyEvidenceBundle` against
+   * {@link TenantForge.evidenceBundlePublicKey}). The embedded erasure-certificate JWS strings are
+   * folded in **opaque** (not re-signed) and remain **independently verifiable** via
+   * `verifyErasureCertificate`.
+   *
+   * **Per-tenant scope is a BOLA boundary:** with `scope: 'tenant'` the bundle filters **every**
+   * artifact to the one **server-derived** `tenantId` — a tenant's bundle can never carry another
+   * tenant's facts. (Retrieval/access-control is Phase 3; this method assembles + signs only — no new
+   * HTTP/CLI/MCP surface yet.) `erasureCertificates` are caller-supplied already-signed JWS strings
+   * (Phase 3 wires their persisted source); omitted ⇒ none.
+   *
+   * **Fails closed** if no evidence-bundle signer is configured (no unsigned bundle path) —
+   * production requires `TENANTFORGE_COMPLIANCE_SIGNING_KEY` (the shared evidence key; validated at
+   * startup); non-prod with no key uses an ephemeral key (not verifiable across restarts).
+   *
+   * @param options - Scope (`fleet` | `tenant`), the server-derived `tenantId` (required for tenant
+   *   scope), and optional already-signed `erasureCertificates` JWS strings to embed.
+   * @returns The signed evidence bundle (`{ bundle, jws }`).
+   * @throws Error if no evidence-bundle signer is configured, or the scope/tenant pairing is invalid
+   *   (tenant scope without an id, fleet scope with one, or an unknown scoped tenant).
+   */
+  evidenceBundle(options: {
+    scope: EvidenceScope;
+    tenantId?: string;
+    erasureCertificates?: readonly string[];
+  }): Promise<SignedEvidenceBundle>;
+
+  /**
+   * The **public** verification key (Ed25519 JWK) for **evidence bundles** — publish this to auditors
+   * so they can verify a signed bundle's `.jws` with `verifyEvidenceBundle`. Contains no private
+   * material. Per ADR-0011 the bundle reuses the compliance evidence key, so this matches
+   * {@link TenantForge.complianceReportPublicKey} byte-for-byte when both are configured; it is
+   * exposed separately for clarity of purpose.
+   *
+   * @returns The public Ed25519 JWK, or `null` when no evidence-bundle signer is configured.
+   */
+  evidenceBundlePublicKey(): Promise<import('jose').JWK | null>;
+
+  /**
    * **Query the audit trail** — the general, filterable view over the operator-attributed,
    * append-only control-plane event stream (who-did-what-when; NIST AU / SOC2 / OWASP A09). Filter
    * by event name(s), tenant, and a `since` lower bound; results are newest-first and bounded
@@ -1973,6 +2035,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const usageProvider = deps.usageProvider;
   const certificateSigner = deps.certificateSigner;
   const complianceReportSigner = deps.complianceReportSigner;
+  const evidenceBundleSigner = deps.evidenceBundleSigner;
   const allowedRegions = deps.allowedRegions ?? [];
   const baseRouter = createConnectionRouter({ registry, secretStore });
   // Optional process-local resolution cache (control-plane cost at fleet scale). When enabled, the
@@ -2126,6 +2189,63 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       },
     });
     return { report, digest };
+  };
+
+  /**
+   * Assemble + sign a point-in-time evidence bundle (ADR-0011 Phase 2). Pulls the registry tenants
+   * and (when an audit store is wired) a bounded, **server-side-scoped** audit excerpt, delegates the
+   * pure assembly to `buildEvidenceBundle` (which also re-scopes per tenant — defense in depth on the
+   * BOLA boundary), then signs it. Fails closed without a signer (no unsigned bundle path; mirrors the
+   * always-signed compliance/erasure discipline — master §2 / ADR-0011).
+   */
+  const assembleEvidenceBundle = async (options: {
+    scope: EvidenceScope;
+    tenantId?: string;
+    erasureCertificates?: readonly string[];
+  }): Promise<SignedEvidenceBundle> => {
+    if (evidenceBundleSigner === undefined) {
+      throw new Error(
+        'evidenceBundle: no evidence-bundle signer configured (set TENANTFORGE_COMPLIANCE_SIGNING_KEY)',
+      );
+    }
+    const tenants = await registry.list({ limit: MAX_SWEEP });
+    // A bounded, already-redacted audit excerpt. For a per-tenant bundle, scope the query to that
+    // tenant server-side (the builder re-filters as defense in depth — never trust a single layer).
+    let auditExcerpt: TenantEvent[] | undefined;
+    if (auditLog !== undefined) {
+      auditExcerpt = await auditLog.query({
+        limit: 25,
+        ...(options.scope === 'tenant' && options.tenantId !== undefined
+          ? { tenantId: options.tenantId }
+          : {}),
+      });
+    }
+    const bundle = buildEvidenceBundle(tenants, {
+      scope: options.scope,
+      ...(options.tenantId !== undefined ? { tenantId: options.tenantId } : {}),
+      allowedRegions,
+      now: new Date(),
+      ...(auditExcerpt !== undefined ? { auditExcerpt } : {}),
+      ...(options.erasureCertificates !== undefined
+        ? { erasureCertificates: options.erasureCertificates }
+        : {}),
+    });
+    const jws = await evidenceBundleSigner.signBundle(bundle);
+    observe('compliance.evidence_bundle_signed', {
+      outcome:
+        bundle.artifacts.isolation.compliant && bundle.artifacts.residency.compliant
+          ? 'ok'
+          : 'error',
+      ...(bundle.tenantId !== undefined ? { tenantId: bundle.tenantId } : {}),
+      context: {
+        scope: bundle.scope,
+        tenants: bundle.artifacts.inventory.total,
+        isolationCompliant: bundle.artifacts.isolation.compliant,
+        residencyCompliant: bundle.artifacts.residency.compliant,
+        erasureCertificates: bundle.artifacts.erasureCertificates.length,
+      },
+    });
+    return { bundle, jws };
   };
 
   /** Load a tenant by id or throw (offboard/suspend operate on a known tenant). */
@@ -3727,6 +3847,18 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       return complianceReportSigner === undefined ? null : complianceReportSigner.publicKeyJwk();
     },
 
+    async evidenceBundle(options: {
+      scope: EvidenceScope;
+      tenantId?: string;
+      erasureCertificates?: readonly string[];
+    }): Promise<SignedEvidenceBundle> {
+      return assembleEvidenceBundle(options);
+    },
+
+    async evidenceBundlePublicKey(): Promise<import('jose').JWK | null> {
+      return evidenceBundleSigner === undefined ? null : evidenceBundleSigner.publicKeyJwk();
+    },
+
     async queryAudit(query: AuditQueryInput = {}): Promise<TenantEvent[]> {
       if (auditLog === undefined) return [];
       const q = normalizeAuditQuery(query); // validates + clamps (throws on bad limit/since)
@@ -4629,6 +4761,39 @@ export async function buildComplianceReportSigner(config: Config): Promise<Compl
 }
 
 /**
+ * Build the evidence-bundle signer from config (ADR-0011 Phase 2). **Reuses the compliance evidence
+ * signing key** (`TENANTFORGE_COMPLIANCE_SIGNING_KEY`) — the bundle is part of the same evidence layer
+ * as the signed report, distinguished only by a distinct `typ`/`kid`, so we add **no third prod key**
+ * (the locked decision in ADR-0011). Mirrors {@link buildComplianceReportSigner} discipline exactly:
+ * a configured key → a real signer (fails fast on malformed material); a **non-production** context
+ * with no key → an **ephemeral** keypair (stderr warning; not verifiable across restarts).
+ *
+ * Production with no key fails closed **here, independently** of {@link loadConfig}'s validation
+ * (defense in depth / complete mediation — not action-at-a-distance). Exported so the guard is
+ * directly testable against a `Config` that bypasses `loadConfig`/superRefine.
+ *
+ * @param config - Validated configuration.
+ * @returns The evidence-bundle signer.
+ * @throws Error if production has no key, or a configured key is malformed (startup fail-fast).
+ */
+export async function buildEvidenceBundleSigner(config: Config): Promise<EvidenceBundleSigner> {
+  if (config.complianceSigningKey !== undefined) {
+    return createEd25519EvidenceBundleSigner({ privateKey: config.complianceSigningKey });
+  }
+  if (config.env === 'production') {
+    throw new Error(
+      'refusing an ephemeral evidence-bundle signing key in production: set TENANTFORGE_COMPLIANCE_SIGNING_KEY',
+    );
+  }
+  process.stderr.write(
+    `[tenantforge] WARNING: TENANTFORGE_COMPLIANCE_SIGNING_KEY is not set (TENANTFORGE_ENV=${config.env}). ` +
+      `Generating an EPHEMERAL Ed25519 evidence-bundle signing key for this process — NON-PRODUCTION ONLY. ` +
+      `Signed bundles are NOT verifiable across restarts. Set a real key for any persistent deployment.\n`,
+  );
+  return createEphemeralEvidenceBundleSigner();
+}
+
+/**
  * Build a {@link TenantForge} wired to the production adapters (Neon API + Postgres registry) from
  * validated configuration. This is the production composition root.
  *
@@ -4651,6 +4816,9 @@ export async function tenantForgeFromConfig(
   const certificateSigner = await buildCertificateSigner(config);
   // The compliance-report signer (ADR-0011) — same fail-fast discipline, distinct key/purpose.
   const complianceReportSigner = await buildComplianceReportSigner(config);
+  // The evidence-bundle signer (ADR-0011 Phase 2) — reuses the SAME compliance evidence key (no third
+  // prod key), distinct only by typ/kid. Same fail-fast discipline.
+  const evidenceBundleSigner = await buildEvidenceBundleSigner(config);
   const registry = createPgTenantRegistry({
     connectionString: config.databaseUrl,
     allowInsecure: allowInsecureDb,
@@ -4785,6 +4953,7 @@ export async function tenantForgeFromConfig(
     secretStore,
     certificateSigner,
     complianceReportSigner,
+    evidenceBundleSigner,
     migrationRunner: createPgMigrationRunner({ allowInsecure: allowInsecureDb }),
     exporter,
     eventSink,

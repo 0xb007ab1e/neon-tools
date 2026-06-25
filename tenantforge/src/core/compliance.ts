@@ -96,9 +96,115 @@ function toAuditEntry(e: TenantEvent): ComplianceAuditEntry {
   };
 }
 
-/** Sort events newest-first and map to compact entries (deterministic, hashable output). */
-function auditEntries(events: readonly TenantEvent[]): ComplianceAuditEntry[] {
+/**
+ * Sort events newest-first and map to compact, **PII-minimized** entries (deterministic, hashable
+ * output). Exported so the evidence bundle (ADR-0011 Phase 2) reuses the **same** redaction +
+ * canonicalization as the compliance report — never a second, divergent projection.
+ *
+ * @param events - The (already-`redactSecrets`-passed) audit events to project.
+ * @returns The compact entries, newest-first.
+ */
+export function auditEntries(events: readonly TenantEvent[]): ComplianceAuditEntry[] {
   return [...events].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).map(toAuditEntry);
+}
+
+/** The per-status tenant inventory of a report (a count of every lifecycle status + the total). */
+export type ComplianceInventory = ComplianceReport['inventory'];
+/** The physical-isolation attestation block of a report. */
+export type ComplianceIsolation = ComplianceReport['isolation'];
+/** The data-residency attestation block of a report. */
+export type ComplianceResidency = ComplianceReport['residency'];
+
+/**
+ * Count a set of tenants by lifecycle status (an inventory) — pure. Extracted so the evidence bundle
+ * (ADR-0011 Phase 2) computes a **per-tenant** or fleet inventory with the **same** logic the
+ * compliance report uses (no duplication; DIP — `@rules/topic-architecture-patterns.md`).
+ *
+ * @param tenants - The tenant records to count.
+ * @returns The total and per-status counts (every status key present, even at zero).
+ */
+export function inventoryByStatus(tenants: readonly TenantRecord[]): ComplianceInventory {
+  const byStatus: Record<TenantStatus, number> = {
+    provisioning: 0,
+    active: 0,
+    suspended: 0,
+    offboarding: 0,
+    deleted: 0,
+  };
+  for (const t of tenants) byStatus[t.status] += 1;
+  return { total: tenants.length, byStatus };
+}
+
+/**
+ * Build the **physical-isolation attestation** over a set of *live* tenants (deleted tenants have no
+ * project, so the caller filters them out first) — pure. Flags a project that is expected-but-absent
+ * (`missingProject`) or shared by more than one tenant (`sharedProjects`, a cross-tenant violation).
+ * Arrays are sorted for a stable, hashable output. Extracted from {@link buildComplianceReport} so
+ * the evidence bundle reuses the exact same attestation (ADR-0011 Phase 2).
+ *
+ * @param live - The live (non-`deleted`) tenants to attest.
+ * @returns The isolation attestation block.
+ */
+export function buildIsolationAttestation(live: readonly TenantRecord[]): ComplianceIsolation {
+  const missingProject = live
+    .filter((t) => PROVISIONED_STATUSES.has(t.status) && t.neonProjectId === null)
+    .map((t) => t.id)
+    .sort();
+  const byProject = new Map<string, string[]>();
+  for (const t of live) {
+    if (t.neonProjectId === null) continue;
+    const ids = byProject.get(t.neonProjectId) ?? [];
+    ids.push(t.id);
+    byProject.set(t.neonProjectId, ids);
+  }
+  const sharedProjects = [...byProject.entries()]
+    .filter(([, ids]) => ids.length > 1)
+    .map(([neonProjectId, tenantIds]) => ({ neonProjectId, tenantIds: [...tenantIds].sort() }))
+    .sort((a, b) => a.neonProjectId.localeCompare(b.neonProjectId));
+  return {
+    compliant: missingProject.length === 0 && sharedProjects.length === 0,
+    missingProject,
+    sharedProjects,
+  };
+}
+
+/**
+ * Build the **data-residency attestation** over a set of *live* tenants — pure. Maps each tenant's
+ * region to a jurisdiction, counts by jurisdiction, and flags tenants whose region is unknown or
+ * outside the org allow-list. Violations are sorted for a stable, hashable output. Extracted from
+ * {@link buildComplianceReport} so the evidence bundle reuses the exact same attestation (ADR-0011
+ * Phase 2).
+ *
+ * @param live - The live (non-`deleted`) tenants to attest.
+ * @param allowedRegions - The org region allow-list (empty = unrestricted).
+ * @returns The residency attestation block.
+ */
+export function buildResidencyAttestation(
+  live: readonly TenantRecord[],
+  allowedRegions: readonly string[],
+): ComplianceResidency {
+  const byJurisdiction: Record<string, number> = {};
+  const violations: { tenantId: string; region: string; reason: string }[] = [];
+  for (const t of live) {
+    const jurisdiction = isValidRegion(t.region) ? regionJurisdiction(t.region) : 'unknown';
+    byJurisdiction[jurisdiction] = (byJurisdiction[jurisdiction] ?? 0) + 1;
+    if (jurisdiction === 'unknown') {
+      violations.push({
+        tenantId: t.id,
+        region: t.region,
+        reason: 'no known residency jurisdiction',
+      });
+    } else if (allowedRegions.length > 0 && !allowedRegions.includes(t.region)) {
+      violations.push({ tenantId: t.id, region: t.region, reason: 'region not in org allow-list' });
+    }
+  }
+  violations.sort((a, b) => a.tenantId.localeCompare(b.tenantId));
+  return {
+    compliant: violations.length === 0,
+    allowedRegions: [...allowedRegions],
+    byJurisdiction,
+    violations,
+  };
 }
 
 /**
@@ -118,67 +224,14 @@ export function buildComplianceReport(
 ): ComplianceReport {
   const allowedRegions = [...(options.allowedRegions ?? [])];
 
-  const byStatus: Record<TenantStatus, number> = {
-    provisioning: 0,
-    active: 0,
-    suspended: 0,
-    offboarding: 0,
-    deleted: 0,
-  };
-  for (const t of tenants) byStatus[t.status] += 1;
-
   // Attestations cover the live fleet only (a deleted tenant's project is gone by design).
   const live = tenants.filter((t) => t.status !== 'deleted');
 
-  // Isolation: a project expected-but-absent, or a project shared by >1 tenant.
-  const missingProject = live
-    .filter((t) => PROVISIONED_STATUSES.has(t.status) && t.neonProjectId === null)
-    .map((t) => t.id)
-    .sort();
-  const byProject = new Map<string, string[]>();
-  for (const t of live) {
-    if (t.neonProjectId === null) continue;
-    const ids = byProject.get(t.neonProjectId) ?? [];
-    ids.push(t.id);
-    byProject.set(t.neonProjectId, ids);
-  }
-  const sharedProjects = [...byProject.entries()]
-    .filter(([, ids]) => ids.length > 1)
-    .map(([neonProjectId, tenantIds]) => ({ neonProjectId, tenantIds: [...tenantIds].sort() }))
-    .sort((a, b) => a.neonProjectId.localeCompare(b.neonProjectId));
-
-  // Residency: jurisdiction breakdown + allow-list / unknown-region violations.
-  const byJurisdiction: Record<string, number> = {};
-  const violations: { tenantId: string; region: string; reason: string }[] = [];
-  for (const t of live) {
-    const jurisdiction = isValidRegion(t.region) ? regionJurisdiction(t.region) : 'unknown';
-    byJurisdiction[jurisdiction] = (byJurisdiction[jurisdiction] ?? 0) + 1;
-    if (jurisdiction === 'unknown') {
-      violations.push({
-        tenantId: t.id,
-        region: t.region,
-        reason: 'no known residency jurisdiction',
-      });
-    } else if (allowedRegions.length > 0 && !allowedRegions.includes(t.region)) {
-      violations.push({ tenantId: t.id, region: t.region, reason: 'region not in org allow-list' });
-    }
-  }
-  violations.sort((a, b) => a.tenantId.localeCompare(b.tenantId));
-
   return {
     generatedAt: options.now.toISOString(),
-    inventory: { total: tenants.length, byStatus },
-    isolation: {
-      compliant: missingProject.length === 0 && sharedProjects.length === 0,
-      missingProject,
-      sharedProjects,
-    },
-    residency: {
-      compliant: violations.length === 0,
-      allowedRegions,
-      byJurisdiction,
-      violations,
-    },
+    inventory: inventoryByStatus(tenants),
+    isolation: buildIsolationAttestation(live),
+    residency: buildResidencyAttestation(live, allowedRegions),
     ...(options.audit !== undefined
       ? {
           audit: {
