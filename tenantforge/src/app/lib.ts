@@ -54,6 +54,7 @@ import {
   type SignedComplianceReport,
   type EvidenceScope,
   type SignedEvidenceBundle,
+  type EvidenceManifest,
   type AuditQueryInput,
   type AnomalyThresholds,
   type AuditAnomaly,
@@ -105,6 +106,7 @@ import type { EvidenceBundleSigner } from '../ports/evidence-bundle-signer.js';
 import {
   createEd25519EvidenceBundleSigner,
   createEphemeralEvidenceBundleSigner,
+  EVIDENCE_BUNDLE_KID,
 } from '../adapters/evidence-bundle-signer.js';
 import { createCachingConnectionRouter } from '../adapters/caching-connection-router.js';
 import {
@@ -189,6 +191,9 @@ import { createPgSignupRequestStore } from '../adapters/neon-pg/signup-request-s
 import { createInMemoryOneTimeCodeStore } from '../adapters/one-time-code-store.js';
 import { createInMemoryPendingErasureStore } from '../adapters/pending-erasure-store.js';
 import { createPgPendingErasureStore } from '../adapters/neon-pg/pending-erasure-store.js';
+import type { EvidenceStore } from '../ports/evidence-store.js';
+import { createInMemoryEvidenceStore } from '../adapters/evidence-store.js';
+import { createObjectStoreEvidenceStore } from '../adapters/object-store-evidence-store.js';
 import { createPgMessageQueue } from '../adapters/neon-pg/message-queue.js';
 import { createPgWebhookSubscriptionStore } from '../adapters/neon-pg/webhook-subscription-store.js';
 import { createSubscriptionWebhookEventSink } from '../adapters/subscription-webhook-event-sink.js';
@@ -203,6 +208,24 @@ import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 
 import { loadConfig, type Config } from './config.js';
 
 export type { Config } from './config.js';
+
+/**
+ * The result of {@link TenantForge.evidenceBundle}: the signed bundle, plus — **only when an evidence
+ * store is wired** — the {@link EvidenceManifest} of the just-persisted bundle. `manifest` is omitted
+ * when no store is configured (generation still succeeds; persistence is explicitly absent, never
+ * silently claimed — ADR-0011 Phase 3a, master §2). Extends {@link SignedEvidenceBundle} so existing
+ * callers reading `{ bundle, jws }` are **not** regressed (additive — non-breaking).
+ */
+export interface SignedEvidenceBundleResult extends SignedEvidenceBundle {
+  /** The manifest of the persisted bundle, present iff an evidence store persisted it. */
+  manifest?: EvidenceManifest;
+}
+
+/** The result of an evidence-retention prune sweep (ADR-0011 Phase 3a). */
+export interface EvidencePruneReport {
+  /** Number of expired evidence bundles pruned this sweep (body + index). */
+  pruned: number;
+}
 
 /** A compliance report plus a tamper-evidence digest over its canonical JSON. */
 export interface ComplianceReportResult {
@@ -549,6 +572,23 @@ export interface TenantForgeDeps {
    * ephemeral key.
    */
   evidenceBundleSigner?: EvidenceBundleSigner;
+  /**
+   * **Evidence-at-rest store** for signed compliance bundles (ADR-0011 Phase 3a). When provided,
+   * {@link TenantForge.evidenceBundle} **persists** every generated bundle and returns its
+   * {@link EvidenceManifest} alongside the signed body, and {@link TenantForge.evidencePrune} runs the
+   * retention sweep. **Absent ⇒ generation still works** (returns the signed bundle, `manifest`
+   * omitted) but does **not** persist — the absence is explicit, never a silent "persisted" claim
+   * (master §2). The store is a **low-level capability**: it is NOT an outward retrieval surface here
+   * (no CLI/HTTP/MCP read of a bundle) — the access-controlled retrieval surface (BOLA-on-fetch) is
+   * Phase 3b. `memory` (default) / `object-store` config-selected via `TENANTFORGE_EVIDENCE_STORE`.
+   */
+  evidenceStore?: EvidenceStore;
+  /**
+   * Default retention window (days) recorded on a persisted evidence bundle's manifest
+   * (`TENANTFORGE_EVIDENCE_RETENTION_DAYS`); `0`/omitted ⇒ **indefinite** retention (auditors keep
+   * evidence durably — data-lifecycle). Drives `retentionUntil` + {@link TenantForge.evidencePrune}.
+   */
+  evidenceRetentionDays?: number;
   /** Erasure undo window (ms): how long a tenant may cancel a scheduled erasure. Defaults to 48h. */
   erasureUndoWindowMs?: number;
   /**
@@ -1332,17 +1372,39 @@ export interface TenantForge {
    * production requires `TENANTFORGE_COMPLIANCE_SIGNING_KEY` (the shared evidence key; validated at
    * startup); non-prod with no key uses an ephemeral key (not verifiable across restarts).
    *
+   * **Persist-on-generate (ADR-0011 Phase 3a):** when an **evidence store** is wired, the signed
+   * bundle is persisted at rest and its {@link EvidenceManifest} is returned in `manifest`; **without
+   * a store, generation still succeeds** (returns `{ bundle, jws }`, `manifest` omitted) and does
+   * **not** silently claim persistence (master §2). A persist failure fails the call (the auditor
+   * must not believe a bundle is durably stored when it is not — fail closed). Persisting emits a
+   * `compliance.evidence_bundle_persisted` event + a webhook (manifest facts only — no body/secrets).
+   * **No outward retrieval surface is added here** — fetching a stored bundle is Phase 3b.
+   *
    * @param options - Scope (`fleet` | `tenant`), the server-derived `tenantId` (required for tenant
    *   scope), and optional already-signed `erasureCertificates` JWS strings to embed.
-   * @returns The signed evidence bundle (`{ bundle, jws }`).
-   * @throws Error if no evidence-bundle signer is configured, or the scope/tenant pairing is invalid
-   *   (tenant scope without an id, fleet scope with one, or an unknown scoped tenant).
+   * @returns The signed evidence bundle (`{ bundle, jws }`), plus its `manifest` when persisted.
+   * @throws Error if no evidence-bundle signer is configured, the scope/tenant pairing is invalid
+   *   (tenant scope without an id, fleet scope with one, or an unknown scoped tenant), or persistence
+   *   was requested (a store is wired) but failed.
    */
   evidenceBundle(options: {
     scope: EvidenceScope;
     tenantId?: string;
     erasureCertificates?: readonly string[];
-  }): Promise<SignedEvidenceBundle>;
+  }): Promise<SignedEvidenceBundleResult>;
+
+  /**
+   * **Evidence-retention sweep (ADR-0011 Phase 3a):** irreversibly prune every persisted evidence
+   * bundle past its `retentionUntil` — the scheduled retention job for evidence-at-rest (cron /
+   * K8s CronJob), mirroring {@link TenantForge.purgeExpired} / {@link TenantForge.erasureSweep}.
+   * Idempotent and batched (safe to run repeatedly; bounded per call). Bundles with no
+   * `retentionUntil` (indefinite retention) are never pruned. A no-op (`pruned: 0`) when no evidence
+   * store is wired (fail soft). **Persistence-side only** — not a retrieval surface (Phase 3b).
+   *
+   * @param options - Optional `limit` (max bundles pruned this call) and an injectable `now`.
+   * @returns The number of bundles pruned.
+   */
+  evidencePrune(options?: { limit?: number; now?: Date }): Promise<EvidencePruneReport>;
 
   /**
    * The **public** verification key (Ed25519 JWK) for **evidence bundles** — publish this to auditors
@@ -2202,7 +2264,7 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
     scope: EvidenceScope;
     tenantId?: string;
     erasureCertificates?: readonly string[];
-  }): Promise<SignedEvidenceBundle> => {
+  }): Promise<SignedEvidenceBundleResult> => {
     if (evidenceBundleSigner === undefined) {
       throw new Error(
         'evidenceBundle: no evidence-bundle signer configured (set TENANTFORGE_COMPLIANCE_SIGNING_KEY)',
@@ -2245,7 +2307,38 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
         erasureCertificates: bundle.artifacts.erasureCertificates.length,
       },
     });
-    return { bundle, jws };
+    const signed: SignedEvidenceBundle = { bundle, jws };
+    // Persist-on-generate (ADR-0011 Phase 3a). With no store wired, generation still succeeds and
+    // does NOT claim persistence (manifest omitted — explicit, never silent; master §2). With a store,
+    // a persist failure FAILS the call (fail closed — an auditor must not believe a bundle is durably
+    // stored when it is not). The signer always exposes a kid for the manifest provenance.
+    const store = deps.evidenceStore;
+    if (store === undefined) return signed;
+    // The signer pins the evidence-bundle `kid` in every JWS protected header; record that as the
+    // manifest provenance (the public JWK itself carries no `kid`).
+    const manifest = await store.put(signed, {
+      signerKid: EVIDENCE_BUNDLE_KID,
+      ...(deps.evidenceRetentionDays !== undefined
+        ? { retentionDays: deps.evidenceRetentionDays }
+        : {}),
+    });
+    // Emit the persist event — fans out to managed webhook subscriptions (the existing webhooks port,
+    // mirroring erasure/DSAR notifications). Payload = manifest FACTS ONLY (bundleId/scope/tenantId/
+    // generatedAt/retentionUntil); NEVER the bundle body or any secret (master §5).
+    observe('compliance.evidence_bundle_persisted', {
+      outcome: 'ok',
+      ...(manifest.tenantId !== undefined ? { tenantId: manifest.tenantId } : {}),
+      context: {
+        bundleId: manifest.bundleId,
+        scope: manifest.scope,
+        generatedAt: manifest.generatedAt,
+        storedAt: manifest.storedAt,
+        ...(manifest.retentionUntil !== undefined
+          ? { retentionUntil: manifest.retentionUntil }
+          : {}),
+      },
+    });
+    return { ...signed, manifest };
   };
 
   /** Load a tenant by id or throw (offboard/suspend operate on a known tenant). */
@@ -3851,8 +3944,23 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       scope: EvidenceScope;
       tenantId?: string;
       erasureCertificates?: readonly string[];
-    }): Promise<SignedEvidenceBundle> {
+    }): Promise<SignedEvidenceBundleResult> {
       return assembleEvidenceBundle(options);
+    },
+
+    async evidencePrune(
+      options: { limit?: number; now?: Date } = {},
+    ): Promise<EvidencePruneReport> {
+      const store = deps.evidenceStore;
+      // No store wired ⇒ nothing can ever be persisted ⇒ a clean no-op (fail soft).
+      if (store === undefined) return { pruned: 0 };
+      const now = options.now ?? new Date();
+      const pruned = await store.pruneExpired(now, options.limit);
+      observe('compliance.evidence_prune_sweep', {
+        outcome: 'ok',
+        context: { pruned },
+      });
+      return { pruned };
     },
 
     async evidenceBundlePublicKey(): Promise<import('jose').JWK | null> {
@@ -5056,6 +5164,19 @@ export async function tenantForgeFromConfig(
             allowInsecure: allowInsecureDb,
           })
         : createInMemoryPendingErasureStore(),
+    // Evidence-at-rest store (ADR-0011 Phase 3a). `object-store` persists the signed bundle body to
+    // the configured export object store (requires TENANTFORGE_EXPORT_DIR; encrypt-at-rest is the
+    // object store's concern) under non-guessable tenant-scoped keys + a queryable manifest index;
+    // `memory` (default) is per-instance dev/test. Retention defaults from
+    // TENANTFORGE_EVIDENCE_RETENTION_DAYS (0 ⇒ indefinite). This is persistence only — no outward
+    // retrieval surface (Phase 3b).
+    evidenceStore:
+      config.evidenceStore === 'object-store' && config.exportDir !== undefined
+        ? createObjectStoreEvidenceStore({
+            objectStore: createFilesystemObjectStore({ dir: config.exportDir }),
+          })
+        : createInMemoryEvidenceStore(),
+    evidenceRetentionDays: config.evidenceRetentionDays,
     ...(config.stepUpCodeTtlMs !== undefined ? { stepUpCodeTtlMs: config.stepUpCodeTtlMs } : {}),
     ...(config.erasureUndoWindowMs !== undefined
       ? { erasureUndoWindowMs: config.erasureUndoWindowMs }

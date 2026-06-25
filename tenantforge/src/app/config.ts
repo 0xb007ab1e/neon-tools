@@ -209,6 +209,16 @@ const EnvSchema = z
     // TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE on in multi-replica / restart-sensitive production
     // (threat-model B8w / red-team F2, ADR-0010).
     TENANTFORGE_PENDING_ERASURE_STORE: z.enum(['memory', 'pg']).default('memory'),
+    // Evidence-at-rest store for signed compliance bundles (ADR-0011 Phase 3a): `memory` (default,
+    // per-instance dev/test) or `object-store` (persist the signed bundle body durably to the export
+    // object store — requires TENANTFORGE_EXPORT_DIR; encrypt-at-rest is the object store's concern).
+    // Non-guessable, tenant-scoped keys + a queryable manifest index. Persistence only — the
+    // access-controlled retrieval surface is Phase 3b. Mirrors TENANTFORGE_PENDING_ERASURE_STORE.
+    TENANTFORGE_EVIDENCE_STORE: z.enum(['memory', 'object-store']).default('memory'),
+    // Default retention window (days) recorded on a persisted evidence bundle's manifest; `0`
+    // (default) ⇒ indefinite retention (auditors keep evidence durably — data-lifecycle). Drives
+    // `retentionUntil` + the `evidencePrune` sweep.
+    TENANTFORGE_EVIDENCE_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(0),
     // Transport-security escape hatches (default false — fail closed). `..._DB` permits a non-TLS
     // Postgres connection (no `sslmode=require`); `..._URLS` permits a non-https outbound URL
     // (Neon API / Vault / Azure Key Vault / OIDC JWKS / Stripe). Set ONLY for local development
@@ -491,6 +501,19 @@ const EnvSchema = z
         message: 'TENANTFORGE_EXPORT_DIR is required when TENANTFORGE_EXPORTER=pg-dump',
       });
     }
+    // Fail fast rather than silently fall back to the in-memory store: an operator who selected the
+    // object-store evidence backend for durability must not get non-durable persistence with no
+    // signal (master §2 fail-closed; topic-config-environments "validate at startup, fail fast").
+    if (
+      env.TENANTFORGE_EVIDENCE_STORE === 'object-store' &&
+      env.TENANTFORGE_EXPORT_DIR === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TENANTFORGE_EXPORT_DIR'],
+        message: 'TENANTFORGE_EXPORT_DIR is required when TENANTFORGE_EVIDENCE_STORE=object-store',
+      });
+    }
   });
 
 /** Resolved, validated configuration. */
@@ -582,6 +605,14 @@ export interface Config {
    * multi-replica / restart-sensitive production (threat-model B8w / red-team F2, ADR-0010).
    */
   pendingErasureStore: 'memory' | 'pg';
+  /**
+   * Evidence-at-rest store (ADR-0011 Phase 3a): in-memory (per-instance dev/test) or `object-store`
+   * (persist the signed bundle body to the export object store; requires {@link exportDir}). Non-
+   * guessable, tenant-scoped keys + a manifest index; persistence only (retrieval is Phase 3b).
+   */
+  evidenceStore: 'memory' | 'object-store';
+  /** Default retention window (days) for a persisted evidence bundle; `0` ⇒ indefinite retention. */
+  evidenceRetentionDays: number;
   /** Persisted audit trail: none (stdout only) or Postgres (durable, queryable). */
   auditLog: 'none' | 'pg';
   /** Credit ledger backend: none (off), memory (per-instance), or pg (durable, authoritative). */
@@ -708,6 +739,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rateLimitStore: parsed.TENANTFORGE_RATE_LIMIT_STORE,
     idempotencyStore: parsed.TENANTFORGE_IDEMPOTENCY_STORE,
     pendingErasureStore: parsed.TENANTFORGE_PENDING_ERASURE_STORE,
+    evidenceStore: parsed.TENANTFORGE_EVIDENCE_STORE,
+    evidenceRetentionDays: parsed.TENANTFORGE_EVIDENCE_RETENTION_DAYS,
     auditLog: parsed.TENANTFORGE_AUDIT_LOG,
     creditLedger: parsed.TENANTFORGE_CREDIT_LEDGER,
     signupTokenStore: parsed.TENANTFORGE_SIGNUP_TOKEN_STORE,

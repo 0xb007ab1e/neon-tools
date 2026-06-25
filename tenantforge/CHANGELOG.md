@@ -8,6 +8,28 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Evidence-at-rest persistence foundation** — Phase 3a of the **compliance & governance evidence
+  layer** (ADR-0011; threat-model **B10**). Signed evidence bundles can now be **persisted at rest**
+  with a queryable manifest index, retention, and a generate webhook. New pure-core
+  `EvidenceManifest` (facts only — `bundleId`/`scope`/`tenantId`/`generatedAt`/`storedAt`/`signerKid`/
+  `contentHashes`/`retentionUntil`; **no JWS body, no secrets**) + retention math
+  (`evidenceRetentionUntil`, `isEvidenceExpired`). A new `EvidenceStore` port —
+  `put → EvidenceManifest`, `get(bundleId, tenantScope)`, `list(filter)`, `pruneExpired(now)` — with
+  **non-guessable, random, tenant-scoped keys** (128-bit ids, never sequential — the F7/L3 lesson) so
+  Phase 3b's authz can enforce ownership; two adapters: in-memory (dev/test) and **object-store-backed**
+  (persists the body to the existing object-store port; encrypt-at-rest is the object store's concern),
+  config-selected via `TENANTFORGE_EVIDENCE_STORE` (default `memory`). **Persist-on-generate:**
+  `TenantForge.evidenceBundle(...)` now returns the persisted `manifest` alongside `{ bundle, jws }`
+  when a store is wired (additive — non-breaking); **without a store it still generates** but does not
+  silently claim persistence (fail closed: a persist failure fails the call). Persisting emits a
+  `compliance.evidence_bundle_persisted` event (fans out to managed webhooks — **manifest facts only,
+  never the body/secrets**). New `TenantForge.evidencePrune(...)` retention sweep (idempotent, batched;
+  default `TENANTFORGE_EVIDENCE_RETENTION_DAYS`, `0` = indefinite). **The access-controlled retrieval
+  surface (CLI/HTTP/MCP/public-key endpoint) is Phase 3b; the dashboard panel is Phase 3c — both
+  deferred and confirmed out of scope here.** The store is a low-level capability; **access control
+  lives at the 3b surface, not the store** (though `get`/`list` take a tenant-scope argument so 3b
+  can't bypass per-tenant ownership).
+
 - **Signed, independently-verifiable evidence bundles** — Phase 2 of the **compliance & governance
   evidence layer** (ADR-0011; threat-model **B10**). A pure `buildEvidenceBundle(...)` (fleet **and**
   per-tenant) assembles the isolation proof, residency attestation, a PII-minimized audit excerpt, and

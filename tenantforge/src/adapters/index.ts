@@ -54,6 +54,16 @@ export type {
   PendingErasureRecord,
   PendingErasureStatus,
 } from '../ports/pending-erasure-store.js';
+export {
+  createInMemoryEvidenceStore,
+  mintEvidenceBundleId,
+  type InMemoryEvidenceStore,
+} from './evidence-store.js';
+export {
+  createObjectStoreEvidenceStore,
+  type ObjectStoreEvidenceStoreOptions,
+} from './object-store-evidence-store.js';
+export type { EvidenceStore, EvidencePutOptions } from '../ports/evidence-store.js';
 export { createNeonPgSecretStore, type NeonPgSecretStoreOptions } from './neon-pg/secret-store.js';
 export { createVaultSecretStore, type VaultSecretStoreOptions } from './vault/secret-store.js';
 export {

@@ -63,6 +63,13 @@ export {
   type BuildEvidenceBundleOptions,
 } from './evidence-bundle.js';
 export {
+  evidenceRetentionUntil,
+  isEvidenceExpired,
+  EVIDENCE_BUNDLE_ID_BYTES,
+  type EvidenceManifest,
+  type EvidenceManifestFilter,
+} from './evidence-manifest.js';
+export {
   estimateCostUsd,
   buildCostReport,
   type CostRates,
