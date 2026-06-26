@@ -297,6 +297,83 @@
 .cf-row-value {
   color: var(--fg-muted);
 }
+.cf-row-info {
+  margin-inline-start: var(--sp-1);
+}
+
+/* ---- Contextual help: InfoTip (focusable ⓘ + dismissible/hoverable/persistent bubble) ---- */
+.cf-infotip {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+.cf-infotip-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  margin: 0;
+  border-radius: var(--radius-circular);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--fg-muted);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: help;
+}
+.cf-infotip-trigger:hover {
+  color: var(--fg);
+  border-color: var(--fg-subtle);
+}
+.cf-infotip-bubble {
+  position: absolute;
+  z-index: 50;
+  inset-inline-start: 0;
+  top: calc(100% + var(--sp-1));
+  width: max-content;
+  max-width: min(20rem, 80vw);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-8);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-body);
+  white-space: normal;
+}
+
+/* ---- FormField (label + description + error wrapper) ---- */
+.cf-field {
+  display: block;
+  margin-bottom: var(--sp-4);
+}
+.cf-field-label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin: 0 0 var(--sp-1);
+}
+.cf-field-label {
+  font-weight: var(--fw-semibold);
+  margin: 0;
+}
+.cf-field-info {
+  display: inline-flex;
+}
+.cf-field-desc {
+  margin: 0 0 var(--sp-2);
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+}
+.cf-field-error {
+  margin: var(--sp-1) 0 0;
+  color: var(--danger-fg);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+}
 
 /* ---- Stat tiles ---- */
 .cf-stat-grid {

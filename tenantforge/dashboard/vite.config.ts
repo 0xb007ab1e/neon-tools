@@ -12,6 +12,12 @@ export default defineConfig({
   server: {
     host: process.env.DASHBOARD_HOST ?? '127.0.0.1',
     port: 5173,
+    // Vite blocks non-local Host headers by default (anti-DNS-rebinding). Allow the tailnet
+    // MagicDNS host(s) when fronted by Tailscale HTTPS via DASHBOARD_ALLOWED_HOSTS (comma-separated;
+    // a leading-dot entry like ".ts.net" allows that domain + subdomains). Unset = local only.
+    ...(process.env.DASHBOARD_ALLOWED_HOSTS !== undefined
+      ? { allowedHosts: process.env.DASHBOARD_ALLOWED_HOSTS.split(',') }
+      : {}),
     // The dashboard backend is mounted on the control-plane HTTP server.
     proxy: { '/dashboard/api': process.env.DASHBOARD_API_ORIGIN ?? 'http://127.0.0.1:3000' },
   },

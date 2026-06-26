@@ -17,6 +17,8 @@ import type { Stripe, StripeElements } from './loaders.js';
 import {
   Card,
   DataTable,
+  FormField,
+  InfoTip,
   Pill,
   SettingsRow,
   StatGrid,
@@ -307,6 +309,13 @@ export function OverviewView(): React.ReactElement {
               <StatTile
                 label="Status"
                 value={<Pill tone={statusTone(s.status)}>{s.status}</Pill>}
+                hint={
+                  <InfoTip label="What the workspace status means">
+                    <strong>active</strong>: running normally. <strong>suspended</strong>: paused
+                    (e.g. billing) — read-only. <strong>offboarding</strong>: cancelled and within
+                    the reversible grace window. <strong>deleted</strong>: erased.
+                  </InfoTip>
+                }
               />
               <StatTile label="Region" value={s.region} />
               <StatTile label="Member since" value={fmtDate(s.createdAt)} />
@@ -489,7 +498,6 @@ export function PlanView(): React.ReactElement {
   const [preview, setPreview] = useState<PlanPreview | null>(null);
   const [confirmed, setConfirmed] = useState<string | null>(null);
   const action = useAction();
-  const previewId = useId();
 
   const doPreview = (e: React.FormEvent): void => {
     e.preventDefault();
@@ -532,24 +540,41 @@ export function PlanView(): React.ReactElement {
               }
             />
             <form onSubmit={doPreview}>
-              <label htmlFor="new-price">New plan price (USD per period)</label>
-              <input
+              <FormField
                 id="new-price"
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                required
-                aria-describedby={previewId}
-              />
-              {p.available.length > 0 && (
-                <p id={previewId} className="hint">
-                  Available plans: {p.available.map((a) => `$${a.priceUsd}`).join(', ')}
-                </p>
-              )}
-              <button type="submit" disabled={action.busy || target === ''}>
+                label="New plan price (USD per period)"
+                description={
+                  p.available.length > 0
+                    ? `Enter a price per billing period. Available plans: ${p.available
+                        .map((a) => `$${a.priceUsd}`)
+                        .join(', ')}. You'll preview any prorated charge before it applies.`
+                    : "Enter a price per billing period. You'll preview any prorated charge before it applies."
+                }
+                info={
+                  <InfoTip label="About plan price">
+                    Changing your price is prorated for the rest of the current period — you preview
+                    the exact charge or credit, then confirm. Nothing is charged until you confirm.
+                  </InfoTip>
+                }
+              >
+                {(field) => (
+                  <input
+                    {...field}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={target}
+                    onChange={(e) => setTarget(e.target.value)}
+                    required
+                  />
+                )}
+              </FormField>
+              <button
+                type="submit"
+                disabled={action.busy || target === ''}
+                title="Preview the prorated charge or credit before applying the change"
+              >
                 {action.busy && <span className="spinner" aria-hidden="true" />}
                 Preview change
               </button>
@@ -781,7 +806,12 @@ function CancelPanel(): React.ReactElement {
           {result}
         </p>
       )}
-      <button type="button" className="danger-button" onClick={() => setOpen(true)}>
+      <button
+        type="button"
+        className="danger-button"
+        onClick={() => setOpen(true)}
+        title="Opens a confirmation step (we email a one-time code). Your workspace stays reversible during a grace window."
+      >
         Cancel workspace…
       </button>
       {open && (
@@ -889,14 +919,24 @@ function ErasurePanel(props: {
               {cancelAction.error}
             </p>
           )}
-          <button type="button" onClick={cancelErasure} disabled={cancelAction.busy}>
+          <button
+            type="button"
+            onClick={cancelErasure}
+            disabled={cancelAction.busy}
+            title="Stops the scheduled erasure and keeps your workspace. Available until the undo window closes."
+          >
             {cancelAction.busy && <span className="spinner" aria-hidden="true" />}
             Cancel scheduled erasure
           </button>
         </div>
       )}
       {!isPending && (
-        <button type="button" className="danger-button" onClick={() => setOpen(true)}>
+        <button
+          type="button"
+          className="danger-button"
+          onClick={() => setOpen(true)}
+          title="Permanently deletes your workspace and all data. Requires typing ERASE and a one-time code; a short undo window follows before it runs."
+        >
           Erase workspace…
         </button>
       )}

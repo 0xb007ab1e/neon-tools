@@ -8,6 +8,25 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Contextual help + natural-flow UX across the consoles (UI/UX).** Every control/input/action now
+  carries an accessible explanation, and dependent/child actions surface in context. New shared
+  components: **`InfoTip`** — a focusable ⓘ trigger meeting **WCAG 1.4.13** (dismissible via Esc/
+  outside-click, hoverable via a grace timeout, persistent; keyboard + tap operable; trigger
+  `aria-describedby` the `role="tooltip"` bubble for screen readers) — and **`FormField`** — an input
+  wrapper with a visible `<label htmlFor>`, a `description` tied via `aria-describedby`, an optional
+  inline `InfoTip`, and an `error` slot announced as `role="alert"` (render-prop hands the control
+  `{id, aria-describedby, aria-invalid}`). `SettingsRow` gained `description`/`info`. Applied across
+  **portal** (Plan price → `FormField` with guidance; Overview status + Plan get `InfoTip`s
+  explaining status/proration; destructive cancel/erase buttons carry consequence `title`s) and
+  **dashboard** (operator-digest severity + compliance isolation/residency `InfoTip`s; the reconcile
+  action explains what it does, and the preview-only/disabled state explains _why_ — capability +
+  permission — and points to the CLI). Progressive disclosure was reinforced: plan-change previews
+  the prorated charge before a separate confirm; cancel/erasure disclose the one-time-code step + undo
+  window inline; reconcile shows the plan before Run and announces the result via `aria-live`. Signup
+  kept light. Front-end only; no backend/core changes. Tests: added `InfoTip`/`FormField`/`SettingsRow`
+  help tests (keyboard open/close, Esc dismiss, `aria-describedby`/`aria-invalid` wiring, label
+  association, axe) — portal **49**, dashboard **9**; all existing suites stay green. Docs:
+  `docs/design/fluent-design-system.md` (catalog + "Contextual help & natural flow").
 - **Dashboard onto the Cloudflare-style shell + signup consistency pass (UI/UX).** Applied the shared
   shell (`shared/ui/*`) to the **operator dashboard**, matching the portal: `AppShell` + `Sidebar` +
   `TopBar` + the responsive left off-canvas **drawer** (no top strip). The four sections are unchanged

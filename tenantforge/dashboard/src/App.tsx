@@ -65,7 +65,7 @@ import {
   type RetentionReport,
   type Session,
 } from './api';
-import { AppShell, StatGrid, StatTile, type NavGroup } from '../../shared/ui/index.js';
+import { AppShell, InfoTip, StatGrid, StatTile, type NavGroup } from '../../shared/ui/index.js';
 
 /**
  * Resolve + apply the light/dark theme. Defaults to the OS `prefers-color-scheme`, with an in-app
@@ -436,7 +436,17 @@ function OperatorDigestPanel(): React.JSX.Element {
         <div>
           {/* At-a-glance roll-up as Cloudflare-style stat tiles (the detail table + headline follow). */}
           <StatGrid>
-            <StatTile label="Overall severity" value={severityBadge(data.severity)} />
+            <StatTile
+              label="Overall severity"
+              value={severityBadge(data.severity)}
+              hint={
+                <InfoTip label="What the severity levels mean">
+                  The highest severity across all detectors. <strong>ok</strong>: nothing needs
+                  attention. <strong>info</strong>: noteworthy, no action. <strong>warning</strong>:
+                  should be reviewed soon. <strong>critical</strong>: needs attention now.
+                </InfoTip>
+              }
+            />
             <StatTile
               label="Open issues"
               value={data.totalIssues}
@@ -525,8 +535,21 @@ function CompliancePanel(): React.JSX.Element {
           <p>
             {data.report.inventory.total} tenants · digest <code>{data.digest.slice(0, 12)}…</code>
           </p>
-          <p>Isolation {statusText(data.report.isolation.compliant)}</p>
-          <p>Residency {statusText(data.report.residency.compliant)}</p>
+          <p>
+            Isolation {statusText(data.report.isolation.compliant)}{' '}
+            <InfoTip label="What isolation compliance means">
+              Each tenant must have its own dedicated Neon project (physical, project-per-tenant
+              isolation). &ldquo;Compliant&rdquo; means no tenant is missing a project or sharing
+              one; &ldquo;Violations&rdquo; lists the tenants that are.
+            </InfoTip>
+          </p>
+          <p>
+            Residency {statusText(data.report.residency.compliant)}{' '}
+            <InfoTip label="What residency compliance means">
+              Every tenant must live in a region on the org allow-list (data-residency). Any tenant
+              in a non-allowed region is a violation, listed below with its region and reason.
+            </InfoTip>
+          </p>
           {data.report.residency.violations.length > 0 && (
             <table>
               <caption>Residency violations</caption>
@@ -864,16 +887,30 @@ function ReconcilePanel(): React.JSX.Element {
           <p>
             {data.pendingTenants.length} tenant(s) behind target{' '}
             <strong>{data.target ?? 'none'}</strong> · {data.totalMissing} migration application(s)
-            · {data.upToDate.length} up to date
+            · {data.upToDate.length} up to date{' '}
+            <InfoTip label="What fleet reconcile does">
+              Applies any missing schema migrations to every tenant that is behind the target
+              version, bringing the whole fleet up to date. It is idempotent and per-tenant — a
+              failure in one tenant doesn&rsquo;t block the others. This page shows the plan;
+              running it applies the migrations.
+            </InfoTip>
           </p>
           {canRun ? (
             <p>
-              <button type="button" onClick={() => void onRun()} disabled={busy}>
+              <button
+                type="button"
+                onClick={() => void onRun()}
+                disabled={busy}
+                title="Applies the missing migrations above to all behind tenants now. You'll be asked to confirm; the run is audited."
+              >
                 {busy ? 'Reconciling…' : 'Run reconcile'}
               </button>
             </p>
           ) : (
-            <p>Preview only — run `reconcile-fleet` (CLI) to apply.</p>
+            <p>
+              Preview only — running from the dashboard isn&rsquo;t enabled here (it requires the
+              reconcile capability + permission). Apply with <code>reconcile-fleet</code> (CLI).
+            </p>
           )}
           {result !== null && <p role="status">{result}</p>}
           {history.data !== null && history.data.length > 0 && (

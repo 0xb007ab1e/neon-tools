@@ -16,4 +16,6 @@ export { SettingsRow } from './SettingsRow.js';
 export { StatTile, StatGrid } from './StatTile.js';
 export { DataTable, type Column } from './DataTable.js';
 export { Pill } from './Pill.js';
+export { InfoTip } from './InfoTip.js';
+export { FormField, type FieldControlProps } from './FormField.js';
 export type { NavItem, NavGroup, PillTone, Crumb, TabItem } from './types.js';

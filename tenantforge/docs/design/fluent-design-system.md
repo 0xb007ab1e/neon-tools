@@ -210,18 +210,20 @@ The consoles use a **Cloudflare-dashboard-style** shell: a persistent left sideb
   AA-safe accent pairs all carry over. They hold **no app/business logic and make no security
   decision** — the client is untrusted; authZ/CSRF/tenant scoping stay server-side.
 
-| Component               | Role                                                                                                                  | Key a11y                                                                                                                                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AppShell`              | Layout: skip-link → `Sidebar` + `TopBar` + a single `<main id="main" tabIndex=-1>`. Owns + persists sidebar-collapse. | `<main>` landmark + skip link; consumer focuses `main`/heading on route change.                                                                                        |
-| `Sidebar`               | Collapsible left `<nav>`: brand at top, grouped items (icon + label), active via `aria-current="page"`.               | `<nav>` landmark; items are real `<a>` links; collapse `<button aria-expanded aria-controls>`; collapsed labels stay the link's accessible name (icons `aria-hidden`). |
-| `TopBar`                | `<header>` with account/context label, optional search slot, right-aligned actions.                                   | Header landmark; controls passed by the app.                                                                                                                           |
-| `Breadcrumbs`           | `<nav aria-label="Breadcrumb">` trail; last crumb `aria-current="page"`.                                              | Separators `aria-hidden`.                                                                                                                                              |
-| `Tabs`                  | Section sub-nav as links with `aria-current` (hash-routed, not the ARIA tabs widget).                                 | Labelled `<nav>`; keyboard = normal links.                                                                                                                             |
-| `Card`                  | Titled surface (header: title + helper + optional actions) on the gray bg.                                            | Labelled `<section>` (`aria-labelledby`); configurable heading level keeps the outline correct.                                                                        |
-| `SettingsRow`           | THE Cloudflare pattern: label + helper left, value + control right.                                                   | `controlId` associates the visible label with a single control via `<label for>`.                                                                                      |
-| `StatTile` / `StatGrid` | Metric tiles in a responsive grid (overview).                                                                         | Label precedes value.                                                                                                                                                  |
-| `DataTable<T>`          | Generic semantic `<table>`: caption, `scope`d headers, optional `<th scope="row">`, per-row `Pill` + action.          | Accessible by construction; empty-state slot.                                                                                                                          |
-| `Pill`                  | Status badge; tone is a token-pair enhancement — **the text inside carries the meaning** (1.4.1).                     | Never color-only.                                                                                                                                                      |
+| Component               | Role                                                                                                                                                                                                        | Key a11y                                                                                                                                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AppShell`              | Layout: skip-link → `Sidebar` + `TopBar` + a single `<main id="main" tabIndex=-1>`. Owns + persists sidebar-collapse.                                                                                       | `<main>` landmark + skip link; consumer focuses `main`/heading on route change.                                                                                                            |
+| `Sidebar`               | Collapsible left `<nav>`: brand at top, grouped items (icon + label), active via `aria-current="page"`.                                                                                                     | `<nav>` landmark; items are real `<a>` links; collapse `<button aria-expanded aria-controls>`; collapsed labels stay the link's accessible name (icons `aria-hidden`).                     |
+| `TopBar`                | `<header>` with account/context label, optional search slot, right-aligned actions.                                                                                                                         | Header landmark; controls passed by the app.                                                                                                                                               |
+| `Breadcrumbs`           | `<nav aria-label="Breadcrumb">` trail; last crumb `aria-current="page"`.                                                                                                                                    | Separators `aria-hidden`.                                                                                                                                                                  |
+| `Tabs`                  | Section sub-nav as links with `aria-current` (hash-routed, not the ARIA tabs widget).                                                                                                                       | Labelled `<nav>`; keyboard = normal links.                                                                                                                                                 |
+| `Card`                  | Titled surface (header: title + helper + optional actions) on the gray bg.                                                                                                                                  | Labelled `<section>` (`aria-labelledby`); configurable heading level keeps the outline correct.                                                                                            |
+| `SettingsRow`           | THE Cloudflare pattern: label + helper left, value + control right. Optional `description` (helper text) + `info` (inline `InfoTip`).                                                                       | `controlId` associates the visible label with a single control via `<label for>`; the `info` tip sits outside the `<label>`.                                                               |
+| `StatTile` / `StatGrid` | Metric tiles in a responsive grid (overview). `hint` accepts a node (e.g. an `InfoTip`).                                                                                                                    | Label precedes value.                                                                                                                                                                      |
+| `DataTable<T>`          | Generic semantic `<table>`: caption, `scope`d headers, optional `<th scope="row">`, per-row `Pill` + action.                                                                                                | Accessible by construction; empty-state slot.                                                                                                                                              |
+| `Pill`                  | Status badge; tone is a token-pair enhancement — **the text inside carries the meaning** (1.4.1).                                                                                                           | Never color-only.                                                                                                                                                                          |
+| `InfoTip`               | Focusable ⓘ trigger revealing terse "what is this?" help, for dense controls/headers/status.                                                                                                                | WCAG 1.4.13: keyboard/tap toggle + hover/focus open; **dismissible** (Esc/outside), **hoverable** (grace timeout), **persistent**; trigger `aria-describedby` the `role="tooltip"` bubble. |
+| `FormField`             | Input wrapper: visible `<label htmlFor>` + `description` (tied via `aria-describedby`) + optional `info` `InfoTip` + `error` slot. Render-prop hands `{id, aria-describedby, aria-invalid}` to the control. | 3.3.2 labels/instructions; description + error programmatically associated; error is a live `role="alert"`; invalid state mirrored.                                                        |
 
 Sharing mechanism: the same as the tokens — a relative CSS `@import` (`shared/ui/cf-shell.css`,
 imported from each SPA's `styles.css`) plus a TS barrel (`shared/ui/index.ts`) imported from the
@@ -304,3 +306,30 @@ reuse the shared surface/pill look so it visually matches the consoles: the step
 neutral — the step name text always carries the meaning, never color-only), and its card/buttons
 already map onto the shared tokens. The existing linear flow, focus-on-step-change, captcha/Stripe
 steps, and provisioning poll are unchanged.
+
+### Contextual help & natural flow (explain every control; disclose dependent actions)
+
+Every interactive thing carries an explanation, built **accessibility-first** (hover-only tooltips
+fail keyboard + touch users):
+
+- **Primary mechanism — inline help.** `FormField` gives every input a visible `<label>` + a
+  `description` (what to enter / format) tied via `aria-describedby`, plus an `error` slot announced
+  as `role="alert"`. `SettingsRow` takes a `description` (and optional `info`). Inline help is
+  cheaper and more discoverable than a tooltip, so it's preferred where space allows.
+- **Terse help — `InfoTip`.** A focusable ⓘ for dense controls, headers, columns, and **status
+  meaning** (e.g. what each workspace status / digest severity / isolation-residency compliance
+  means). It satisfies **WCAG 1.4.13** (dismissible via Esc/outside-click, hoverable via a grace
+  timeout, persistent until blur/dismiss), is keyboard- and tap-operable, and wires the trigger
+  `aria-describedby` the bubble for screen readers.
+- **Actions & disabled controls.** Buttons explain what they do + consequences via `title` (and the
+  surrounding copy), especially destructive ones (cancel/erase). A disabled/preview-only control
+  **explains why** (e.g. the dashboard reconcile run states it needs the capability + permission and
+  points to the CLI).
+
+**Natural flow / progressive disclosure.** Dependent/child actions surface in context rather than
+being hidden: the portal Plan flow previews the exact prorated charge/credit inline before a separate
+**Confirm** step; cancel/erasure disclose their one-time-code confirmation in a modal and the **undo
+window + cancel-erasure** action inline once scheduled; the dashboard reconcile shows the plan (what
+would change) before the **Run** action and surfaces the run result via `aria-live`. The primary
+action is obvious per view, content reads top→bottom as a sequence, and `Breadcrumbs`/`Tabs` are
+available for depth.

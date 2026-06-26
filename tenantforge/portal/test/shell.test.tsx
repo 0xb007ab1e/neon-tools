@@ -7,6 +7,8 @@ import {
   Breadcrumbs,
   Card,
   DataTable,
+  FormField,
+  InfoTip,
   Pill,
   Sidebar,
   SettingsRow,
@@ -306,6 +308,106 @@ describe('shared/ui — Breadcrumbs / Tabs', () => {
     expect(screen.getByRole('link', { name: 'Invoices' })).toHaveAttribute('aria-current', 'page');
     fireEvent.click(screen.getByRole('link', { name: 'History' }));
     expect(onSelect).toHaveBeenCalledWith('history');
+  });
+});
+
+describe('shared/ui — contextual help (InfoTip / FormField / SettingsRow description)', () => {
+  it('InfoTip: keyboard toggle + Esc dismiss, aria-describedby wiring, no a11y violations', async () => {
+    const { container } = render(
+      <p>
+        Plan price <InfoTip label="About plan price">Prorated for the rest of the period.</InfoTip>
+      </p>,
+    );
+    const trigger = screen.getByRole('button', { name: 'About plan price' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    // No bubble until opened; the trigger isn't describedby anything yet.
+    expect(trigger).not.toHaveAttribute('aria-describedby');
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    // Open via click (keyboard/tap path): the bubble appears and is wired to the trigger.
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    const bubble = screen.getByRole('tooltip');
+    expect(bubble).toHaveTextContent('Prorated for the rest of the period.');
+    expect(trigger.getAttribute('aria-describedby')).toBe(bubble.id);
+    expect((await axe(container)).violations).toEqual([]);
+
+    // Esc dismisses without moving the pointer (WCAG 1.4.13 dismissible).
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+  });
+
+  it('InfoTip: opens on focus and closes on blur', async () => {
+    render(<InfoTip label="Help">Body text.</InfoTip>);
+    const trigger = screen.getByRole('button', { name: 'Help' });
+    fireEvent.focus(trigger);
+    expect(await screen.findByRole('tooltip')).toBeInTheDocument();
+    fireEvent.blur(trigger);
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+  });
+
+  it('FormField: associates label + description + error with the control (aria-describedby/invalid)', async () => {
+    const { container, rerender } = render(
+      <FormField label="Workspace name" description="lowercase letters, numbers, hyphens">
+        {(field) => <input {...field} />}
+      </FormField>,
+    );
+    const input = screen.getByLabelText('Workspace name');
+    // The description is referenced by the control.
+    const descId = input.getAttribute('aria-describedby');
+    expect(descId).toBeTruthy();
+    expect(container.querySelector(`#${descId}`)).toHaveTextContent(
+      'lowercase letters, numbers, hyphens',
+    );
+    expect(input).not.toHaveAttribute('aria-invalid');
+    expect((await axe(container)).violations).toEqual([]);
+
+    // With an error: the control is invalid and describedby BOTH the description and the error.
+    rerender(
+      <FormField
+        label="Workspace name"
+        description="lowercase letters, numbers, hyphens"
+        error="That name is taken"
+      >
+        {(field) => <input {...field} />}
+      </FormField>,
+    );
+    const invalid = screen.getByLabelText('Workspace name');
+    expect(invalid).toHaveAttribute('aria-invalid', 'true');
+    const ids = invalid.getAttribute('aria-describedby')!.split(' ');
+    expect(ids.length).toBe(2);
+    expect(screen.getByRole('alert')).toHaveTextContent('That name is taken');
+  });
+
+  it('FormField: an inline InfoTip is reachable without breaking the label association', () => {
+    render(
+      <FormField
+        label="Region"
+        info={<InfoTip label="About region">Where your data lives.</InfoTip>}
+      >
+        {(field) => <input {...field} />}
+      </FormField>,
+    );
+    // getByLabelText must resolve to a SINGLE control (the InfoTip is outside the <label>).
+    expect(screen.getByLabelText('Region')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'About region' })).toBeInTheDocument();
+  });
+
+  it('SettingsRow: renders the description helper text and an inline InfoTip', () => {
+    render(
+      <SettingsRow
+        label="Current plan price"
+        description="Your active subscription price for this billing period."
+        info={<InfoTip label="About plan price">Prorated on change.</InfoTip>}
+        value="$49.00 / period"
+      />,
+    );
+    expect(
+      screen.getByText('Your active subscription price for this billing period.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'About plan price' })).toBeInTheDocument();
+    expect(screen.getByText('$49.00 / period')).toBeInTheDocument();
   });
 });
 
