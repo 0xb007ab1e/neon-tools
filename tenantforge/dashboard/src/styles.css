@@ -13,8 +13,11 @@
  * documents the measured contrast ratios.
  */
 
-/* Vite inlines this CSS @import at build (no runtime request; CSP-safe). Must precede other rules. */
+/* Vite inlines these CSS @imports at build (no runtime request; CSP-safe). Must precede other rules.
+ * The dashboard now uses the shared Cloudflare-style shell (AppShell/Sidebar/TopBar + Card/StatTile/
+ * DataTable/Pill), so it imports the shared shell stylesheet too (which itself pulls in the tokens). */
 @import url('../../shared/fluent-tokens.css');
+@import url('../../shared/ui/cf-shell.css');
 
 /* Dashboard-local severity text colors layered on the shared semantic roles. */
 :root {

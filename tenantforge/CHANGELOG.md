@@ -8,6 +8,21 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Dashboard onto the Cloudflare-style shell + signup consistency pass (UI/UX).** Applied the shared
+  shell (`shared/ui/*`) to the **operator dashboard**, matching the portal: `AppShell` + `Sidebar` +
+  `TopBar` + the responsive left off-canvas **drawer** (no top strip). The four sections are unchanged
+  (routing + tests intact) but the left nav is grouped Cloudflare-style — **Overview** (Health),
+  **Fleet & compliance** (Fleet, Audit), **Revenue** (Billing) — with `aria-current="page"`. The
+  Health digest gained a `StatGrid`/`StatTile` roll-up; list/table panels keep their semantic tables +
+  text-carrying status badges. **All behavior preserved**: operator token auth + RBAC, the dashboard
+  cookie session, every panel's fetch + actions including the capability-gated reconcile run and the
+  evidence view/download/public-key — layout/IA change only. The **signup** public flow got a light
+  consistency pass (no shell — it's linear, not a console): it now imports the shared shell stylesheet
+  and renders its step rail as pill chips matching the consoles (current step uses the AA-safe
+  `--accent-fill`/`--on-accent` pair; step text carries the meaning, not color). Front-end only; no
+  backend/core/portal changes. Tests: added dashboard shell tests (grouped nav + drawer
+  focus-trap/Esc/restore) to `dashboard/test/App.test.tsx`; the existing dashboard axe + panel tests
+  and the portal/shared-shell suites stay green. Docs: `docs/design/fluent-design-system.md` updated.
 - **Responsive left-anchored nav drawer for the console shell (UI/UX fix).** Replaced the narrow-
   viewport behavior of the shared `Sidebar`: instead of collapsing into a horizontal top strip, the
   nav now **stays left-anchored and vertical at every width**. On narrow viewports (< 48rem) it is a

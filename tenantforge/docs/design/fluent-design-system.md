@@ -269,3 +269,38 @@ opening **moves focus into the drawer** and **traps Tab** within it, **Esc** and
 close, choosing a nav item closes it, and on close **focus returns to the hamburger**. The drawer is
 still the `<nav>` landmark with `aria-current="page"` on the active item, and `prefers-reduced-motion`
 disables the slide animation. (The old `< 48rem` top-strip media rules were removed.)
+
+### Dashboard (operator console) onto the shell
+
+The operator dashboard uses the **same** `AppShell` + `Sidebar` + `TopBar` + responsive drawer. Its
+four routed sections are unchanged (so routing + the existing tests hold) but the left nav is now
+grouped Cloudflare-style:
+
+- **Overview** — Health (operator digest + webhook subscriptions)
+- **Fleet & compliance** — Fleet (compliance report, signed evidence bundles, drift, reconcile,
+  retention, exports) · Audit (audit log + anomalies)
+- **Revenue** — Billing (cost & margin, plans, signup tokens, invoices, charges/dunning/refunds/…)
+
+Active item via `aria-current="page"`; section links keep their names (Health/Fleet/Billing/Audit).
+Panel-type mapping: the **Health** digest gains a `StatGrid` of `StatTile`s (overall severity, open
+issues, detectors) above its existing headline + detector table; the many **list/table panels**
+(drift, reconcile history, cost, invoices, billing events, audit, evidence manifests, retention,
+exports, plans, signup tokens, webhooks) keep their existing semantic tables and `status-*`/severity
+badges (text-carries-meaning, never color-only). **All behavior is preserved** — operator token auth
+
+- RBAC, the dashboard cookie session, every panel's data fetch + actions including the gated
+  reconcile run (capability-checked, `window.confirm`) and the `EvidencePanel` view/download/public-key;
+  this was a layout/IA change only. The top bar carries the operator id + role chip + theme toggle +
+  sign-out; focus moves to `<main>` on each route change. Dashboard shell tests live in
+  `dashboard/test/App.test.tsx` (grouped nav + the responsive drawer focus-trap/Esc/restore), on top of
+  the per-section panel + axe tests already there.
+
+### Signup (public flow) — consistency pass, no shell
+
+Signup is a **linear public/anonymous flow, not a console**, so it deliberately keeps **no
+sidebar/shell** — `AppShell`/`Sidebar` are not used. It imports the shared shell stylesheet only to
+reuse the shared surface/pill look so it visually matches the consoles: the step rail now renders as
+**pill chips** (current step accent-filled with the AA-safe `--accent-fill`/`--on-accent` pair; others
+neutral — the step name text always carries the meaning, never color-only), and its card/buttons
+already map onto the shared tokens. The existing linear flow, focus-on-step-change, captcha/Stripe
+steps, and provisioning poll are unchanged.

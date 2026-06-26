@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { axe } from 'vitest-axe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
@@ -573,5 +573,51 @@ describe('dashboard App', () => {
     // The POST result is surfaced.
     expect(await screen.findByText('Reconciled 2 tenant(s), 0 with failures.')).toBeInTheDocument();
     confirmSpy.mockRestore();
+  });
+});
+
+// The dashboard now uses the shared Cloudflare-style shell (AppShell/Sidebar/TopBar + responsive
+// left off-canvas drawer). These assert the shell's dashboard-specific wiring on top of the panel
+// behavior already covered above: the grouped left <nav> with the section links, and the narrow-
+// viewport hamburger drawer (focus trap + Esc/restore) — the same shell the portal uses.
+describe('dashboard App — Cloudflare shell', () => {
+  const signIn = async (): Promise<void> => {
+    fireEvent.change(await screen.findByLabelText('Operator token'), {
+      target: { value: 'op-token' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByText(/Signed in as/);
+  };
+
+  it('renders the grouped left sidebar nav with the section links + active item', async () => {
+    render(<App />);
+    await signIn();
+    const nav = screen.getByRole('navigation', { name: 'Dashboard sections' });
+    // All four sections are real links; Health is active by default.
+    expect(within(nav).getByRole('link', { name: 'Health' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    for (const label of ['Fleet', 'Billing', 'Audit']) {
+      expect(within(nav).getByRole('link', { name: label })).toBeInTheDocument();
+    }
+    // Cloudflare-style group headings organize the nav.
+    expect(within(nav).getByText('Overview')).toBeInTheDocument();
+    expect(within(nav).getByText('Fleet & compliance')).toBeInTheDocument();
+    expect(within(nav).getByText('Revenue')).toBeInTheDocument();
+  });
+
+  it('opens the responsive nav drawer from the top-bar hamburger, traps focus, Esc closes + restores', async () => {
+    render(<App />);
+    await signIn();
+    const hamburger = screen.getByRole('button', { name: 'Open navigation menu' });
+    expect(hamburger).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(hamburger);
+    expect(hamburger).toHaveAttribute('aria-expanded', 'true');
+    const nav = screen.getByRole('navigation', { name: 'Dashboard sections' });
+    await waitFor(() => expect(nav.contains(document.activeElement)).toBe(true));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(hamburger).toHaveAttribute('aria-expanded', 'false');
+    await waitFor(() => expect(document.activeElement).toBe(hamburger));
   });
 });

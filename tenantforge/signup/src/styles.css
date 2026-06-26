@@ -9,8 +9,13 @@
  *
  * Accessibility (WCAG 2.2 AA): the accent uses the shared --accent-fill/--on-accent pair (never white
  * on the bright #fe6601 base — 2.95:1 fail). Measured ratios: docs/design/fluent-design-system.md.
+ *
+ * Consistency pass: signup is a LINEAR PUBLIC FLOW, not a console — it deliberately has NO sidebar/
+ * shell. It imports the shared shell stylesheet only to reuse the shared surface/pill look (so the
+ * step rail + card visually match the Cloudflare consoles); AppShell/Sidebar are intentionally unused.
  */
 @import url('../../shared/fluent-tokens.css');
+@import url('../../shared/ui/cf-shell.css');
 
 :root {
   /* Map the signup's local role names onto the shared Fluent tokens (light/dark switch in the shared
@@ -65,19 +70,32 @@ h1 {
   color: var(--muted);
   margin: 0 0 1.5rem;
 }
+/* Step rail as Cloudflare-style pill chips (text carries the step name; the current step is the only
+   one that's accent-filled — meaning is never color-only). Matches the shared `cf-pill` look. */
 .steps {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--sp-2);
   list-style: none;
   padding: 0;
-  margin: 0 0 1.5rem;
-  font-size: 0.85rem;
-  color: var(--muted);
+  margin: 0 0 var(--sp-5);
+  font-size: var(--fs-caption);
   flex-wrap: wrap;
 }
+.steps li {
+  display: inline-block;
+  padding: 0.1rem 0.6em;
+  border-radius: var(--radius-circular);
+  background: var(--surface-2);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  font-weight: var(--fw-semibold);
+}
 .steps li[aria-current='step'] {
-  color: var(--fg);
-  font-weight: 600;
+  background: var(--accent-fill);
+  color: var(
+    --on-accent
+  ); /* AA-safe pair: white on #b24701 (light) / near-black on #fe6601 (dark) */
+  border-color: transparent;
 }
 label {
   display: block;
