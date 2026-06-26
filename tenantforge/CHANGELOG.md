@@ -8,6 +8,42 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Responsive left-anchored nav drawer for the console shell (UI/UX fix).** Replaced the narrow-
+  viewport behavior of the shared `Sidebar`: instead of collapsing into a horizontal top strip, the
+  nav now **stays left-anchored and vertical at every width**. On narrow viewports (< 48rem) it is a
+  left **off-canvas slide-in drawer** over a dim backdrop, opened by a **hamburger** in the `TopBar`
+  (visible only there); on desktop the persistent left rail + collapse-to-rail is unchanged. The page
+  reflows cleanly to **320px / 400% zoom with no horizontal page scroll** (WCAG 1.4.10) — wide tables
+  keep their own scroll container and `SettingsRow`s stack below 40rem. Drawer a11y: hamburger
+  `aria-expanded`/`aria-controls`; on open focus moves into and is **trapped** in the drawer, **Esc**
+  and **backdrop click** close, choosing an item closes it, and focus **returns to the hamburger** on
+  close; `prefers-reduced-motion` disables the slide. The old top-strip media rules were removed.
+  Shell-only change (`shared/ui/AppShell.tsx`, `Sidebar.tsx`, `TopBar.tsx`, `cf-shell.css`); the
+  portal consumes it unchanged. Added drawer tests to `portal/test/shell.test.tsx` (hamburger toggle,
+  Esc/backdrop close, focus-in-on-open + return-on-close, `aria-expanded` state, open-drawer axe pass).
+- **Cloudflare-dashboard-style shell components + portal redesign (UI/UX).** Added a reusable
+  Cloudflare-dashboard-style shell — persistent left sidebar + top account bar + a gray content
+  region of cards — and applied it to the **customer portal** as the reference surface (the operator
+  dashboard is a follow-up; signup + backend/core untouched). Built on the existing Fluent tokens
+  (#FE6601). Front-end only; an IA/layout change, not a logic change.
+  - **Shared components (`shared/ui/*.tsx`, styled by `shared/ui/cf-shell.css`):** `AppShell`,
+    `Sidebar` (collapsible, grouped nav, `aria-current`), `TopBar`, `Breadcrumbs`, `Tabs`, `Card`,
+    `SettingsRow` (the Cloudflare label-left/value+control-right pattern), `StatTile`/`StatGrid`,
+    a generic semantic `DataTable<T>`, and a status `Pill`. Presentational, prop-driven, TS-strict,
+    semantic-HTML-first, WCAG 2.2 AA; light/dark + reduced-motion + AA-safe accent inherited from the
+    shared tokens. Consumed cross-SPA via a relative CSS `@import` + a TS barrel (`shared/ui/index.ts`);
+    a new `shared/tsconfig.json` makes the directory a typecheck + ESLint (React + jsx-a11y) project.
+  - **Portal redesign (`portal/src/App.tsx`, `views.tsx`):** the old top-nav layout is replaced by
+    `AppShell` with a grouped sidebar — Overview · **Account settings** (Billing/Plan/Payment) ·
+    **Compliance** (Evidence) · Danger zone. Flag-gated groups (Danger, Evidence) appear only when
+    their server flag is on; a deep link to a hidden section still redirects to Overview. Overview
+    uses `StatTile`s; account settings use `Card` + `SettingsRow`; lists use `DataTable`; status shows
+    as a `Pill`. **All behavior preserved** — token + OIDC login, signed-cookie session, CSRF +
+    idempotency on mutations, step-up modals, erasure undo window, and the self-scoped (BOLA-safe)
+    evidence list/download/generate. The section title stays the focused `<h1>` on route change and
+    nav items remain `<a aria-current="page">`, so every existing axe + auth/CSRF/flag-gating
+    assertion holds unchanged; added `portal/test/shell.test.tsx` (axe + behavior for the new
+    components). Docs: `docs/design/fluent-design-system.md` §8.
 - **Fluent Design 2 design-token system + dashboard reskin (UI/UX slice 1 of 3).** Established a
   shared Fluent 2 design-token system built around the brand accent **#FE6601** and applied it to the
   **dashboard SPA** as the reference implementation (portal + signup SPAs follow in slices 2/3 and are

@@ -198,3 +198,74 @@ Light/dark and reduced-motion come from the shared file: the portal's `data-them
 `:root[data-theme='dark']`; the signup (no toggle) follows `prefers-color-scheme`. The bright base
 `#fe6601` is never used under white text on either surface — interactive accent always resolves to the
 AA-safe `--accent-fill`/`--on-accent` pair.
+
+## 8. Cloudflare-dashboard shell components (`shared/ui/*`)
+
+The consoles use a **Cloudflare-dashboard-style** shell: a persistent left sidebar + top account bar
+
+- a gray content region of cards. The reusable building blocks live in `shared/ui/*.tsx` and are
+  **consumed by multiple SPAs** (the portal now; the dashboard next). They are presentational,
+  prop-driven, TS-strict, semantic-HTML-first, and styled entirely with the Fluent tokens via
+  `shared/ui/cf-shell.css` (which `@import`s the token file), so light/dark + reduced-motion + the
+  AA-safe accent pairs all carry over. They hold **no app/business logic and make no security
+  decision** — the client is untrusted; authZ/CSRF/tenant scoping stay server-side.
+
+| Component               | Role                                                                                                                  | Key a11y                                                                                                                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AppShell`              | Layout: skip-link → `Sidebar` + `TopBar` + a single `<main id="main" tabIndex=-1>`. Owns + persists sidebar-collapse. | `<main>` landmark + skip link; consumer focuses `main`/heading on route change.                                                                                        |
+| `Sidebar`               | Collapsible left `<nav>`: brand at top, grouped items (icon + label), active via `aria-current="page"`.               | `<nav>` landmark; items are real `<a>` links; collapse `<button aria-expanded aria-controls>`; collapsed labels stay the link's accessible name (icons `aria-hidden`). |
+| `TopBar`                | `<header>` with account/context label, optional search slot, right-aligned actions.                                   | Header landmark; controls passed by the app.                                                                                                                           |
+| `Breadcrumbs`           | `<nav aria-label="Breadcrumb">` trail; last crumb `aria-current="page"`.                                              | Separators `aria-hidden`.                                                                                                                                              |
+| `Tabs`                  | Section sub-nav as links with `aria-current` (hash-routed, not the ARIA tabs widget).                                 | Labelled `<nav>`; keyboard = normal links.                                                                                                                             |
+| `Card`                  | Titled surface (header: title + helper + optional actions) on the gray bg.                                            | Labelled `<section>` (`aria-labelledby`); configurable heading level keeps the outline correct.                                                                        |
+| `SettingsRow`           | THE Cloudflare pattern: label + helper left, value + control right.                                                   | `controlId` associates the visible label with a single control via `<label for>`.                                                                                      |
+| `StatTile` / `StatGrid` | Metric tiles in a responsive grid (overview).                                                                         | Label precedes value.                                                                                                                                                  |
+| `DataTable<T>`          | Generic semantic `<table>`: caption, `scope`d headers, optional `<th scope="row">`, per-row `Pill` + action.          | Accessible by construction; empty-state slot.                                                                                                                          |
+| `Pill`                  | Status badge; tone is a token-pair enhancement — **the text inside carries the meaning** (1.4.1).                     | Never color-only.                                                                                                                                                      |
+
+Sharing mechanism: the same as the tokens — a relative CSS `@import` (`shared/ui/cf-shell.css`,
+imported from each SPA's `styles.css`) plus a TS barrel (`shared/ui/index.ts`) imported from the
+SPA's React. `shared/tsconfig.json` makes the directory a typecheck + ESLint project (so the
+type-checked + React + jsx-a11y rules apply to the shell too).
+
+### Portal redesign (slice: Portal onto the shell)
+
+The portal's old top-nav layout is replaced by `AppShell`. The sidebar groups the sections the
+Cloudflare way:
+
+- **(primary)** — Overview
+- **Account settings** — Billing · Plan · Payment method
+- **Compliance** — Compliance evidence _(only when `features.evidence`)_
+- **(danger)** — Danger zone _(only when `features.destructiveActions`; danger-variant styling)_
+
+The flag-gated groups are omitted entirely when their server flag is off, and a deep link to a hidden
+section still redirects to Overview. Inside the content region: **Overview** uses `StatTile`s + a
+`Card`; **Plan** shows the current price as a `SettingsRow` inside a `Card`; **Billing**, **Payment**,
+**Danger**, and **Evidence** are `Card`s; lists (charges/refunds/receipts, evidence manifests) render
+via `DataTable`; workspace status shows as a `Pill`. **All behavior is unchanged** — token-mode +
+OIDC login, the signed-cookie session, CSRF + idempotency headers on mutations, the step-up modals,
+the erasure undo window, and the self-scoped (BOLA-safe) evidence list/download/generate — this was an
+IA/layout change, not a logic change. The section title remains the focused `<h1>` on each route
+change, and nav items remain `<a aria-current="page">`, so the existing axe + auth/CSRF/flag-gating
+assertions hold; the shared components add their own axe + behavior tests (`portal/test/shell.test.tsx`).
+
+### Responsive nav: left-anchored off-canvas drawer (the nav stays LEFT at every width)
+
+The sidebar is **left-anchored and vertical at every viewport width** — never a horizontal top strip.
+
+- **Desktop (≥ 48rem):** a persistent left rail with the collapse-to-rail control (label visually
+  hidden when collapsed but kept as each link's accessible name).
+- **Narrow (< 48rem):** the sidebar becomes a left **off-canvas drawer** — `position: fixed`,
+  `inset-inline-start: 0`, `transform: translateX(-100%)` off-canvas by default, sliding to
+  `translateX(0)` when opened over a dim backdrop. A **hamburger** (`☰`, "Open navigation menu")
+  appears in the `TopBar` (visible only at this breakpoint) and toggles the drawer. The content
+  column takes the full width, so the page **reflows cleanly to 320px / 400% zoom with no horizontal
+  page scroll** (WCAG 1.4.10); wide tables keep their own `.cf-table-wrap` `overflow-x:auto`
+  container, and **`SettingsRow` stacks** (label/helper above value+control) below 40rem for tappable
+  targets.
+
+Drawer a11y (owned by `AppShell`): the hamburger is `<button aria-expanded aria-controls={navId}>`;
+opening **moves focus into the drawer** and **traps Tab** within it, **Esc** and a **backdrop click**
+close, choosing a nav item closes it, and on close **focus returns to the hamburger**. The drawer is
+still the `<nav>` landmark with `aria-current="page"` on the active item, and `prefers-reduced-motion`
+disables the slide animation. (The old `< 48rem` top-strip media rules were removed.)

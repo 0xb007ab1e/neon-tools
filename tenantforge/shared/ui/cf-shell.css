@@ -1,0 +1,536 @@
+/*
+ * Cloudflare-dashboard-style shell — styles for the shared `shared/ui/*` components.
+ *
+ * Layout: persistent left sidebar + top account bar + gray content region, with cards, settings rows,
+ * stat tiles, data tables, pills, breadcrumbs, and tabs — faithful to the Cloudflare dashboard
+ * patterns. Everything is driven by the shared Fluent tokens (shared/fluent-tokens.css), so light/dark
+ * and prefers-reduced-motion are inherited (no theme rules duplicated here). CSP-safe (no JS, no
+ * inline styles). Each consuming SPA imports this AFTER the token file via a relative CSS @import; the
+ * SPA's own styles.css already imports the tokens, so importing this from there pulls both in.
+ *
+ * Accessibility: AA contrast comes from the token role pairs (text never on the bright #fe6601 base;
+ * accent fills use --accent-fill/--on-accent). Visible focus stroke on every control. The collapsed
+ * sidebar keeps labels as accessible names (visually hidden, not removed).
+ */
+@import url('../fluent-tokens.css');
+
+/* ---- Shell layout: sidebar + main column ---- */
+.cf-shell {
+  display: grid;
+  grid-template-columns: 16rem 1fr;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+}
+.cf-shell-collapsed {
+  grid-template-columns: 3.5rem 1fr;
+}
+.cf-main-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* allow the content (wide tables) to scroll instead of blowing out the grid */
+}
+.cf-main-col > main {
+  flex: 1;
+  max-width: 64rem;
+  width: 100%;
+  margin-inline: auto;
+  padding: var(--sp-5) var(--sp-5) var(--sp-7);
+}
+.cf-main-col > main:focus {
+  outline: none; /* programmatic route-change focus — no visible box on the region itself */
+}
+
+/* ---- Sidebar ---- */
+.cf-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  background: var(--surface);
+  border-inline-end: 1px solid var(--border);
+  padding: var(--sp-4) var(--sp-3);
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  overflow-y: auto;
+}
+.cf-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-body-lg);
+  padding: var(--sp-2) var(--sp-2) var(--sp-3);
+  letter-spacing: -0.01em;
+}
+.cf-sidebar-collapse {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  align-self: flex-start;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+.cf-sidebar-collapse:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.cf-sidebar-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  margin-top: var(--sp-2);
+}
+.cf-nav-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cf-nav-group-heading {
+  margin: 0 0 var(--sp-1);
+  padding-inline: var(--sp-2);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-subtle);
+}
+.cf-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius-md);
+  color: var(--fg);
+  text-decoration: none;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-body);
+  border-inline-start: 3px solid transparent;
+  transition: background var(--motion-fast) var(--ease-standard);
+}
+.cf-nav-item:hover {
+  background: var(--surface-2);
+}
+/* Cloudflare selected nav: accent left-rail + tinted background + accent label. */
+.cf-nav-item[aria-current='page'] {
+  background: var(--accent-selected);
+  border-inline-start-color: var(--accent);
+  color: var(--accent-text);
+}
+.cf-nav-item.cf-nav-danger {
+  color: var(--danger-fg);
+}
+.cf-nav-item.cf-nav-danger[aria-current='page'] {
+  background: var(--danger-bg);
+  border-inline-start-color: var(--danger-fg);
+  color: var(--danger-fg);
+}
+.cf-nav-icon {
+  flex: none;
+  width: 1.1rem;
+  text-align: center;
+}
+/* Collapsed sidebar: hide labels visually but keep them as the link's accessible name. */
+.cf-sidebar-collapsed .cf-nav-label,
+.cf-sidebar-collapsed .cf-collapse-label,
+.cf-sidebar-collapsed .cf-nav-group-heading,
+.cf-sidebar-collapsed .cf-sidebar-brand > .cf-brand-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.cf-sidebar-collapsed .cf-nav-item {
+  justify-content: center;
+}
+
+/* Off-canvas drawer backdrop — only meaningful on narrow viewports while the drawer is open.
+   Hidden by default (and via the `hidden` attribute on desktop); shown by the media query. */
+.cf-drawer-backdrop {
+  display: none;
+}
+
+/* The brand mark swatch (decorative; bright base accent with near-black glyph). */
+.cf-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: var(--radius-md);
+  background: var(--accent-80);
+  color: var(--neutral-96);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-caption);
+  flex: none;
+}
+
+/* ---- Top bar ---- */
+.cf-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-5);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+/* Hamburger that opens the off-canvas nav drawer — desktop-hidden, shown only on narrow viewports
+   (see the media query below). It's a real <button> (keyboard-operable, visible focus stroke). */
+.cf-nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  font-size: 1.25rem;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.cf-nav-toggle:hover {
+  background: var(--surface-2);
+}
+.cf-topbar-context {
+  font-weight: var(--fw-semibold);
+}
+.cf-topbar-search {
+  flex: 1;
+  max-width: 28rem;
+}
+.cf-topbar-actions {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* ---- Card ---- */
+.cf-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-4);
+  margin-bottom: var(--sp-5);
+}
+.cf-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: 1px solid var(--border);
+}
+.cf-card-title {
+  margin: 0;
+  font-size: var(--fs-subtitle);
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
+}
+.cf-card-desc {
+  margin: var(--sp-1) 0 0;
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+}
+.cf-card-actions {
+  flex: none;
+}
+.cf-card-body {
+  padding: var(--sp-5);
+}
+
+/* ---- Settings row (the Cloudflare pattern) ---- */
+.cf-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-4) 0;
+  border-bottom: 1px solid var(--border);
+}
+.cf-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.cf-row:first-child {
+  padding-top: 0;
+}
+.cf-row-text {
+  min-width: 0;
+}
+.cf-row-label {
+  display: block;
+  font-weight: var(--fw-semibold);
+  margin: 0;
+}
+.cf-row-desc {
+  margin: var(--sp-1) 0 0;
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+}
+.cf-row-control {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex: none;
+}
+.cf-row-value {
+  color: var(--fg-muted);
+}
+
+/* ---- Stat tiles ---- */
+.cf-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-5);
+}
+.cf-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-4);
+  box-shadow: var(--shadow-2);
+}
+.cf-stat-label {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+.cf-stat-value {
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
+  font-weight: var(--fw-bold);
+}
+.cf-stat-hint {
+  font-size: var(--fs-body);
+  color: var(--fg-muted);
+}
+
+/* ---- Data table ---- */
+.cf-table-wrap {
+  overflow-x: auto;
+}
+.cf-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--fs-body);
+}
+.cf-table caption {
+  text-align: left;
+  font-weight: var(--fw-semibold);
+  color: var(--fg-muted);
+  margin-bottom: var(--sp-2);
+}
+.cf-table th,
+.cf-table td {
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.cf-table thead th {
+  background: var(--surface-2);
+  color: var(--fg-muted);
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border-strong);
+}
+.cf-table tbody tr:hover {
+  background: var(--surface-2);
+}
+.cf-table-empty {
+  color: var(--fg-muted);
+}
+
+/* ---- Pill / status badge (text carries meaning; tone is enhancement) ---- */
+.cf-pill {
+  display: inline-block;
+  padding: 0.05rem 0.5em;
+  border-radius: var(--radius-circular);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  border: 1px solid transparent;
+}
+.cf-pill-neutral {
+  background: var(--surface-2);
+  color: var(--fg);
+  border-color: var(--border);
+}
+.cf-pill-success {
+  background: var(--success-bg);
+  color: var(--success-fg);
+}
+.cf-pill-warning {
+  background: var(--warning-bg);
+  color: var(--warning-fg);
+}
+.cf-pill-danger {
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+.cf-pill-info {
+  background: var(--info-bg);
+  color: var(--info-fg);
+}
+
+/* ---- Breadcrumbs ---- */
+.cf-breadcrumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  list-style: none;
+  margin: 0 0 var(--sp-4);
+  padding: 0;
+  font-size: var(--fs-body);
+}
+.cf-breadcrumbs a {
+  color: var(--accent-text);
+}
+.cf-breadcrumbs [aria-current='page'] {
+  color: var(--fg-muted);
+}
+.cf-breadcrumb-sep {
+  color: var(--fg-subtle);
+}
+
+/* ---- Tabs (sub-nav) ---- */
+.cf-tabs ul {
+  display: flex;
+  gap: var(--sp-1);
+  list-style: none;
+  margin: 0 0 var(--sp-5);
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.cf-tab {
+  display: inline-block;
+  padding: var(--sp-3) var(--sp-3);
+  color: var(--fg-muted);
+  text-decoration: none;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-body);
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.cf-tab:hover {
+  color: var(--fg);
+}
+.cf-tab[aria-current='page'] {
+  color: var(--accent-text);
+  border-bottom-color: var(--accent);
+}
+
+/* ---- Settings row: stack label/helper above value+control on small viewports (touch-friendly) ---- */
+@media (max-width: 40rem) {
+  .cf-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-2);
+  }
+  .cf-row-control {
+    flex-wrap: wrap;
+  }
+}
+
+/* ---- Narrow viewports: the LEFT sidebar becomes a left-anchored off-canvas DRAWER ----
+ * The sidebar stays left + vertical (never a top strip). It is hidden off-canvas to the left by
+ * default and slides in over a dim backdrop when opened by the TopBar hamburger. The content column
+ * takes the full width, so the page reflows cleanly to 320px / 400% zoom with no horizontal page
+ * scroll (WCAG 1.4.10) — wide tables keep their own .cf-table-wrap overflow-x container. */
+@media (max-width: 48rem) {
+  .cf-shell,
+  .cf-shell-collapsed {
+    grid-template-columns: 1fr; /* single column; the drawer overlays, it doesn't take a track */
+  }
+  .cf-nav-toggle {
+    display: inline-flex; /* hamburger visible only here */
+  }
+  .cf-sidebar {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: 40;
+    width: min(20rem, 82vw);
+    height: 100vh;
+    /* Off-canvas to the LEFT by default; slide in when open. */
+    transform: translateX(-100%);
+    transition: transform var(--motion-normal) var(--ease-decelerate);
+    box-shadow: var(--shadow-16);
+    border-inline-end: 1px solid var(--border);
+  }
+  /* A collapsed (rail) preference doesn't apply in drawer mode — always show full labels in the drawer. */
+  .cf-sidebar.cf-sidebar-collapsed {
+    width: min(20rem, 82vw);
+  }
+  .cf-sidebar.cf-sidebar-collapsed .cf-nav-label,
+  .cf-sidebar.cf-sidebar-collapsed .cf-nav-group-heading,
+  .cf-sidebar.cf-sidebar-collapsed .cf-collapse-label {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    clip: auto;
+    overflow: visible;
+    white-space: normal;
+  }
+  .cf-sidebar.cf-sidebar-collapsed .cf-nav-item {
+    justify-content: flex-start;
+  }
+  /* The desktop collapse-to-rail control is meaningless in drawer mode. */
+  .cf-sidebar-collapse {
+    display: none;
+  }
+  .cf-sidebar.cf-sidebar-drawer-open {
+    transform: translateX(0);
+  }
+  .cf-drawer-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(0, 0, 0, 0.5);
+  }
+  /* `hidden` (backdrop closed) wins over the display:block above. */
+  .cf-drawer-backdrop[hidden] {
+    display: none;
+  }
+  .cf-main-col > main {
+    padding-inline: var(--sp-4);
+  }
+}
+
+/* Respect reduced-motion: no slide animation. */
+@media (prefers-reduced-motion: reduce) {
+  .cf-sidebar {
+    transition: none;
+  }
+}

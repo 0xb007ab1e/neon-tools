@@ -13,6 +13,7 @@
  * with --on-accent for text on the solid danger fill. Measured ratios: docs/design/fluent-design-system.md.
  */
 @import url('../../shared/fluent-tokens.css');
+@import url('../../shared/ui/cf-shell.css');
 
 :root {
   /* Map the portal's local role names onto the shared Fluent tokens (each switches light/dark in the

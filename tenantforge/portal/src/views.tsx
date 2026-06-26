@@ -14,6 +14,15 @@ import {
   type Usage,
 } from './api.js';
 import type { Stripe, StripeElements } from './loaders.js';
+import {
+  Card,
+  DataTable,
+  Pill,
+  SettingsRow,
+  StatGrid,
+  StatTile,
+  type Column,
+} from '../../shared/ui/index.js';
 
 // --- formatting helpers (display only; pure) -------------------------------------------------------
 
@@ -166,39 +175,39 @@ function Async<T>(props: {
   return <>{props.children(props.state.data)}</>;
 }
 
-/** A read-only event table (charges / refunds / receipts). */
+/** A read-only event table (charges / refunds) rendered via the shared CF DataTable. */
 function EventsTable(props: {
   caption: string;
   events: TenantEvent[];
   empty: string;
 }): React.ReactElement {
-  if (props.events.length === 0) return <p>{props.empty}</p>;
+  const columns: Column<TenantEvent>[] = [
+    { key: 'when', header: 'When', cell: (e) => fmtDate(e.at) },
+    {
+      key: 'amount',
+      header: 'Amount',
+      cell: (e) => {
+        const ctx = e.context ?? {};
+        return typeof ctx['amountMinor'] === 'number' ? usdMinor(ctx['amountMinor']) : '—';
+      },
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      cell: (e) => {
+        const ctx = e.context ?? {};
+        return typeof ctx['status'] === 'string' ? ctx['status'] : e.outcome;
+      },
+    },
+  ];
   return (
-    <table>
-      <caption>{props.caption}</caption>
-      <thead>
-        <tr>
-          <th scope="col">When</th>
-          <th scope="col">Amount</th>
-          <th scope="col">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {props.events.map((e, i) => {
-          const ctx = e.context ?? {};
-          const amount =
-            typeof ctx['amountMinor'] === 'number' ? usdMinor(ctx['amountMinor']) : '—';
-          const status = typeof ctx['status'] === 'string' ? ctx['status'] : e.outcome;
-          return (
-            <tr key={`${e.at}-${i}`}>
-              <td>{fmtDate(e.at)}</td>
-              <td>{amount}</td>
-              <td>{status}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <DataTable
+      caption={props.caption}
+      columns={columns}
+      rows={props.events}
+      rowKey={(e, i) => `${e.at}-${i}`}
+      empty={props.empty}
+    />
   );
 }
 
@@ -272,7 +281,15 @@ function Modal(props: {
 
 // --- Overview --------------------------------------------------------------------------------------
 
-/** Overview: the account summary + current-period usage. */
+/** Map a workspace status to a status-pill tone (text still carries the meaning — not color-only). */
+function statusTone(status: string): 'success' | 'warning' | 'danger' | 'neutral' {
+  if (status === 'active') return 'success';
+  if (status === 'offboarding' || status === 'suspended') return 'warning';
+  if (status === 'deleted') return 'danger';
+  return 'neutral';
+}
+
+/** Overview: the account summary as overview stat tiles + current-period usage in a card. */
 export function OverviewView(): React.ReactElement {
   const me = useLoad<TenantSummary>(() => api.me());
   const usage = useLoad<Usage | null>(
@@ -281,67 +298,65 @@ export function OverviewView(): React.ReactElement {
     () => null,
   );
   return (
-    <section aria-labelledby="overview-account">
-      <h2 id="overview-account">Account</h2>
-      <Async state={me}>
-        {(s) => (
-          <dl className="kv">
-            <dt>Workspace</dt>
-            <dd>{s.slug}</dd>
-            <dt>Status</dt>
-            <dd>{s.status}</dd>
-            <dt>Region</dt>
-            <dd>{s.region}</dd>
-            <dt>Member since</dt>
-            <dd>{fmtDate(s.createdAt)}</dd>
-            {s.planPriceUsd !== undefined && (
-              <>
-                <dt>Plan</dt>
-                <dd>${s.planPriceUsd.toFixed(2)} / period</dd>
-              </>
-            )}
-          </dl>
-        )}
-      </Async>
-      <h2>Usage this period</h2>
-      <Async state={usage}>
-        {(u) =>
-          u === null ? (
-            <p>Usage metering is not available for your workspace.</p>
-          ) : (
-            <table>
-              <caption>
-                Usage ({fmtDate(u.period.from)} – {fmtDate(u.period.to)})
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col">Metric</th>
-                  <th scope="col">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>Compute time</td>
-                  <td>{humanSeconds(u.consumption.computeTimeSeconds)}</td>
-                </tr>
-                <tr>
-                  <td>Active time</td>
-                  <td>{humanSeconds(u.consumption.activeTimeSeconds)}</td>
-                </tr>
-                <tr>
-                  <td>Data written</td>
-                  <td>{humanBytes(u.consumption.writtenDataBytes)}</td>
-                </tr>
-                <tr>
-                  <td>Storage (peak)</td>
-                  <td>{humanBytes(u.consumption.syntheticStorageBytes)}</td>
-                </tr>
-              </tbody>
-            </table>
-          )
-        }
-      </Async>
-    </section>
+    <>
+      <Card title="Account">
+        <Async state={me}>
+          {(s) => (
+            <StatGrid>
+              <StatTile label="Workspace" value={s.slug} />
+              <StatTile
+                label="Status"
+                value={<Pill tone={statusTone(s.status)}>{s.status}</Pill>}
+              />
+              <StatTile label="Region" value={s.region} />
+              <StatTile label="Member since" value={fmtDate(s.createdAt)} />
+              {s.planPriceUsd !== undefined && (
+                <StatTile label="Plan" value={`$${s.planPriceUsd.toFixed(2)}`} hint="per period" />
+              )}
+            </StatGrid>
+          )}
+        </Async>
+      </Card>
+      <Card title="Usage this period">
+        <Async state={usage}>
+          {(u) =>
+            u === null ? (
+              <p>Usage metering is not available for your workspace.</p>
+            ) : (
+              <table>
+                <caption>
+                  Usage ({fmtDate(u.period.from)} – {fmtDate(u.period.to)})
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Metric</th>
+                    <th scope="col">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Compute time</td>
+                    <td>{humanSeconds(u.consumption.computeTimeSeconds)}</td>
+                  </tr>
+                  <tr>
+                    <td>Active time</td>
+                    <td>{humanSeconds(u.consumption.activeTimeSeconds)}</td>
+                  </tr>
+                  <tr>
+                    <td>Data written</td>
+                    <td>{humanBytes(u.consumption.writtenDataBytes)}</td>
+                  </tr>
+                  <tr>
+                    <td>Storage (peak)</td>
+                    <td>{humanBytes(u.consumption.syntheticStorageBytes)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )
+          }
+        </Async>
+      </Card>
+    </>
   );
 }
 
@@ -367,94 +382,101 @@ export function BillingView(): React.ReactElement {
   );
   const credit = useLoad<CreditBalance>(() => api.creditBalance());
   return (
-    <section aria-labelledby="billing-credit">
-      <h2 id="billing-credit">Credit balance</h2>
-      <Async state={credit}>
-        {(c) => (
-          <p>
-            <strong>{usdMinor(c.balanceMinor)}</strong> {c.currency.toUpperCase()}
-          </p>
-        )}
-      </Async>
+    <>
+      <Card title="Credit balance">
+        <Async state={credit}>
+          {(c) => (
+            <p>
+              <strong>{usdMinor(c.balanceMinor)}</strong> {c.currency.toUpperCase()}
+            </p>
+          )}
+        </Async>
+      </Card>
 
-      <h2>Invoices</h2>
-      <Async state={invoices}>
-        {(list) =>
-          list.length === 0 ? (
-            <p>No invoices yet.</p>
-          ) : (
-            <>
-              {list.map((inv, i) => (
-                <table key={`${inv.periodStart}-${i}`}>
-                  <caption>
-                    {fmtDate(inv.periodStart)} – {fmtDate(inv.periodEnd)} · Total $
-                    {inv.totalUsd.toFixed(2)} {inv.currency.toUpperCase()}
-                  </caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">Description</th>
-                      <th scope="col">Qty</th>
-                      <th scope="col">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {inv.lineItems.map((li, j) => (
-                      <tr key={j}>
-                        <td>{li.description}</td>
-                        <td>
-                          {li.quantity} {li.unit}
-                        </td>
-                        <td>${li.amountUsd.toFixed(2)}</td>
+      <Card title="Invoices">
+        <Async state={invoices}>
+          {(list) =>
+            list.length === 0 ? (
+              <p>No invoices yet.</p>
+            ) : (
+              <>
+                {list.map((inv, i) => (
+                  <table key={`${inv.periodStart}-${i}`}>
+                    <caption>
+                      {fmtDate(inv.periodStart)} – {fmtDate(inv.periodEnd)} · Total $
+                      {inv.totalUsd.toFixed(2)} {inv.currency.toUpperCase()}
+                    </caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Description</th>
+                        <th scope="col">Qty</th>
+                        <th scope="col">Amount</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ))}
-            </>
-          )
-        }
-      </Async>
+                    </thead>
+                    <tbody>
+                      {inv.lineItems.map((li, j) => (
+                        <tr key={j}>
+                          <td>{li.description}</td>
+                          <td>
+                            {li.quantity} {li.unit}
+                          </td>
+                          <td>${li.amountUsd.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ))}
+              </>
+            )
+          }
+        </Async>
+      </Card>
 
-      <h2>Recent charges</h2>
-      <Async state={charges}>
-        {(e) => <EventsTable caption="Charges" events={e} empty="No charges yet." />}
-      </Async>
-      <h2>Recent refunds</h2>
-      <Async state={refunds}>
-        {(e) => <EventsTable caption="Refunds" events={e} empty="No refunds yet." />}
-      </Async>
-      <h2>Recent receipts</h2>
-      <Async state={receipts}>
-        {(events) =>
-          events.length === 0 ? (
-            <p>No receipts yet.</p>
-          ) : (
-            <table>
-              <caption>Receipts</caption>
-              <thead>
-                <tr>
-                  <th scope="col">When</th>
-                  <th scope="col">Kind</th>
-                  <th scope="col">Reference</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((e, i) => {
+      <Card title="Recent charges">
+        <Async state={charges}>
+          {(e) => <EventsTable caption="Charges" events={e} empty="No charges yet." />}
+        </Async>
+      </Card>
+      <Card title="Recent refunds">
+        <Async state={refunds}>
+          {(e) => <EventsTable caption="Refunds" events={e} empty="No refunds yet." />}
+        </Async>
+      </Card>
+      <Card title="Recent receipts">
+        <Async state={receipts}>
+          {(events) => {
+            const columns: Column<TenantEvent>[] = [
+              { key: 'when', header: 'When', cell: (e) => fmtDate(e.at) },
+              {
+                key: 'kind',
+                header: 'Kind',
+                cell: (e) => {
                   const ctx = e.context ?? {};
-                  return (
-                    <tr key={`${e.at}-${i}`}>
-                      <td>{fmtDate(e.at)}</td>
-                      <td>{typeof ctx['kind'] === 'string' ? ctx['kind'] : '—'}</td>
-                      <td>{typeof ctx['reference'] === 'string' ? ctx['reference'] : '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )
-        }
-      </Async>
-    </section>
+                  return typeof ctx['kind'] === 'string' ? ctx['kind'] : '—';
+                },
+              },
+              {
+                key: 'reference',
+                header: 'Reference',
+                cell: (e) => {
+                  const ctx = e.context ?? {};
+                  return typeof ctx['reference'] === 'string' ? ctx['reference'] : '—';
+                },
+              },
+            ];
+            return (
+              <DataTable
+                caption="Receipts"
+                columns={columns}
+                rows={events}
+                rowKey={(e, i) => `${e.at}-${i}`}
+                empty="No receipts yet."
+              />
+            );
+          }}
+        </Async>
+      </Card>
+    </>
   );
 }
 
@@ -496,17 +518,19 @@ export function PlanView(): React.ReactElement {
   };
 
   return (
-    <section aria-labelledby="plan-current">
-      <h2 id="plan-current">Your plan</h2>
+    <Card title="Your plan">
       <Async state={plan}>
         {(p) => (
           <>
-            <p>
-              Current price:{' '}
-              <strong>
-                {p.current === null ? 'no plan set' : `$${p.current.toFixed(2)} / period`}
-              </strong>
-            </p>
+            <SettingsRow
+              label="Current plan price"
+              description="Your active subscription price for this billing period."
+              value={
+                <strong>
+                  {p.current === null ? 'no plan set' : `$${p.current.toFixed(2)} / period`}
+                </strong>
+              }
+            />
             <form onSubmit={doPreview}>
               <label htmlFor="new-price">New plan price (USD per period)</label>
               <input
@@ -572,7 +596,7 @@ export function PlanView(): React.ReactElement {
           </div>
         </div>
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -632,11 +656,10 @@ export function PaymentView(props: {
   };
 
   return (
-    <section aria-labelledby="payment-heading">
-      <h2 id="payment-heading">Update payment method</h2>
-      <p className="lede">
-        Your card is collected securely by Stripe and never touches our servers.
-      </p>
+    <Card
+      title="Update payment method"
+      description="Your card is collected securely by Stripe and never touches our servers."
+    >
       {initError !== null && (
         <p className="alert" role="alert">
           {initError}
@@ -661,7 +684,7 @@ export function PaymentView(props: {
           </button>
         </form>
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -674,8 +697,7 @@ export function DangerZoneView(): React.ReactElement {
     () => null,
   );
   return (
-    <section aria-labelledby="danger-heading">
-      <h2 id="danger-heading">Danger zone</h2>
+    <>
       <p className="lede">
         These actions affect your whole workspace. Cancel is reversible during a grace window;
         erasure is permanent.
@@ -683,7 +705,7 @@ export function DangerZoneView(): React.ReactElement {
       <DataExportPanel />
       <CancelPanel />
       <ErasurePanel pending={pending} />
-    </section>
+    </>
   );
 }
 
@@ -692,9 +714,10 @@ function DataExportPanel(): React.ReactElement {
   const action = useAction();
   const [location, setLocation] = useState<string | null>(null);
   return (
-    <div className="danger-panel">
-      <h3>Export your data</h3>
-      <p>Download a copy of your workspace data (portability / DSAR).</p>
+    <Card
+      title="Export your data"
+      description="Download a copy of your workspace data (portability / DSAR)."
+    >
       {action.error !== null && (
         <p className="alert" role="alert">
           {action.error}
@@ -718,7 +741,7 @@ function DataExportPanel(): React.ReactElement {
         {action.busy && <span className="spinner" aria-hidden="true" />}
         Request data export
       </button>
-    </div>
+    </Card>
   );
 }
 
@@ -749,11 +772,10 @@ function CancelPanel(): React.ReactElement {
   };
 
   return (
-    <div className="danger-panel">
-      <h3>Cancel workspace</h3>
-      <p>
-        Stop your workspace. It is retained and reversible during a grace window before deletion.
-      </p>
+    <Card
+      title="Cancel workspace"
+      description="Stop your workspace. It is retained and reversible during a grace window before deletion."
+    >
       {result !== null && (
         <p className="ok-note" role="status">
           {result}
@@ -809,7 +831,7 @@ function CancelPanel(): React.ReactElement {
           )}
         </Modal>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -852,12 +874,10 @@ function ErasurePanel(props: {
     });
 
   return (
-    <div className="danger-panel">
-      <h3>Erase workspace (permanent)</h3>
-      <p>
-        Permanently delete your workspace and all data. This cannot be undone after the undo window
-        closes.
-      </p>
+    <Card
+      title="Erase workspace (permanent)"
+      description="Permanently delete your workspace and all data. This cannot be undone after the undo window closes."
+    >
       {isPending && pending !== null && (
         <div className="confirm-box" role="status">
           <p>
@@ -944,7 +964,7 @@ function ErasurePanel(props: {
           </form>
         </Modal>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -1010,14 +1030,16 @@ export function EvidenceView(): React.ReactElement {
   };
 
   return (
-    <section aria-labelledby="evidence-heading">
-      <h2 id="evidence-heading">My compliance evidence</h2>
-      <p className="lede">
-        Signed, independently verifiable evidence bundles for your workspace (Ed25519). Generate a
-        current bundle, then download it and verify its <code>jws</code> offline with the public
-        key. Each bundle contains only your own attestation facts — no secrets.
-      </p>
-
+    <Card
+      title="My compliance evidence"
+      description={
+        <>
+          Signed, independently verifiable evidence bundles for your workspace (Ed25519). Generate a
+          current bundle, then download it and verify its <code>jws</code> offline with the public
+          key. Each bundle contains only your own attestation facts — no secrets.
+        </>
+      }
+    >
       {/* Generate my own current bundle (non-destructive; server-scoped to my tenant). */}
       <p>
         <button type="button" onClick={() => void onGenerate()} disabled={generate.busy}>
@@ -1070,58 +1092,58 @@ export function EvidenceView(): React.ReactElement {
       )}
 
       <Async state={list}>
-        {(manifests) =>
-          manifests.length === 0 ? (
-            <p>
-              No evidence bundles yet. Use <strong>Generate a current bundle</strong> above to
-              create one.
-            </p>
-          ) : (
-            <table>
-              <caption>
-                My evidence bundles ({manifests.length}) — facts only, no bundle body
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col">Bundle</th>
-                  <th scope="col">Generated</th>
-                  <th scope="col">Stored</th>
-                  <th scope="col">Retention until</th>
-                  <th scope="col">Signer (kid)</th>
-                  <th scope="col">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {manifests.map((m) => (
-                  <tr key={m.bundleId}>
-                    <th scope="row">
-                      <code>{m.bundleId.slice(0, 12)}…</code>
-                    </th>
-                    <td>{fmtDate(m.generatedAt)}</td>
-                    <td>{fmtDate(m.storedAt)}</td>
-                    <td>
-                      {m.retentionUntil === undefined ? 'indefinite' : fmtDate(m.retentionUntil)}
-                    </td>
-                    <td>
-                      <code>{m.signerKid}</code>
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="secondary"
-                        onClick={() => void onView(m.bundleId)}
-                        disabled={view.busy && selectedId === m.bundleId}
-                        aria-label={`View bundle ${m.bundleId}`}
-                      >
-                        {view.busy && selectedId === m.bundleId ? 'Loading…' : 'View'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )
-        }
+        {(manifests) => {
+          const columns: Column<EvidenceManifestEntry>[] = [
+            {
+              key: 'bundle',
+              header: 'Bundle',
+              isRowHeader: true,
+              cell: (m) => <code>{m.bundleId.slice(0, 12)}…</code>,
+            },
+            { key: 'generated', header: 'Generated', cell: (m) => fmtDate(m.generatedAt) },
+            { key: 'stored', header: 'Stored', cell: (m) => fmtDate(m.storedAt) },
+            {
+              key: 'retention',
+              header: 'Retention until',
+              cell: (m) =>
+                m.retentionUntil === undefined ? 'indefinite' : fmtDate(m.retentionUntil),
+            },
+            {
+              key: 'signer',
+              header: 'Signer (kid)',
+              cell: (m) => <code>{m.signerKid}</code>,
+            },
+            {
+              key: 'action',
+              header: 'Action',
+              cell: (m) => (
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => void onView(m.bundleId)}
+                  disabled={view.busy && selectedId === m.bundleId}
+                  aria-label={`View bundle ${m.bundleId}`}
+                >
+                  {view.busy && selectedId === m.bundleId ? 'Loading…' : 'View'}
+                </button>
+              ),
+            },
+          ];
+          return (
+            <DataTable
+              caption={`My evidence bundles (${manifests.length}) — facts only, no bundle body`}
+              columns={columns}
+              rows={manifests}
+              rowKey={(m) => m.bundleId}
+              empty={
+                <>
+                  No evidence bundles yet. Use <strong>Generate a current bundle</strong> above to
+                  create one.
+                </>
+              }
+            />
+          );
+        }}
       </Async>
 
       {/* Selected-bundle detail — async region announced to assistive tech (not color-only). */}
@@ -1170,6 +1192,6 @@ export function EvidenceView(): React.ReactElement {
           </div>
         )}
       </div>
-    </section>
+    </Card>
   );
 }

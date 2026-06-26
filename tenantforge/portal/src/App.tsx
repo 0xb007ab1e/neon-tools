@@ -9,6 +9,7 @@ import {
   DangerZoneView,
   EvidenceView,
 } from './views.js';
+import { AppShell, type NavGroup, type NavItem } from '../../shared/ui/index.js';
 
 /**
  * The portal sections (hash-routed). The Evidence section is conditional on `features.evidence`; the
@@ -23,6 +24,16 @@ const SECTION_LABELS: Record<Section, string> = {
   payment: 'Payment method',
   evidence: 'Compliance evidence',
   danger: 'Danger zone',
+};
+
+/** Decorative section icons for the sidebar (aria-hidden; the label carries the meaning). */
+const SECTION_ICONS: Record<Section, string> = {
+  overview: '\u{1F3E0}', // house
+  billing: '\u{1F4B3}', // card
+  plan: '\u{1F4CB}', // clipboard
+  payment: '\u{1F3E6}', // bank
+  evidence: '\u{1F4DC}', // scroll
+  danger: '\u{26A0}', // warning sign
 };
 
 /**
@@ -263,7 +274,15 @@ function LoginView(props: {
   );
 }
 
-/** The signed-in shell: a labelled nav + the routed section, with focus moved on each route change. */
+/**
+ * The signed-in shell: the Cloudflare-style {@link AppShell} (left sidebar + top account bar +
+ * content), with the section's title as the focused `<h1>` on each route change.
+ *
+ * Behavior is unchanged from the previous top-nav layout — only the information architecture/layout
+ * moved to the shell. Flag-gated sections (Danger zone, Evidence) appear in the sidebar only when
+ * their server feature flag is on, and a deep link to a hidden section redirects to Overview. All
+ * authorization/CSRF/tenant-scoping remains server-side; the sidebar visibility is UX, not a control.
+ */
 function SignedInView(props: {
   session: SessionView;
   theme: 'light' | 'dark';
@@ -297,51 +316,77 @@ function SignedInView(props: {
     headingRef.current?.focus();
   }, [section]);
 
-  const sections: Section[] = (Object.keys(SECTION_LABELS) as Section[]).filter(
+  const visibleSections: Section[] = (Object.keys(SECTION_LABELS) as Section[]).filter(
     (s) =>
       (s !== 'danger' || features.destructiveActions) && (s !== 'evidence' || features.evidence),
   );
 
+  const toNavItem = (s: Section): NavItem => ({
+    id: s,
+    label: SECTION_LABELS[s],
+    icon: SECTION_ICONS[s],
+    variant: s === 'danger' ? 'danger' : 'default',
+  });
+
+  // Group the sidebar the way Cloudflare does: a primary group + an "Account settings" group, with
+  // the flag-gated Danger zone last. Only visible (flag-enabled) sections are included.
+  const accountIds: Section[] = ['billing', 'plan', 'payment'];
+  const primary: NavItem[] = visibleSections.filter((s) => s === 'overview').map(toNavItem);
+  const account: NavItem[] = visibleSections.filter((s) => accountIds.includes(s)).map(toNavItem);
+  const compliance: NavItem[] = visibleSections.filter((s) => s === 'evidence').map(toNavItem);
+  const danger: NavItem[] = visibleSections.filter((s) => s === 'danger').map(toNavItem);
+
+  const navGroups: NavGroup[] = [
+    { items: primary },
+    { heading: 'Account settings', items: account },
+    ...(compliance.length > 0 ? [{ heading: 'Compliance', items: compliance }] : []),
+    ...(danger.length > 0 ? [{ items: danger }] : []),
+  ];
+
+  const navigate = (id: string): void => {
+    window.location.hash = `#/${id}`;
+  };
+
+  const brand = (
+    <>
+      <span className="cf-brand-mark" aria-hidden="true">
+        TF
+      </span>
+      <span className="cf-brand-name">TenantForge</span>
+    </>
+  );
+
+  const topbarActions = (
+    <>
+      <ThemeToggle theme={props.theme} onToggle={props.onToggleTheme} />
+      <button type="button" className="link-button" onClick={() => void props.onLogout()}>
+        Sign out
+      </button>
+    </>
+  );
+
   return (
-    <div className="app">
-      <a className="skip-link" href="#section-heading">
-        Skip to content
-      </a>
-      <header className="topbar">
-        <span className="brand">TenantForge Account</span>
-        <div className="topbar-end">
-          <ThemeToggle theme={props.theme} onToggle={props.onToggleTheme} />
-          <button type="button" className="link-button" onClick={() => void props.onLogout()}>
-            Sign out
-          </button>
-        </div>
-      </header>
-      <nav aria-label="Account sections">
-        <ul className="nav">
-          {sections.map((s) => (
-            <li key={s}>
-              <a
-                href={`#/${s}`}
-                aria-current={s === section ? 'page' : undefined}
-                className={s === 'danger' ? 'nav-danger' : undefined}
-              >
-                {SECTION_LABELS[s]}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </nav>
-      <main>
-        <h1 id="section-heading" ref={headingRef} tabIndex={-1}>
-          {SECTION_LABELS[section]}
-        </h1>
-        {section === 'overview' && <OverviewView />}
-        {section === 'billing' && <BillingView />}
-        {section === 'plan' && <PlanView />}
-        {section === 'payment' && <PaymentView loadStripe={loadStripe} />}
-        {section === 'evidence' && features.evidence && <EvidenceView />}
-        {section === 'danger' && features.destructiveActions && <DangerZoneView />}
-      </main>
-    </div>
+    <AppShell
+      brand={brand}
+      navGroups={navGroups}
+      navAriaLabel="Account sections"
+      activeId={section}
+      href={(id) => `#/${id}`}
+      onSelect={navigate}
+      topbarContext="TenantForge Account"
+      topbarActions={topbarActions}
+      mainLabel={`${SECTION_LABELS[section]} section`}
+      collapseStorageKey="tf-portal-sidebar-collapsed"
+    >
+      <h1 id="section-heading" ref={headingRef} tabIndex={-1}>
+        {SECTION_LABELS[section]}
+      </h1>
+      {section === 'overview' && <OverviewView />}
+      {section === 'billing' && <BillingView />}
+      {section === 'plan' && <PlanView />}
+      {section === 'payment' && <PaymentView loadStripe={loadStripe} />}
+      {section === 'evidence' && features.evidence && <EvidenceView />}
+      {section === 'danger' && features.destructiveActions && <DangerZoneView />}
+    </AppShell>
   );
 }
