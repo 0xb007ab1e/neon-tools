@@ -1,76 +1,24 @@
 /*
- * TenantForge dashboard design system. Token-based, themeable (light/dark), responsive, and
- * accessibility-first (WCAG 2.2 AA): semantic landmarks in the markup, visible focus, sufficient
- * contrast in both themes, honored prefers-reduced-motion. Zero external deps (CSP-safe).
+ * TenantForge dashboard — Fluent Design 2 reference implementation (UI/UX reskin slice 1).
+ *
+ * Consumes the SHARED design tokens (../../shared/fluent-tokens.css) — the single source of truth
+ * for the #FE6601 brand ramp, neutrals, surfaces/elevation, semantic states, type ramp, radii,
+ * spacing, and motion — and maps them onto this app's component classes. The portal + signup SPAs
+ * import the same shared file in later slices; nothing about the markup/behavior changes here, so
+ * the existing axe a11y assertions and component tests still hold.
+ *
+ * Accessibility-first (WCAG 2.2 AA): semantic landmarks in the markup, visible Fluent focus stroke
+ * on every interactive element, AA-verified contrast in both themes, honored prefers-reduced-motion,
+ * and meaning never conveyed by color alone (the panels carry ✓/✗ + text labels). The shared file
+ * documents the measured contrast ratios.
  */
 
-/* ---- Design tokens (light is the default) ---- */
+/* Vite inlines this CSS @import at build (no runtime request; CSP-safe). Must precede other rules. */
+@import url('../../shared/fluent-tokens.css');
+
+/* Dashboard-local severity text colors layered on the shared semantic roles. */
 :root {
-  color-scheme: light dark;
-
-  --bg: #f5f6f8;
-  --surface: #ffffff;
-  --surface-2: #eef1f5;
-  --fg: #1b1f24;
-  --fg-muted: #59616c;
-  --border: #d8dde3;
-  --accent: #3b5bdb;
-  --accent-hover: #2f4ec9;
-  --accent-fg: #ffffff;
-  --ok-fg: #15703f;
-  --ok-bg: #e6f6ed;
-  --bad-fg: #b5301a;
-  --bad-bg: #fbe9e6;
-  --focus: #2f6fed;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 14px rgba(16, 24, 40, 0.07);
-
-  --sp-1: 0.25rem;
-  --sp-2: 0.5rem;
-  --sp-3: 0.75rem;
-  --sp-4: 1rem;
-  --sp-5: 1.5rem;
-  --sp-6: 2rem;
-  --radius: 0.625rem;
-  --radius-sm: 0.375rem;
-  --maxw: 72rem;
-}
-
-/* Dark tokens: explicit [data-theme='dark'], or the OS preference when no explicit light choice. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --bg: #0e1116;
-    --surface: #171b22;
-    --surface-2: #20262f;
-    --fg: #e7eaef;
-    --fg-muted: #9aa4b2;
-    --border: #2a313c;
-    --accent: #6b8afd;
-    --accent-hover: #8aa1ff;
-    --accent-fg: #0e1116;
-    --ok-fg: #5fd394;
-    --ok-bg: #11271b;
-    --bad-fg: #ff9a85;
-    --bad-bg: #2c1714;
-    --focus: #7aa2ff;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px rgba(0, 0, 0, 0.45);
-  }
-}
-:root[data-theme='dark'] {
-  --bg: #0e1116;
-  --surface: #171b22;
-  --surface-2: #20262f;
-  --fg: #e7eaef;
-  --fg-muted: #9aa4b2;
-  --border: #2a313c;
-  --accent: #6b8afd;
-  --accent-hover: #8aa1ff;
-  --accent-fg: #0e1116;
-  --ok-fg: #5fd394;
-  --ok-bg: #11271b;
-  --bad-fg: #ff9a85;
-  --bad-bg: #2c1714;
-  --focus: #7aa2ff;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px rgba(0, 0, 0, 0.45);
+  --warn-fg: var(--warning-fg);
 }
 
 * {
@@ -84,22 +32,20 @@ body {
 }
 
 body {
-  font:
-    16px/1.55 system-ui,
-    -apple-system,
-    Segoe UI,
-    Roboto,
-    sans-serif;
+  font-family: var(--font-base);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-body);
   color: var(--fg);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* ---- Focus + motion ---- */
+/* ---- Focus (Fluent focus stroke) + motion ---- */
 :focus-visible {
-  outline: 3px solid var(--focus);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
 .main:focus {
   outline: none; /* programmatic region focus on route change — no visible box */
@@ -108,8 +54,9 @@ body {
   *,
   *::before,
   *::after {
-    transition: none !important;
-    animation: none !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
   }
 }
@@ -132,12 +79,14 @@ body {
   left: var(--sp-2);
   top: -3rem;
   z-index: 100;
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: var(--accent-fill);
+  color: var(--on-accent);
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--radius-sm);
   text-decoration: none;
-  transition: top 0.15s ease;
+  font-weight: var(--fw-semibold);
+  box-shadow: var(--shadow-8);
+  transition: top var(--motion-fast) var(--ease-decelerate);
 }
 .skip-link:focus {
   top: var(--sp-2);
@@ -164,31 +113,34 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(8px);
+  padding: var(--sp-3) var(--sp-5);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
 }
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 1.9rem;
-  height: 1.9rem;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-weight: 700;
-  font-size: 0.8rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-md);
+  /* Decorative brand swatch — uses the bright base #FE6601. The "TF" glyph is aria-hidden, so it
+     carries no informational text; near-black on the bright accent is 5.6:1 regardless. */
+  background: var(--accent-80);
+  color: var(--neutral-96);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-caption);
   letter-spacing: 0.02em;
+  box-shadow: var(--shadow-2);
 }
 .brand-name {
-  font-size: 1.1rem;
-  font-weight: 700;
+  font-size: var(--fs-subtitle);
+  font-weight: var(--fw-bold);
   margin: 0;
   letter-spacing: -0.01em;
 }
@@ -200,55 +152,58 @@ body {
 }
 .who {
   color: var(--fg-muted);
-  font-size: 0.9rem;
+  font-size: var(--fs-body);
 }
 .role-chip {
   display: inline-block;
   background: var(--surface-2);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.05rem 0.5rem;
-  font-size: 0.78rem;
-  font-weight: 600;
+  border-radius: var(--radius-circular);
+  padding: 0.05rem 0.55rem;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
 }
 
-/* ---- Nav (tab-style; wraps + scrolls on narrow viewports) ---- */
+/* ---- Nav (Fluent tab-style; wraps + scrolls on narrow viewports) ---- */
 .nav {
   position: sticky;
-  top: 3.4rem;
+  top: 3.5rem;
   z-index: 10;
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
-  padding: 0 var(--sp-4);
+  padding: 0 var(--sp-5);
 }
 .nav ul {
   display: flex;
-  gap: var(--sp-1);
+  gap: var(--sp-2);
   list-style: none;
-  margin: 0;
+  margin: 0 auto;
   padding: 0;
   max-width: var(--maxw);
-  margin-inline: auto;
   overflow-x: auto;
 }
 .nav-link {
   display: inline-block;
+  position: relative;
   padding: var(--sp-3) var(--sp-3);
   color: var(--fg-muted);
   text-decoration: none;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-body);
   border-bottom: 2px solid transparent;
   white-space: nowrap;
   transition:
-    color 0.15s ease,
-    border-color 0.15s ease;
+    color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard);
 }
 .nav-link:hover {
   color: var(--fg);
 }
+/* Fluent selected-tab indicator: accent underline + accent label. */
 .nav-link[aria-current='page'] {
-  color: var(--accent);
+  color: var(--accent-text);
   border-bottom-color: var(--accent);
 }
 
@@ -256,7 +211,7 @@ body {
 .main {
   max-width: var(--maxw);
   margin-inline: auto;
-  padding: var(--sp-5) var(--sp-4) var(--sp-6);
+  padding: var(--sp-6) var(--sp-5) var(--sp-7);
 }
 .panels {
   display: flex;
@@ -264,11 +219,12 @@ body {
   gap: var(--sp-5);
 }
 
+/* Fluent card surface (layer + elevation). */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-4);
 }
 .panel {
   padding: var(--sp-5);
@@ -276,17 +232,19 @@ body {
 .panel-title {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  font-size: 1.05rem;
-  font-weight: 700;
-  margin: 0 0 var(--sp-3);
+  gap: var(--sp-3);
+  font-size: var(--fs-subtitle);
+  line-height: var(--lh-subtitle);
+  font-weight: var(--fw-bold);
+  margin: 0 0 var(--sp-4);
   letter-spacing: -0.01em;
 }
+/* Decorative accent bar on the section heading (brand color; non-text). */
 .panel-title::before {
   content: '';
-  width: 0.45rem;
-  height: 1.05rem;
-  border-radius: 2px;
+  width: 0.35rem;
+  height: 1.1rem;
+  border-radius: var(--radius-circular);
   background: var(--accent);
   flex: none;
 }
@@ -296,6 +254,10 @@ body {
 .panel-body > div > p,
 .panel-body > p {
   color: var(--fg-muted);
+}
+.digest-headline {
+  color: var(--fg) !important;
+  font-weight: var(--fw-semibold);
 }
 .loading {
   color: var(--fg-muted);
@@ -307,11 +269,11 @@ table {
   width: 100%;
   min-width: 32rem;
   margin: var(--sp-3) 0 var(--sp-4);
-  font-size: 0.92rem;
+  font-size: var(--fs-body);
 }
 caption {
   text-align: left;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   color: var(--fg);
   margin-bottom: var(--sp-2);
 }
@@ -325,130 +287,185 @@ td {
 thead th {
   background: var(--surface-2);
   color: var(--fg-muted);
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-strong);
+}
+tbody tr {
+  transition: background var(--motion-fast) var(--ease-standard);
 }
 tbody tr:hover {
   background: var(--surface-2);
 }
 code {
+  font-family: var(--font-mono);
   background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.05rem 0.3rem;
+  padding: 0.05rem 0.35rem;
   font-size: 0.88em;
 }
 /* Read-only artifact block (an evidence-bundle JWS / public JWK) — monospaced, wraps, selectable. */
 .evidence-blob {
   width: 100%;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.82em;
-  padding: var(--sp-2) var(--sp-3);
+  line-height: 1.5;
+  padding: var(--sp-3);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
   color: var(--fg);
   overflow-wrap: anywhere;
   resize: vertical;
 }
 .evidence-detail {
-  margin-top: var(--sp-3);
-  padding-top: var(--sp-3);
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
   border-top: 1px solid var(--border);
 }
 .evidence-detail h3 {
-  font-size: 1rem;
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
   margin: 0 0 var(--sp-2);
 }
 
 /* ---- Status / errors ---- */
 .status {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 .status-ok {
-  color: var(--ok-fg);
+  color: var(--success-fg);
 }
 .status-bad,
 tr.status-bad th,
 tr.status-bad td {
-  color: var(--bad-fg);
+  color: var(--danger-fg);
 }
 /* Digest severity pill — color is an enhancement; the text label carries the meaning (WCAG 1.4.1). */
 .status-sev {
   display: inline-block;
-  padding: 0 0.45em;
+  padding: 0.05rem 0.5em;
   border-radius: var(--radius-sm);
   text-transform: uppercase;
-  font-size: 0.82em;
-  letter-spacing: 0.02em;
+  font-size: var(--fs-caption);
+  letter-spacing: 0.03em;
 }
 .status-sev-ok {
-  color: var(--ok-fg);
+  color: var(--success-fg);
+  background: var(--success-bg);
 }
 .status-sev-info {
-  color: var(--fg);
+  color: var(--info-fg);
+  background: var(--info-bg);
 }
 .status-sev-warning {
-  color: var(--warn-fg, #b45309);
+  color: var(--warn-fg);
+  background: var(--warning-bg);
 }
 .status-sev-critical {
-  color: var(--bad-fg);
+  color: var(--danger-fg);
+  background: var(--danger-bg);
 }
 .error {
-  color: var(--bad-fg);
-  background: var(--bad-bg);
-  border: 1px solid color-mix(in srgb, var(--bad-fg) 30%, transparent);
-  border-radius: var(--radius-sm);
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+  border: 1px solid color-mix(in srgb, var(--danger-fg) 32%, transparent);
+  border-radius: var(--radius-md);
   padding: var(--sp-2) var(--sp-3);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 /* ---- Controls ---- */
 input,
-button {
+button,
+textarea {
   font: inherit;
 }
 input {
   padding: var(--sp-2) var(--sp-3);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--fg);
   width: 100%;
+  transition:
+    border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
+}
+/* Fluent text-field rest → focus: accent underline-style emphasis via ring. */
+input:hover {
+  border-color: var(--fg-subtle);
+}
+input:focus-visible {
+  border-color: var(--accent);
+  outline-offset: 0;
 }
 button {
   cursor: pointer;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   padding: var(--sp-2) var(--sp-4);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-body);
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
 }
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+/* Primary action — accent FILL (AA-safe: white on #b24701 = 5.53:1 light / near-black on #fe6601 = 5.89:1 dark). */
 .btn-primary {
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: var(--accent-fill);
+  color: var(--on-accent);
 }
-.btn-primary:hover {
-  background: var(--accent-hover);
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-fill-hover);
 }
+.btn-primary:active:not(:disabled) {
+  background: var(--accent-fill-pressed);
+}
+/* Secondary / subtle button (Fluent "Subtle"/outline). */
 .btn-ghost {
-  background: transparent;
+  background: var(--surface);
   color: var(--fg);
-  border-color: var(--border);
+  border-color: var(--border-strong);
 }
-.btn-ghost:hover {
+.btn-ghost:hover:not(:disabled) {
   background: var(--surface-2);
+  border-color: var(--fg-subtle);
+}
+.btn-ghost:active:not(:disabled) {
+  background: var(--surface-3);
 }
 .theme-toggle {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
-  background: transparent;
+  background: var(--surface);
   color: var(--fg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
 }
 .theme-toggle:hover {
   background: var(--surface-2);
+  border-color: var(--fg-subtle);
+}
+
+/* Default (unclassed) buttons — e.g. "Run reconcile" — get the primary treatment. */
+button:not([class]) {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+button:not([class]):hover:not(:disabled) {
+  background: var(--accent-fill-hover);
+}
+button:not([class]):active:not(:disabled) {
+  background: var(--accent-fill-pressed);
 }
 
 /* ---- Login ---- */
@@ -456,6 +473,7 @@ button {
   width: 100%;
   max-width: 24rem;
   padding: var(--sp-6);
+  box-shadow: var(--shadow-16);
 }
 .login-head {
   display: flex;
@@ -464,7 +482,9 @@ button {
   margin-bottom: var(--sp-4);
 }
 .login-title {
-  font-size: 1.6rem;
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
+  font-weight: var(--fw-bold);
   margin: 0;
   letter-spacing: -0.02em;
 }
@@ -477,16 +497,22 @@ button {
   gap: var(--sp-3);
 }
 .login h2 {
-  font-size: 1.05rem;
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
   margin: 0;
 }
 .login label {
-  font-weight: 600;
-  font-size: 0.9rem;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-body);
 }
 
 /* ---- Narrow viewports ---- */
 @media (max-width: 36rem) {
+  .topbar,
+  .nav,
+  .main {
+    padding-inline: var(--sp-4);
+  }
   .who {
     width: 100%;
     order: 3;

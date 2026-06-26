@@ -1,49 +1,31 @@
-/* WCAG 2.2 AA: AA-contrast tokens (light + dark), visible focus, reduced-motion, logical spacing.
-   Theme is driven by `data-theme` on <html> (in-app toggle) and falls back to prefers-color-scheme. */
+/*
+ * TenantForge customer portal — Fluent Design 2 reskin (UI/UX slice 2).
+ *
+ * Consumes the SHARED design tokens (../../shared/fluent-tokens.css) — the #FE6601 brand ramp,
+ * neutrals, surfaces, semantic states, type ramp, radii, and motion (single source of truth; the
+ * dashboard + signup import the same file). This stylesheet maps the portal's local role names onto
+ * the shared tokens, so every existing rule renders Fluent with NO markup change (the axe + component
+ * tests still hold). Light/dark (data-theme toggle + prefers-color-scheme) and prefers-reduced-motion
+ * are handled by the shared file.
+ *
+ * Accessibility (WCAG 2.2 AA): interactive accent uses the shared --accent-fill/--on-accent pair
+ * (never white on the bright #fe6601 base — that fails at 2.95:1); danger uses the shared danger role
+ * with --on-accent for text on the solid danger fill. Measured ratios: docs/design/fluent-design-system.md.
+ */
+@import url('../../shared/fluent-tokens.css');
+
 :root {
-  --bg: #f5f6f8;
-  --panel: #ffffff;
-  --fg: #1b1f24;
-  --muted: #50575f;
-  --border: #d4d8dd;
-  --accent: #0b5fff;
-  --accent-fg: #ffffff;
-  --error: #b00020;
-  --ok: #146c2e;
-  --danger: #b00020;
-  --danger-fg: #ffffff;
-  --focus: #0b5fff;
-  color-scheme: light dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --bg: #0e1116;
-    --panel: #161b22;
-    --fg: #e7eaef;
-    --muted: #aeb6c0;
-    --border: #2d333b;
-    --accent: #4d8bff;
-    --accent-fg: #0b1020;
-    --error: #ff8088;
-    --ok: #5dd58a;
-    --danger: #ff8088;
-    --danger-fg: #1b0205;
-    --focus: #4d8bff;
-  }
-}
-:root[data-theme='dark'] {
-  --bg: #0e1116;
-  --panel: #161b22;
-  --fg: #e7eaef;
-  --muted: #aeb6c0;
-  --border: #2d333b;
-  --accent: #4d8bff;
-  --accent-fg: #0b1020;
-  --error: #ff8088;
-  --ok: #5dd58a;
-  --danger: #ff8088;
-  --danger-fg: #1b0205;
-  --focus: #4d8bff;
+  /* Map the portal's local role names onto the shared Fluent tokens (each switches light/dark in the
+     shared file). --bg / --fg / --border / --focus flow straight through from the shared file. */
+  --panel: var(--surface);
+  --muted: var(--fg-muted);
+  --accent: var(--accent-fill); /* interactive fill + accent text — AA-safe (5.53:1 light) */
+  --accent-fg: var(--on-accent);
+  --error: var(--danger-fg); /* danger TEXT/stroke color on surface */
+  --ok: var(--success-fg);
+  --danger: var(
+    --danger-fg
+  ); /* strong danger color (text + solid fill); text on it = --on-accent */
 }
 
 * {
@@ -53,12 +35,9 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font:
-    16px/1.5 system-ui,
-    -apple-system,
-    Segoe UI,
-    Roboto,
-    sans-serif;
+  font-family: var(--font-base);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-body);
 }
 .skip-link {
   position: absolute;
@@ -129,7 +108,7 @@ body {
 }
 .nav a.nav-danger[aria-current='page'] {
   background: var(--danger);
-  color: var(--danger-fg);
+  color: var(--on-accent);
 }
 .card {
   background: var(--panel);
@@ -230,7 +209,7 @@ button.secondary {
 }
 button.danger-button {
   background: var(--danger);
-  color: var(--danger-fg);
+  color: var(--on-accent);
 }
 button.link-button {
   background: transparent;
