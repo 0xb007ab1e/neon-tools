@@ -65,6 +65,7 @@ import {
   type RetentionReport,
   type Session,
 } from './api';
+import { AppShell, InfoTip, StatGrid, StatTile, type NavGroup } from '../../shared/ui/index.js';
 
 /**
  * Resolve + apply the light/dark theme. Defaults to the OS `prefers-color-scheme`, with an in-app
@@ -221,12 +222,16 @@ function LoginView(props: {
   );
 }
 
-/** The dashboard's top-level sections (grouped panels), each deep-linkable via `#/<id>`. */
+/**
+ * The dashboard's top-level sections (grouped panels), each deep-linkable via `#/<id>`. Each carries
+ * a decorative sidebar icon (aria-hidden; the label is the accessible name) and a sidebar group
+ * heading so the left nav reads Cloudflare-style without changing the section set the routes/tests use.
+ */
 const SECTIONS = [
-  { id: 'health', label: 'Health' },
-  { id: 'fleet', label: 'Fleet' },
-  { id: 'billing', label: 'Billing' },
-  { id: 'audit', label: 'Audit' },
+  { id: 'health', label: 'Health', icon: '\u{1FAC0}', group: 'Overview' }, // anatomical heart
+  { id: 'fleet', label: 'Fleet', icon: '\u{1F6F0}', group: 'Fleet & compliance' }, // satellite
+  { id: 'billing', label: 'Billing', icon: '\u{1F4B3}', group: 'Revenue' }, // card
+  { id: 'audit', label: 'Audit', icon: '\u{1F4DC}', group: 'Fleet & compliance' }, // scroll
 ] as const;
 type SectionId = (typeof SECTIONS)[number]['id'];
 const SECTION_IDS: readonly string[] = SECTIONS.map((s) => s.id);
@@ -257,32 +262,26 @@ function useHashRoute(): [SectionId, (id: SectionId) => void] {
   return [active, navigate];
 }
 
-/** Section navigation as a tab-style list of links (responsive; wraps on narrow viewports). */
-function Nav(props: { active: SectionId; onNavigate: (id: SectionId) => void }): React.JSX.Element {
-  return (
-    <nav className="nav" aria-label="Dashboard sections">
-      <ul>
-        {SECTIONS.map((s) => (
-          <li key={s.id}>
-            <a
-              href={`#/${s.id}`}
-              className="nav-link"
-              aria-current={props.active === s.id ? 'page' : undefined}
-              onClick={(e) => {
-                e.preventDefault();
-                props.onNavigate(s.id);
-              }}
-            >
-              {s.label}
-            </a>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
+/** Build the Cloudflare-style sidebar groups from the section list (group heading → its sections). */
+function buildNavGroups(): NavGroup[] {
+  const order: readonly string[] = ['Overview', 'Fleet & compliance', 'Revenue'];
+  const byGroup = new Map<string, NavGroup['items'][number][]>();
+  for (const s of SECTIONS) {
+    const items = byGroup.get(s.group) ?? [];
+    items.push({ id: s.id, label: s.label, icon: s.icon });
+    byGroup.set(s.group, items);
+  }
+  return order
+    .filter((g) => byGroup.has(g))
+    .map((g) => ({ heading: g, items: byGroup.get(g) ?? [] }));
 }
 
-/** Signed-in shell: skip-link → sticky header (brand + theme + sign-out) → nav → routed main. */
+/**
+ * Signed-in shell: the shared Cloudflare-style {@link AppShell} (persistent left sidebar + top
+ * account bar + content; responsive left off-canvas drawer on narrow viewports), with the operator
+ * identity/role + theme toggle + sign-out in the top bar. Focus moves to `<main>` on each section
+ * change. The section set + routing are unchanged — only the layout/IA moved to the shared shell.
+ */
 function DashboardView(props: {
   session: Session;
   theme: 'light' | 'dark';
@@ -301,67 +300,75 @@ function DashboardView(props: {
     mainRef.current?.focus();
   }, [active]);
   const activeLabel = SECTIONS.find((s) => s.id === active)?.label ?? '';
+
+  const brand = (
+    <>
+      <span className="cf-brand-mark" aria-hidden="true">
+        TF
+      </span>
+      <span className="cf-brand-name">TenantForge</span>
+    </>
+  );
+
+  const topbarContext = (
+    <span className="who">
+      Signed in as <strong>{props.session.id}</strong>{' '}
+      <span className="role-chip">{props.session.role}</span>
+    </span>
+  );
+
+  const topbarActions = (
+    <>
+      <ThemeToggle theme={props.theme} onToggle={props.onToggleTheme} />
+      <button type="button" className="btn-ghost" onClick={() => void props.onLogout()}>
+        Sign out
+      </button>
+    </>
+  );
+
   return (
-    <div className="shell">
-      <a className="skip-link" href="#main">
-        Skip to main content
-      </a>
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            TF
-          </span>
-          <h1 className="brand-name">TenantForge</h1>
-        </div>
-        <div className="topbar-actions">
-          <span className="who">
-            Signed in as <strong>{props.session.id}</strong>{' '}
-            <span className="role-chip">{props.session.role}</span>
-          </span>
-          <ThemeToggle theme={props.theme} onToggle={props.onToggleTheme} />
-          <button type="button" className="btn-ghost" onClick={() => void props.onLogout()}>
-            Sign out
-          </button>
-        </div>
-      </header>
-      <Nav active={active} onNavigate={navigate} />
-      <main
-        id="main"
-        ref={mainRef}
-        tabIndex={-1}
-        className="main"
-        aria-label={`${activeLabel} section`}
-      >
-        <div className="panels">
-          {active === 'health' && (
-            <>
-              <OperatorDigestPanel />
-              <WebhookSubscriptionsPanel />
-            </>
-          )}
-          {active === 'fleet' && (
-            <>
-              <CompliancePanel />
-              <EvidencePanel />
-              <DriftPanel />
-              <ReconcilePanel />
-              <RetentionPanel />
-              <ExportsPanel />
-            </>
-          )}
-          {active === 'billing' && (
-            <>
-              <CostPanel />
-              <PlansPanel />
-              <SignupTokensPanel />
-              <InvoicesPanel />
-              <BillingPanel />
-            </>
-          )}
-          {active === 'audit' && <AuditPanel />}
-        </div>
-      </main>
-    </div>
+    <AppShell
+      brand={brand}
+      navGroups={buildNavGroups()}
+      navAriaLabel="Dashboard sections"
+      activeId={active}
+      href={(id) => `#/${id}`}
+      onSelect={(id) => navigate(id as SectionId)}
+      topbarContext={topbarContext}
+      topbarActions={topbarActions}
+      mainLabel={`${activeLabel} section`}
+      mainRef={mainRef}
+      collapseStorageKey="tf-dashboard-sidebar-collapsed"
+    >
+      <div className="panels">
+        {active === 'health' && (
+          <>
+            <OperatorDigestPanel />
+            <WebhookSubscriptionsPanel />
+          </>
+        )}
+        {active === 'fleet' && (
+          <>
+            <CompliancePanel />
+            <EvidencePanel />
+            <DriftPanel />
+            <ReconcilePanel />
+            <RetentionPanel />
+            <ExportsPanel />
+          </>
+        )}
+        {active === 'billing' && (
+          <>
+            <CostPanel />
+            <PlansPanel />
+            <SignupTokensPanel />
+            <InvoicesPanel />
+            <BillingPanel />
+          </>
+        )}
+        {active === 'audit' && <AuditPanel />}
+      </div>
+    </AppShell>
   );
 }
 
@@ -427,7 +434,26 @@ function OperatorDigestPanel(): React.JSX.Element {
     <Panel id="operator-digest-h" title="Operator digest" error={error} loading={data === null}>
       {data !== null && (
         <div>
-          <p>Overall {severityBadge(data.severity)}</p>
+          {/* At-a-glance roll-up as Cloudflare-style stat tiles (the detail table + headline follow). */}
+          <StatGrid>
+            <StatTile
+              label="Overall severity"
+              value={severityBadge(data.severity)}
+              hint={
+                <InfoTip label="What the severity levels mean">
+                  The highest severity across all detectors. <strong>ok</strong>: nothing needs
+                  attention. <strong>info</strong>: noteworthy, no action. <strong>warning</strong>:
+                  should be reviewed soon. <strong>critical</strong>: needs attention now.
+                </InfoTip>
+              }
+            />
+            <StatTile
+              label="Open issues"
+              value={data.totalIssues}
+              hint={data.totalIssues === 1 ? 'issue' : 'issues'}
+            />
+            <StatTile label="Detectors" value={data.categories.length} hint="evaluated" />
+          </StatGrid>
           <p className="digest-headline">{data.headline}</p>
           <p>
             {data.totalIssues} issue{data.totalIssues === 1 ? '' : 's'} · generated{' '}
@@ -509,8 +535,21 @@ function CompliancePanel(): React.JSX.Element {
           <p>
             {data.report.inventory.total} tenants · digest <code>{data.digest.slice(0, 12)}…</code>
           </p>
-          <p>Isolation {statusText(data.report.isolation.compliant)}</p>
-          <p>Residency {statusText(data.report.residency.compliant)}</p>
+          <p>
+            Isolation {statusText(data.report.isolation.compliant)}{' '}
+            <InfoTip label="What isolation compliance means">
+              Each tenant must have its own dedicated Neon project (physical, project-per-tenant
+              isolation). &ldquo;Compliant&rdquo; means no tenant is missing a project or sharing
+              one; &ldquo;Violations&rdquo; lists the tenants that are.
+            </InfoTip>
+          </p>
+          <p>
+            Residency {statusText(data.report.residency.compliant)}{' '}
+            <InfoTip label="What residency compliance means">
+              Every tenant must live in a region on the org allow-list (data-residency). Any tenant
+              in a non-allowed region is a violation, listed below with its region and reason.
+            </InfoTip>
+          </p>
           {data.report.residency.violations.length > 0 && (
             <table>
               <caption>Residency violations</caption>
@@ -848,16 +887,30 @@ function ReconcilePanel(): React.JSX.Element {
           <p>
             {data.pendingTenants.length} tenant(s) behind target{' '}
             <strong>{data.target ?? 'none'}</strong> · {data.totalMissing} migration application(s)
-            · {data.upToDate.length} up to date
+            · {data.upToDate.length} up to date{' '}
+            <InfoTip label="What fleet reconcile does">
+              Applies any missing schema migrations to every tenant that is behind the target
+              version, bringing the whole fleet up to date. It is idempotent and per-tenant — a
+              failure in one tenant doesn&rsquo;t block the others. This page shows the plan;
+              running it applies the migrations.
+            </InfoTip>
           </p>
           {canRun ? (
             <p>
-              <button type="button" onClick={() => void onRun()} disabled={busy}>
+              <button
+                type="button"
+                onClick={() => void onRun()}
+                disabled={busy}
+                title="Applies the missing migrations above to all behind tenants now. You'll be asked to confirm; the run is audited."
+              >
                 {busy ? 'Reconciling…' : 'Run reconcile'}
               </button>
             </p>
           ) : (
-            <p>Preview only — run `reconcile-fleet` (CLI) to apply.</p>
+            <p>
+              Preview only — running from the dashboard isn&rsquo;t enabled here (it requires the
+              reconcile capability + permission). Apply with <code>reconcile-fleet</code> (CLI).
+            </p>
           )}
           {result !== null && <p role="status">{result}</p>}
           {history.data !== null && history.data.length > 0 && (

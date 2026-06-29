@@ -12,6 +12,13 @@ export default defineConfig({
   server: {
     host: process.env.PORTAL_HOST ?? '127.0.0.1',
     port: 5175,
+    // Vite blocks non-local Host headers by default (anti-DNS-rebinding). Allow the tailnet
+    // MagicDNS host(s) when fronted by Tailscale HTTPS (e.g. https://<host>.<tailnet>.ts.net/portal/)
+    // via PORTAL_ALLOWED_HOSTS (comma-separated; a leading-dot entry like ".ts.net" allows that
+    // domain + subdomains). Unset = default (local only); never use this to expose publicly.
+    ...(process.env.PORTAL_ALLOWED_HOSTS !== undefined
+      ? { allowedHosts: process.env.PORTAL_ALLOWED_HOSTS.split(',') }
+      : {}),
     // The portal backend is mounted on the control-plane HTTP server.
     proxy: { '/portal/api': process.env.PORTAL_API_ORIGIN ?? 'http://127.0.0.1:3000' },
   },

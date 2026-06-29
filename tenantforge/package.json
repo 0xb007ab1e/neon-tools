@@ -30,7 +30,7 @@
     "mcp": "node --env-file-if-exists=.env --import tsx src/app/mcp.ts",
     "worker": "node --env-file-if-exists=.env --import tsx src/app/worker.ts",
     "load": "node --import tsx src/app/load.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p dashboard/tsconfig.json --noEmit && tsc -p signup/tsconfig.json --noEmit && tsc -p portal/tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p shared/tsconfig.json --noEmit && tsc -p dashboard/tsconfig.json --noEmit && tsc -p signup/tsconfig.json --noEmit && tsc -p portal/tsconfig.json --noEmit",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "docs": "typedoc",

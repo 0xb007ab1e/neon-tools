@@ -1,0 +1,271 @@
+/*
+ * TenantForge — Fluent Design 2 design tokens (SHARED across all three SPAs).
+ *
+ * Single source of truth for the brand palette, neutral ramp, surfaces/elevation, semantic
+ * states, type ramp, radii, spacing, and motion. Each SPA imports this file at the very top of
+ * its own `styles.css` via a relative CSS `@import` (Vite inlines it at build — no extra request,
+ * no JS, CSP-safe). The SPA stylesheet then maps these primitives onto its component classes.
+ *
+ * Reference: Fluent 2 (fluent2.microsoft.design) — accent ramp + tints/shades, neutral grays,
+ * layered surfaces with shadow tokens, the type ramp (caption → large-title), and 4px corner
+ * radius defaults. Brand accent: #FE6601.
+ *
+ * Accessibility (WCAG 2.2 AA — project mandate): #FE6601 (`--accent-80`) is a bright orange;
+ * WHITE TEXT ON IT IS ONLY ~2.95:1 AND FAILS AA. So text never sits on the bright base in light
+ * mode. Instead:
+ *   - light theme primary fill `--accent-fill` = `--accent-110` (#b24701); `--on-accent` = #fff
+ *     → 5.53:1 (PASS, normal text).
+ *   - dark theme primary fill = the bright base #fe6601; `--on-accent` = near-black #1b1a19
+ *     → 5.89:1 (PASS) — on dark, dark-on-bright reads better than light-on-bright.
+ * Every shipped text/background pairing is measured ≥4.5:1 (≥3:1 for large text / UI strokes
+ * per 1.4.11). The measured ratios live in docs/design/fluent-design-system.md.
+ *
+ * Theming: light is the default; dark applies on `:root[data-theme='dark']` (explicit in-app
+ * toggle) OR the OS `prefers-color-scheme: dark` when the user has not chosen light. Motion is
+ * curtailed under `prefers-reduced-motion` by each consuming stylesheet.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* ============================================================
+   * BRAND ACCENT RAMP — derived from #FE6601 (Fluent tint/shade)
+   * 16 perceptual steps: 10 (lightest tint) … 80 (base) … 160 (darkest shade).
+   * ============================================================ */
+  --accent-10: #fff0e6;
+  --accent-20: #ffddc7;
+  --accent-30: #ffc8a4;
+  --accent-40: #ffb380;
+  --accent-50: #fe9d5c;
+  --accent-60: #fe8b3e;
+  --accent-70: #fe781f;
+  --accent-80: #fe6601; /* BASE BRAND — #FE6601 */
+  --accent-90: #e55c01;
+  --accent-100: #cb5201;
+  --accent-110: #b24701;
+  --accent-120: #983d01;
+  --accent-130: #7f3301;
+  --accent-140: #612700;
+  --accent-150: #421b00;
+  --accent-160: #240e00;
+
+  /* ============================================================
+   * NEUTRAL RAMP — Fluent grays (warm-neutral, paired to the orange brand).
+   * ============================================================ */
+  --neutral-0: #ffffff;
+  --neutral-2: #faf9f8;
+  --neutral-4: #f3f2f1;
+  --neutral-6: #edebe9;
+  --neutral-10: #e1dfdd;
+  --neutral-20: #c8c6c4;
+  --neutral-30: #a19f9d;
+  --neutral-40: #797775;
+  --neutral-50: #605e5c;
+  --neutral-60: #484644;
+  --neutral-70: #3b3a39;
+  --neutral-80: #323130;
+  --neutral-86: #2f2e2d;
+  --neutral-90: #292827;
+  --neutral-92: #242322;
+  --neutral-96: #1b1a19;
+  --neutral-100: #000000;
+
+  /* ============================================================
+   * SEMANTIC ROLE TOKENS — LIGHT THEME (default)
+   * Each role pairs an accessible text/fill/background; ratios in the design doc.
+   * ============================================================ */
+
+  /* Surfaces / layers (Fluent elevation: background → card → flyout). */
+  --bg: var(--neutral-2);
+  --surface: var(--neutral-0);
+  --surface-2: var(--neutral-4);
+  --surface-3: var(--neutral-6);
+
+  /* Text. */
+  --fg: var(--neutral-96); /* 17.4:1 on surface */
+  --fg-muted: var(--neutral-50); /* 6.5:1 on surface */
+  --fg-subtle: var(--neutral-40); /* large/decorative only */
+
+  /* Strokes. */
+  --border: var(--neutral-10);
+  --border-strong: var(--neutral-20);
+
+  /* Accent roles (interactive). `--accent` is the BRAND color (decorative / non-text use).
+   * Text-bearing fills use `--accent-fill` + `--on-accent` so contrast passes. */
+  --accent: var(--accent-80); /* brand swatch, decorative bars, focus tint base */
+  --accent-fill: var(--accent-110); /* primary-button fill: #b24701, white text = 5.53:1 */
+  --accent-fill-hover: var(--accent-120); /* #983d01, white = 6.99:1 */
+  --accent-fill-pressed: var(--accent-130); /* #7f3301, white = 8.84:1 */
+  --accent-selected: var(--accent-20); /* selected-row / subtle accent wash */
+  --on-accent: var(--neutral-0); /* text/icon on --accent-fill (white) */
+  --accent-text: var(--accent-110); /* accent-colored TEXT/links on surface: 5.53:1 */
+  --focus: var(--accent-110); /* focus stroke: 5.26:1 vs bg, 5.53:1 vs surface */
+
+  /* Semantic state colors (text / background-wash pairs). */
+  --success-fg: #0e6027;
+  --success-bg: #dff6e6;
+  --warning-fg: #8a5a00;
+  --warning-bg: #fdf3d7;
+  --danger-fg: #b3261e;
+  --danger-bg: #fdeceb;
+  --info-fg: #0a5dc2;
+  --info-bg: #e3f0fd;
+
+  /* Elevation / shadow (Fluent depth tokens). */
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-4: 0 1px 2px rgba(16, 24, 40, 0.06), 0 2px 8px rgba(16, 24, 40, 0.08);
+  --shadow-8: 0 2px 4px rgba(16, 24, 40, 0.06), 0 8px 16px rgba(16, 24, 40, 0.1);
+  --shadow-16: 0 4px 8px rgba(16, 24, 40, 0.08), 0 16px 32px rgba(16, 24, 40, 0.12);
+  --shadow: var(--shadow-4); /* default card elevation */
+
+  /* ============================================================
+   * TYPOGRAPHY — Fluent type ramp + Segoe UI / system font stack.
+   * ============================================================ */
+  --font-base:
+    'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fs-caption: 0.75rem; /* 12px */
+  --fs-body: 0.875rem; /* 14px — Fluent body */
+  --fs-body-lg: 1rem; /* 16px */
+  --fs-subtitle: 1.25rem; /* 20px */
+  --fs-title: 1.75rem; /* 28px */
+  --fs-large-title: 2.5rem; /* 40px */
+
+  --lh-caption: 1.33;
+  --lh-body: 1.43;
+  --lh-subtitle: 1.4;
+  --lh-title: 1.29;
+
+  --fw-regular: 400;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* ============================================================
+   * CORNER RADIUS — Fluent (4px small default; larger for cards/flyouts).
+   * ============================================================ */
+  --radius-sm: 4px; /* Fluent default control radius */
+  --radius-md: 6px;
+  --radius-lg: 8px; /* cards */
+  --radius-xl: 12px;
+  --radius-circular: 9999px;
+
+  /* ============================================================
+   * SPACING SCALE — Fluent 4px grid.
+   * ============================================================ */
+  --sp-1: 0.25rem; /* 4 */
+  --sp-2: 0.5rem; /* 8 */
+  --sp-3: 0.75rem; /* 12 */
+  --sp-4: 1rem; /* 16 */
+  --sp-5: 1.5rem; /* 24 */
+  --sp-6: 2rem; /* 32 */
+  --sp-7: 2.5rem; /* 40 */
+
+  /* ============================================================
+   * MOTION — Fluent durations + easing curves.
+   * (Consuming stylesheets must zero these under prefers-reduced-motion.)
+   * ============================================================ */
+  --motion-fast: 100ms;
+  --motion-normal: 200ms;
+  --motion-slow: 300ms;
+  --ease-accelerate: cubic-bezier(0.9, 0.1, 1, 0.2);
+  --ease-decelerate: cubic-bezier(0.1, 0.9, 0.2, 1);
+  --ease-standard: cubic-bezier(0.33, 0, 0.67, 1); /* Fluent "easy-ease" */
+
+  /* Layout. */
+  --maxw: 72rem;
+}
+
+/* ================================================================
+ * DARK THEME
+ * Applies when the user explicitly chose dark (`data-theme='dark'`) OR the OS prefers dark and
+ * the user has not explicitly chosen light. On dark, the bright brand #fe6601 becomes the
+ * text-bearing fill with NEAR-BLACK text (5.89:1) — dark-on-bright beats light-on-bright here.
+ * ================================================================ */
+:root[data-theme='dark'],
+:root:not([data-theme='light']) {
+  --dark-bg: var(--neutral-96);
+  --dark-surface: var(--neutral-92);
+  --dark-surface-2: var(--neutral-86);
+  --dark-surface-3: var(--neutral-80);
+  --dark-fg: var(--neutral-4);
+  --dark-fg-muted: var(--neutral-20);
+  --dark-fg-subtle: var(--neutral-30);
+  --dark-border: var(--neutral-70);
+  --dark-border-strong: var(--neutral-60);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: var(--dark-bg);
+    --surface: var(--dark-surface);
+    --surface-2: var(--dark-surface-2);
+    --surface-3: var(--dark-surface-3);
+    --fg: var(--dark-fg);
+    --fg-muted: var(--dark-fg-muted);
+    --fg-subtle: var(--dark-fg-subtle);
+    --border: var(--dark-border);
+    --border-strong: var(--dark-border-strong);
+
+    --accent: var(--accent-50); /* brighter brand tint reads on dark surfaces */
+    --accent-fill: var(--accent-80); /* #fe6601 with near-black text = 5.89:1 */
+    --accent-fill-hover: var(--accent-70); /* #fe781f, near-black = 6.55:1 */
+    --accent-fill-pressed: var(--accent-60); /* #fe8b3e, near-black = 7.43:1 */
+    --accent-selected: color-mix(in srgb, var(--accent-80) 22%, transparent);
+    --on-accent: var(--neutral-96); /* near-black on bright accent */
+    --accent-text: var(--accent-50); /* accent links on dark surface = 7.6:1 */
+    --focus: var(--accent-50); /* focus stroke 8.4:1 vs dark bg */
+
+    --success-fg: #6cd690;
+    --success-bg: #14301d;
+    --warning-fg: #f5c451;
+    --warning-bg: #3a2d0a;
+    --danger-fg: #ff9a8d;
+    --danger-bg: #3a1714;
+    --info-fg: #7cb6ff;
+    --info-bg: #10283f;
+
+    --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-4: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+    --shadow-8: 0 2px 4px rgba(0, 0, 0, 0.5), 0 8px 16px rgba(0, 0, 0, 0.45);
+    --shadow-16: 0 4px 8px rgba(0, 0, 0, 0.5), 0 16px 32px rgba(0, 0, 0, 0.5);
+    --shadow: var(--shadow-4);
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: var(--dark-bg);
+  --surface: var(--dark-surface);
+  --surface-2: var(--dark-surface-2);
+  --surface-3: var(--dark-surface-3);
+  --fg: var(--dark-fg);
+  --fg-muted: var(--dark-fg-muted);
+  --fg-subtle: var(--dark-fg-subtle);
+  --border: var(--dark-border);
+  --border-strong: var(--dark-border-strong);
+
+  --accent: var(--accent-50);
+  --accent-fill: var(--accent-80); /* #fe6601 + near-black = 5.89:1 */
+  --accent-fill-hover: var(--accent-70);
+  --accent-fill-pressed: var(--accent-60);
+  --accent-selected: color-mix(in srgb, var(--accent-80) 22%, transparent);
+  --on-accent: var(--neutral-96);
+  --accent-text: var(--accent-50);
+  --focus: var(--accent-50);
+
+  --success-fg: #6cd690;
+  --success-bg: #14301d;
+  --warning-fg: #f5c451;
+  --warning-bg: #3a2d0a;
+  --danger-fg: #ff9a8d;
+  --danger-bg: #3a1714;
+  --info-fg: #7cb6ff;
+  --info-bg: #10283f;
+
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-4: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-8: 0 2px 4px rgba(0, 0, 0, 0.5), 0 8px 16px rgba(0, 0, 0, 0.45);
+  --shadow-16: 0 4px 8px rgba(0, 0, 0, 0.5), 0 16px 32px rgba(0, 0, 0, 0.5);
+  --shadow: var(--shadow-4);
+}

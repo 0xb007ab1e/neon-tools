@@ -63,7 +63,9 @@ export default tseslint.config(
   {
     // Browser SPAs (React 19 + Vite): React + hooks + jsx-a11y on top of the type-checked base.
     // a11y is a non-negotiable mandate (master §1) — lint it, don't just hand-verify.
-    files: ['dashboard/**/*.{ts,tsx}', 'portal/**/*.{ts,tsx}'],
+    // `shared/**` holds the cross-SPA Cloudflare-style shell components (React/TSX) consumed by the
+    // SPAs, so they get the same React + a11y rules.
+    files: ['dashboard/**/*.{ts,tsx}', 'portal/**/*.{ts,tsx}', 'shared/**/*.{ts,tsx}'],
     plugins: { react, 'react-hooks': reactHooks, 'jsx-a11y': jsxA11y },
     languageOptions: {
       globals: globals.browser,

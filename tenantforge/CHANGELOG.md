@@ -8,6 +8,109 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Contextual help + natural-flow UX across the consoles (UI/UX).** Every control/input/action now
+  carries an accessible explanation, and dependent/child actions surface in context. New shared
+  components: **`InfoTip`** — a focusable ⓘ trigger meeting **WCAG 1.4.13** (dismissible via Esc/
+  outside-click, hoverable via a grace timeout, persistent; keyboard + tap operable; trigger
+  `aria-describedby` the `role="tooltip"` bubble for screen readers) — and **`FormField`** — an input
+  wrapper with a visible `<label htmlFor>`, a `description` tied via `aria-describedby`, an optional
+  inline `InfoTip`, and an `error` slot announced as `role="alert"` (render-prop hands the control
+  `{id, aria-describedby, aria-invalid}`). `SettingsRow` gained `description`/`info`. Applied across
+  **portal** (Plan price → `FormField` with guidance; Overview status + Plan get `InfoTip`s
+  explaining status/proration; destructive cancel/erase buttons carry consequence `title`s) and
+  **dashboard** (operator-digest severity + compliance isolation/residency `InfoTip`s; the reconcile
+  action explains what it does, and the preview-only/disabled state explains _why_ — capability +
+  permission — and points to the CLI). Progressive disclosure was reinforced: plan-change previews
+  the prorated charge before a separate confirm; cancel/erasure disclose the one-time-code step + undo
+  window inline; reconcile shows the plan before Run and announces the result via `aria-live`. Signup
+  kept light. Front-end only; no backend/core changes. Tests: added `InfoTip`/`FormField`/`SettingsRow`
+  help tests (keyboard open/close, Esc dismiss, `aria-describedby`/`aria-invalid` wiring, label
+  association, axe) — portal **49**, dashboard **9**; all existing suites stay green. Docs:
+  `docs/design/fluent-design-system.md` (catalog + "Contextual help & natural flow").
+- **Dashboard onto the Cloudflare-style shell + signup consistency pass (UI/UX).** Applied the shared
+  shell (`shared/ui/*`) to the **operator dashboard**, matching the portal: `AppShell` + `Sidebar` +
+  `TopBar` + the responsive left off-canvas **drawer** (no top strip). The four sections are unchanged
+  (routing + tests intact) but the left nav is grouped Cloudflare-style — **Overview** (Health),
+  **Fleet & compliance** (Fleet, Audit), **Revenue** (Billing) — with `aria-current="page"`. The
+  Health digest gained a `StatGrid`/`StatTile` roll-up; list/table panels keep their semantic tables +
+  text-carrying status badges. **All behavior preserved**: operator token auth + RBAC, the dashboard
+  cookie session, every panel's fetch + actions including the capability-gated reconcile run and the
+  evidence view/download/public-key — layout/IA change only. The **signup** public flow got a light
+  consistency pass (no shell — it's linear, not a console): it now imports the shared shell stylesheet
+  and renders its step rail as pill chips matching the consoles (current step uses the AA-safe
+  `--accent-fill`/`--on-accent` pair; step text carries the meaning, not color). Front-end only; no
+  backend/core/portal changes. Tests: added dashboard shell tests (grouped nav + drawer
+  focus-trap/Esc/restore) to `dashboard/test/App.test.tsx`; the existing dashboard axe + panel tests
+  and the portal/shared-shell suites stay green. Docs: `docs/design/fluent-design-system.md` updated.
+- **Responsive left-anchored nav drawer for the console shell (UI/UX fix).** Replaced the narrow-
+  viewport behavior of the shared `Sidebar`: instead of collapsing into a horizontal top strip, the
+  nav now **stays left-anchored and vertical at every width**. On narrow viewports (< 48rem) it is a
+  left **off-canvas slide-in drawer** over a dim backdrop, opened by a **hamburger** in the `TopBar`
+  (visible only there); on desktop the persistent left rail + collapse-to-rail is unchanged. The page
+  reflows cleanly to **320px / 400% zoom with no horizontal page scroll** (WCAG 1.4.10) — wide tables
+  keep their own scroll container and `SettingsRow`s stack below 40rem. Drawer a11y: hamburger
+  `aria-expanded`/`aria-controls`; on open focus moves into and is **trapped** in the drawer, **Esc**
+  and **backdrop click** close, choosing an item closes it, and focus **returns to the hamburger** on
+  close; `prefers-reduced-motion` disables the slide. The old top-strip media rules were removed.
+  Shell-only change (`shared/ui/AppShell.tsx`, `Sidebar.tsx`, `TopBar.tsx`, `cf-shell.css`); the
+  portal consumes it unchanged. Added drawer tests to `portal/test/shell.test.tsx` (hamburger toggle,
+  Esc/backdrop close, focus-in-on-open + return-on-close, `aria-expanded` state, open-drawer axe pass).
+- **Cloudflare-dashboard-style shell components + portal redesign (UI/UX).** Added a reusable
+  Cloudflare-dashboard-style shell — persistent left sidebar + top account bar + a gray content
+  region of cards — and applied it to the **customer portal** as the reference surface (the operator
+  dashboard is a follow-up; signup + backend/core untouched). Built on the existing Fluent tokens
+  (#FE6601). Front-end only; an IA/layout change, not a logic change.
+  - **Shared components (`shared/ui/*.tsx`, styled by `shared/ui/cf-shell.css`):** `AppShell`,
+    `Sidebar` (collapsible, grouped nav, `aria-current`), `TopBar`, `Breadcrumbs`, `Tabs`, `Card`,
+    `SettingsRow` (the Cloudflare label-left/value+control-right pattern), `StatTile`/`StatGrid`,
+    a generic semantic `DataTable<T>`, and a status `Pill`. Presentational, prop-driven, TS-strict,
+    semantic-HTML-first, WCAG 2.2 AA; light/dark + reduced-motion + AA-safe accent inherited from the
+    shared tokens. Consumed cross-SPA via a relative CSS `@import` + a TS barrel (`shared/ui/index.ts`);
+    a new `shared/tsconfig.json` makes the directory a typecheck + ESLint (React + jsx-a11y) project.
+  - **Portal redesign (`portal/src/App.tsx`, `views.tsx`):** the old top-nav layout is replaced by
+    `AppShell` with a grouped sidebar — Overview · **Account settings** (Billing/Plan/Payment) ·
+    **Compliance** (Evidence) · Danger zone. Flag-gated groups (Danger, Evidence) appear only when
+    their server flag is on; a deep link to a hidden section still redirects to Overview. Overview
+    uses `StatTile`s; account settings use `Card` + `SettingsRow`; lists use `DataTable`; status shows
+    as a `Pill`. **All behavior preserved** — token + OIDC login, signed-cookie session, CSRF +
+    idempotency on mutations, step-up modals, erasure undo window, and the self-scoped (BOLA-safe)
+    evidence list/download/generate. The section title stays the focused `<h1>` on route change and
+    nav items remain `<a aria-current="page">`, so every existing axe + auth/CSRF/flag-gating
+    assertion holds unchanged; added `portal/test/shell.test.tsx` (axe + behavior for the new
+    components). Docs: `docs/design/fluent-design-system.md` §8.
+- **Fluent Design 2 design-token system + dashboard reskin (UI/UX slice 1 of 3).** Established a
+  shared Fluent 2 design-token system built around the brand accent **#FE6601** and applied it to the
+  **dashboard SPA** as the reference implementation (portal + signup SPAs follow in slices 2/3 and are
+  intentionally untouched). Front-end only — no backend/core/ports changes; a reskin (tokens + CSS +
+  no DOM changes), so the existing dashboard `vitest-axe` a11y assertions and component tests still pass.
+  - **Shared tokens (`shared/fluent-tokens.css`):** the single source of truth — a 16-step **#FE6601
+    accent ramp** (tints `--accent-10` … base `--accent-80` = `#fe6601` … shades `--accent-160`),
+    Fluent neutral ramp, layered surfaces + shadow/elevation tokens, semantic states
+    (success/warning/danger/info, each AA-paired), the Fluent **type ramp** (caption→large-title,
+    Segoe UI / system stack), 4px-grid spacing, corner-radius, and motion (durations + Fluent easing).
+    **Light AND dark themes** honor `prefers-color-scheme`; consuming stylesheets curtail motion under
+    `prefers-reduced-motion`. Each SPA consumes it via a relative CSS `@import` (Vite inlines it at
+    build — no extra request, CSP-safe).
+  - **Accessibility (WCAG 2.2 AA — hard gate):** #FE6601 is the trap — white text on the bright base is
+    only ~2.95:1 and **fails** AA, so text never sits on the bright base in light mode. Light primary
+    fill is **`--accent-fill` = `--accent-110` (#b24701)** with white text = **5.53:1 (PASS)**; dark mode
+    flips to **near-black text on the bright #fe6601 = 5.89:1 (PASS)**. Every shipped text/background
+    pairing is measured ≥4.5:1 (≥3:1 large/UI strokes); ratios documented in the design doc. Visible
+    Fluent focus stroke on every interactive element; state never conveyed by color alone.
+  - **Dashboard (`dashboard/src/styles.css`):** restyled the app shell, nav, cards/panels, tables,
+    buttons, inputs, badges/status, links, and focus states onto the token system — markup/behavior
+    unchanged.
+  - **Docs:** new `docs/design/fluent-design-system.md` (palette + hex, token catalog, light/dark
+    themes, measured AA ratios, shared-token mechanism).
+- **Portal + signup SPA reskins (UI/UX slices 2 & 3).** Reskinned the **customer portal**
+  (`portal/src/styles.css`) and the **public signup** (`signup/src/styles.css`) onto the same shared
+  `fluent-tokens.css` — each prepends the `@import` and remaps its local role names onto the shared
+  Fluent tokens, so every existing rule renders Fluent with **no markup change** (the portal's
+  `vitest-axe`/component tests and the signup suite still pass). Interactive accent uses the AA-safe
+  `--accent-fill`/`--on-accent` pair (never white on the bright #fe6601 base); danger uses the shared
+  danger role with `--on-accent` text on the solid fill. Light/dark + reduced-motion flow from the
+  shared file (portal `data-theme` toggle; signup `prefers-color-scheme`). All three SPAs now share one
+  Fluent design language; front-end only, no backend/core changes.
 - **Tenant self-serve compliance-evidence retrieval (customer portal)** — Phase 3d of the
   **compliance & governance evidence layer** (ADR-0011 decision #5 → portal read path now built;
   governed by ADR-0010; threat-model **B8e**). The deferred customer-facing half: a tenant can now
