@@ -27,16 +27,17 @@ data). No tenant content is stored in the control plane.
 
 ## Trust boundaries
 
-| #   | Boundary                                           | Crossing                            |
-| --- | -------------------------------------------------- | ----------------------------------- |
-| B1  | Internet/operator → HTTP control-plane API         | admin requests over the network     |
-| B2  | LLM/agent → MCP server                             | tool calls from an autonomous agent |
-| B3  | Application → connection routing (`getConnection`) | resolve a tenant's DB connection    |
-| B4  | Tenant ↔ tenant                                    | the core isolation guarantee        |
-| B5  | Service → Neon API                                 | calls to an external upstream       |
-| B6  | Queue producer → lifecycle consumer                | untrusted command payloads          |
-| B7  | Service → SecretStore / registry / object store    | secret + metadata persistence       |
-| B8  | Tenant (customer) → self-serve portal              | a tenant reads its own account data |
+| #   | Boundary                                           | Crossing                                            |
+| --- | -------------------------------------------------- | --------------------------------------------------- |
+| B1  | Internet/operator → HTTP control-plane API         | admin requests over the network                     |
+| B2  | LLM/agent → MCP server                             | tool calls from an autonomous agent                 |
+| B3  | Application → connection routing (`getConnection`) | resolve a tenant's DB connection                    |
+| B4  | Tenant ↔ tenant                                    | the core isolation guarantee                        |
+| B5  | Service → Neon API                                 | calls to an external upstream                       |
+| B6  | Queue producer → lifecycle consumer                | untrusted command payloads                          |
+| B7  | Service → SecretStore / registry / object store    | secret + metadata persistence                       |
+| B8  | Tenant (customer) → self-serve portal              | a tenant reads its own account data                 |
+| B12 | Public internet → self-serve signup/onboarding     | an unauthenticated stranger provisions a new tenant |
 
 ## STRIDE per boundary → mitigation (and where it lives in code)
 
@@ -331,7 +332,11 @@ Evidence-at-rest STRIDE addendum (the **retrieval-authz** STRIDE — who may _fe
 > gap so `get`/`list`/`pruneExpired` survive restart and hold across replicas. **Scope is
 > OPERATOR-ONLY** (ADR-0011 locked decision #5): the consumers are authenticated operators. **Tenant
 > self-serve retrieval via the portal stays DEFERRED** (no portal/tenant-facing fetch path here). The
-> **dashboard panel is Phase 3c — out of scope here.** This is the **fetch boundary** the Phase 2
+> **dashboard evidence panel (Phase 3c) has since SHIPPED** — the operator-gated, `evidence:read`
+> dashboard routes (`GET /dashboard/api/evidence/bundles`, `.../:bundleId`, `.../public-key`) reuse
+> exactly this fetch boundary's authz and scoping (server-derived fleet scope, no client-supplied
+> tenant id — `src/app/dashboard.ts`); it adds a human-facing window onto the same surface, not a new
+> trust boundary. This is the **fetch boundary** the Phase 2
 > content-scoping + Phase 3a key/index were groundwork for. STRIDE on it:
 
 - **S (spoofing) / AuthN:** every retrieval route/command/tool — **except the public-key endpoint** —
@@ -390,9 +395,10 @@ false` (the **404** also never reveals whether the id exists out of scope — un
   metadata control-plane DB (not tenant content). TLS-enforced at construction (`assertPostgresTls`),
   fail-closed (the documented `allowInsecure` local-dev opt-out). The in-memory + object-store adapters
   remain for dev/test and the object-body-at-rest tier.
-- **Deferred / out of scope here (confirmed):** **tenant self-serve retrieval** via the portal (no
-  tenant-facing fetch path — design is BOLA-ready via the server-derived `tenantScope`, but not shipped)
-  and the **Phase 3c dashboard panel**.
+- **Out of scope here:** **tenant self-serve retrieval** via the portal is what _this_ B8e section now
+  covers (it shipped — see the heading). The **operator dashboard evidence panel (Phase 3c) has also
+  shipped** (`src/app/dashboard.ts`, B11) — an operator-facing window on the B11 fetch boundary, not a
+  tenant-facing one; it is a separate surface from this tenant self-serve path.
 
 ### B8e — Tenant self-serve evidence retrieval (the portal fetch boundary) — Phase 3d SHIPPED (2026-06-25)
 
@@ -476,6 +482,67 @@ tenantId })`. A tenant can therefore `list`/`get`/`generate`/download **only its
   error) and the public-key endpoint returns 404 — the SPA degrades gracefully (the generate button
   reports it's unavailable). An unknown/out-of-scope/pruned `bundleId` → uniform 404.
 
+### B12 — Public internet → self-serve signup/onboarding — SHIPPED (Phase 3)
+
+> **The largest UNAUTHENTICATED, abuse-prone surface.** The public self-serve signup flow
+> (`src/app/signup.ts`) lets an anonymous stranger create a TenantForge account, prove an email,
+> attach a payment method, and **provision a real Neon project** (a cost-incurring resource). Unlike
+> B1/B8/B8w there is **no principal yet** — identity is _being established_ across the flow — so the
+> controls are the unauthenticated kind: a captcha gate, per-IP rate limits, a short-lived signed
+> session cookie carrying an opaque signup id, email-code proof-of-control, and a server-verified
+> Stripe SetupIntent. Card data never touches our server. This is **OWASP API6 (unrestricted access
+> to a sensitive business flow)** territory — the threats below are mass-provisioning/cost-abuse and
+> automation, not BOLA.
+
+- **S (spoofing) / T (tampering) — email verification:** proof-of-control is a **6-digit one-time
+  code**, sent to the claimed address; only its **SHA-256 hash** is persisted (never the plaintext —
+  master §5), with a TTL (`TENANTFORGE_EMAIL_CODE_TTL_MS`, default 15 min — `src/app/config.ts`). The
+  code is generated with `randomInt` (CSPRNG, not `Math.random`) and compared **constant-time**
+  (`timingSafeEqual`) so a wrong guess leaks no timing signal (`startSignup`/`verifyEmail`,
+  `src/app/lib.ts`). Brute force is **bounded**: `assertVerifiable` fails closed once the record is
+  expired/`verified`/`locked`, and `recordFailedAttempt` locks the record at `MAX_ATTEMPTS = 5`
+  (`src/core/email-verification.ts`) — a 6-digit space (10⁶) with ≤5 attempts before lock-out plus the
+  per-IP `verify` cap (10/min) makes guessing infeasible. The signup-step cookie is a signed
+  (HMAC-SHA256, base64url) **HttpOnly, `Secure`, `SameSite=Strict`**, path-scoped, expiring token whose
+  body is verified constant-time and **fails closed** on any tamper/expiry (`decodeSession` returns
+  `null` → 401) — the opaque signup id is server-minted, never client-named.
+- **D (denial of service) / abuse:** the **captcha is verified BEFORE any cost-incurring work**
+  (email send / PSP call) and **fails closed** — a Turnstile outage, timeout, non-2xx, or unparseable
+  body yields `{ success: false }`, never an open gate (`src/adapters/captcha/turnstile-verifier.ts`).
+  Every endpoint is **per-IP fixed-window rate-limited** (`limited(...)` keyed on the XFF first hop):
+  `start` 5/min, `verify` 10/min, `payment` 5/min (tighter — it opens a Stripe call), `complete`
+  10/min, `status` 60/min — over-limit → **429 + `Retry-After`**. All `/api/*` bodies are hard-capped
+  at **8 KB** (`bodyLimit`) and every payload is `zod`-validated (bounded string lengths, `email()`,
+  enum `residency`). The limiter store is pluggable (`RateLimitStore`); a `pg` backend makes the cap
+  **global across replicas** (R2) — the in-memory default is per-instance.
+- **T / I (disclosure) — payment setup:** card capture is **Stripe Elements + a SetupIntent** — the
+  PAN never reaches our server (PCI scope reduction). The server **never trusts a client "success"**:
+  at `complete` it re-fetches the SetupIntent and requires `status === 'succeeded'` with a saved
+  payment method, **and** checks `intent.customerRef === req.customerRef` so a SetupIntent for
+  customer X cannot be bound to signup Y (PSP-side BOLA — mirrors B8w/F5). A PSP setup intent is
+  **never opened until the email is proven** (`status` must be `email_verified`/`payment_ready`) — a
+  card-testing guard. Only the **public** Stripe publishable + captcha site keys are exposed
+  (`GET /api/config`); the secret keys stay server-side.
+- **API6 — automated abuse of the business flow (mass provisioning + slug squatting):**
+  - _Cost inflation / mass provisioning:_ provisioning a Neon project costs money, so the flow is
+    gated by **captcha + email-proof + a verified payment method** before `completeSignup` enqueues a
+    provision — an attacker must pass a human-ish challenge, control a real inbox, **and** attach a
+    chargeable card per account, which (with the per-IP rate limits) makes bulk fake-tenant creation
+    expensive and slow. The provision itself is **enqueued** (idempotent consumer, B6), not run inline.
+  - _Slug squatting / enumeration:_ `complete` rejects an already-taken slug, but the error is a
+    **generic `slug unavailable` (409)** that **never reveals whether the slug belongs to another
+    tenant** (`completeSignup` → `registry.getBySlug`, `statusFor` maps it to 409) — no
+    existence-oracle for enumeration. Slug is length-bounded + `assertSlug`-validated.
+- **R (repudiation):** each step emits a tenant/flow-scoped audit event (`signup.started`,
+  `signup.email_verified`, `signup.payment_setup`, …) carrying the **opaque signup id only — never
+  the email or code** (PII/secret redaction, master §5).
+- **Residual / decisions:** per-IP keying trusts the **`X-Forwarded-For` first hop**, so it assumes a
+  trusted edge proxy sets/strips XFF — behind a misconfigured or absent proxy a client could spoof the
+  key and dodge the per-IP cap (the captcha + email-proof + payment gate remain). **Accepted Low**,
+  owned by the maintainers: deploy behind a trusted edge that normalizes XFF; promote the limiter to
+  the `pg` store for cross-replica enforcement. Captcha **quality** (Turnstile difficulty) is a tuning
+  knob, not a hard guarantee — defense-in-depth, layered with the other gates, not relied on alone.
+
 ## Residual risks (tracked)
 
 - **R1 — closed.** Per-operator credentials + RBAC are in-app (admin/readonly, constant-time compare),
@@ -529,8 +596,9 @@ Each boundary's key threat is pinned by a negative/abuse test (master §4, `@rul
 | Signed erasure certificate (B8w)          | sign→verify round-trips; a **tampered** cert, the **wrong public key**, and **alg-confusion** (`alg:none`/`HS*`/non-EdDSA) all fail closed; always-signed engine; prod startup fail-fast without a key; post-erasure signing failure fails soft (no rollback) (`erasure-cert.test.ts`, `certificate-signer.test.ts`, `erasure-engine.test.ts`, `config-erasure-signing.test.ts`)                                                                                                                                                                                                                                                                   |
 | Signed compliance report (B9)             | sign→verify round-trips; a **tampered** report, the **wrong public key**, **alg-confusion** (`alg:none`/`HS*`/non-EdDSA), wrong **typ**, and a real **erasure-cert JWS** (cross-type confusion) all fail closed; the signed claims carry no secrets/connection URIs and equal the digested canonical JSON (`compliance-cert.test.ts`)                                                                                                                                                                                                                                                                                                              |
 | Evidence bundle (B10)                     | fleet + per-tenant sign→verify round-trips; **per-tenant scoping** (tenant A's bundle holds only A's artifacts; no cross-tenant id leaks); embedded erasure cert still **verifies independently** and a **tampered embedded cert** breaks bundle verification; **cross-type** both ways (a report/erasure JWS fails the bundle verifier; a bundle JWS fails the report/erasure verifier); the full abuse battery (tamper, wrong key, `alg:none`/`HS256`, wrong `typ`, every malformed-shape + scope-invariant branch) fails closed; no secrets/connection URIs in the signed claims (`evidence-bundle.test.ts`)                                    |
+| Self-serve signup abuse (B12, API6)       | email-code brute force locks at `MAX_ATTEMPTS` (constant-time compare, hashed code, TTL); a failed/outage captcha fails closed (no open gate); over-limit signup steps get 429 + `Retry-After`; an unverified-email payment-setup is rejected; a SetupIntent whose `customerRef` ≠ the signup's is rejected; an existing slug returns a generic 409 (no enumeration oracle) (`signup*.test.ts`, `turnstile-verifier.test.ts`, `email-verification.test.ts`)                                                                                                                                                                                        |
 | Evidence at rest (B10a, Phase 3a)         | put→get round-trip; **tenant-scope isolation** (a tenant fetch never returns another tenant's or a fleet bundle; operator/`null` may fetch either); **non-guessable ids** (128-bit, 32-hex, non-sequential, unique); `pruneExpired` removes **only** expired bundles (indefinite ones survive) and is idempotent; the manifest carries **no JWS body / no secrets**; persist-on-generate returns the manifest with a store and **omits it without one** (no silent persistence); the persist **webhook payload is manifest facts only** (no body/secrets) (`evidence-manifest.test.ts`, `evidence-store.test.ts`, `evidence-store-facade.test.ts`) |
 
 ---
 
-_Last reviewed: 2026-06-25 (ADR-0011 Phase 3a — evidence-at-rest persistence: `EvidenceStore` + manifest index + retention + generate webhook; B10a added. Phase 2 — evidence bundle assembly + sign + verify, fleet + per-tenant; B10). Owner: TenantForge maintainers. Review on any trust-boundary change._
+_Last reviewed: 2026-06-30 (B12 added — the public self-serve signup/onboarding flow (`src/app/signup.ts`): captcha + per-IP rate limits + email-code proof + server-verified Stripe SetupIntent; OWASP API6 mass-provisioning/cost-abuse + slug-squatting controls. Corrected B11/B8e: the operator dashboard evidence panel (Phase 3c) has SHIPPED. Prior: 2026-06-25 ADR-0011 Phase 3a — evidence-at-rest persistence (B10a); Phase 2 — evidence bundle assembly + sign + verify (B10)). Owner: TenantForge maintainers. Review on any trust-boundary change._
