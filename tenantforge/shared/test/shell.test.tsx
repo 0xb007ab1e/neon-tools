@@ -17,7 +17,7 @@ import {
   Tabs,
   type Column,
   type NavGroup,
-} from '../../shared/ui/index';
+} from '../ui/index';
 
 /**
  * Unit + a11y tests for the shared Cloudflare-style shell components (shared/ui/*). These are the

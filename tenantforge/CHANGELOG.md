@@ -8,6 +8,28 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Enforced frontend coverage gate (CI / testing — closes gap B4).** The coverage gate previously
+  covered only the backend (`src/**`); the frontend (the shared design system `shared/ui/*` and the
+  SPAs) had tests but **no enforced threshold**, so a coverage regression in the now-substantial
+  shared components couldn't fail CI. Added per-suite v8 coverage gates at the **master §4 baseline
+  (≥90% lines/branches/functions/statements)** — there is **no 100%-critical path** in the
+  presentational frontend (the client is untrusted; authZ/CSRF/tenant scoping stay server-side), so
+  the 90% baseline applies (not claimed 100%-critical). New **`shared/vitest.config.ts`** is the
+  dedicated suite + gate for `shared/ui/**` (reused across all three SPAs; it lives above any single
+  SPA root, so v8 needs its own root to instrument it — a per-SPA config would silently drop it from
+  the denominator). It is enforced **per file** (`perFile: true`) so a regression isolated to one
+  small component can't hide behind its neighbours; the shell tests moved from `portal/test/` to
+  `shared/test/` and a new `shared/test/components.test.tsx` closes the residual branches → shared/ui
+  **100% lines/funcs, 97% branch** (32 tests). The **dashboard** suite gained a coverage gate
+  (`vitest run --coverage`) and a new `dashboard/test/api.test.ts` covering the API client's
+  error/401/404/403 branches → `dashboard/src/api.ts` **100%**; the dashboard branch threshold is a
+  **documented 65** deviation (the large read-only operator console's residual uncovered branches are
+  presentational display fallbacks, not logic/security). New `test:shared` script; `test:dashboard`
+  now runs with `--coverage`; `pnpm test` (the CI `quality` job) chains all four gates. Gate failure
+  verified on known-bad input (an injected uncovered branch in `shared/ui/Pill.tsx` and removing the
+  dashboard api tests both turn CI red). Front-end/test-config only; no app behavior or backend/core
+  changes. Docs: `docs/design/fluent-design-system.md` ("Frontend coverage gate").
+
 - **Contextual help + natural-flow UX across the consoles (UI/UX).** Every control/input/action now
   carries an accessible explanation, and dependent/child actions surface in context. New shared
   components: **`InfoTip`** — a focusable ⓘ trigger meeting **WCAG 1.4.13** (dismissible via Esc/

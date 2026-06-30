@@ -333,3 +333,31 @@ window + cancel-erasure** action inline once scheduled; the dashboard reconcile 
 would change) before the **Run** action and surfaces the run result via `aria-live`. The primary
 action is obvious per view, content reads top→bottom as a sequence, and `Breadcrumbs`/`Tabs` are
 available for depth.
+
+## 9. Frontend coverage gate (testing)
+
+The shared design system carries real behavior (the `AppShell` off-canvas drawer's focus trap, the
+`InfoTip` dismiss/hover logic, `FormField` aria wiring) and is **reused across all three SPAs**, so a
+coverage regression here is the highest-leverage thing to catch. The frontend is gated at the
+**master §4 baseline (≥90% lines/branches/functions/statements)** — there is **no 100%-critical
+path** in this presentational layer (the client is untrusted; authZ/CSRF/tenant scoping stay
+server-side), so the 90% baseline applies and 100%-critical is _not_ claimed.
+
+- **`shared/ui/**`—`shared/vitest.config.ts`.** A dedicated suite + gate. `shared/ui`lives _above_
+any single SPA root, so v8 can only instrument it from a config rooted at`shared/`— a per-SPA
+config (rooted at`portal/`/`dashboard/`) silently drops it from the coverage denominator (the
+original B4 blind spot). The gate is enforced **per file** (`perFile: true`) so a regression
+isolated to one small component can't be masked by its well-covered neighbours. Current: **100%
+lines/funcs, ~97% branch** (`shared/test/shell.test.tsx`+`components.test.tsx`).
+- **Portal — `portal/vitest.config.ts`.** 90% lines/funcs/stmts; **branch held at 80** (documented:
+  residual uncovered branches are presentational display fallbacks; the security-critical login /
+  code-exchange / CSRF logic is covered by the backend suite).
+- **Dashboard — `dashboard/vitest.config.ts`.** 90% lines/funcs/stmts; **branch held at 65**
+  (documented). The API client (`dashboard/src/api.ts`) is at **100% branch** via
+  `dashboard/test/api.test.ts` (every error/401/404/403 path); the remaining gap is the large
+  read-only operator console's display fallbacks, not logic/security.
+
+All four gates run in `pnpm test` (the CI `quality` job): the backend (`src/**`, core 100%), then
+`test:shared`, `test:dashboard`, `test:portal` (each `--coverage`). Gate failure is verified on
+known-bad input — injecting an uncovered branch into a `shared/ui` component, or removing the
+dashboard API tests, turns CI red — so the gate is proven, not a no-op.
