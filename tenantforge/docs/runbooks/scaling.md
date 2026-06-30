@@ -36,7 +36,9 @@
 
 ## Verification
 
-- Latency/error rate back within SLO; Neon `429`s subside; no new downstream bottleneck.
+- Latency/error rate back within SLO (`docs/reliability/slos.md`: transition p95 ≤ 1000 ms / S3,
+  success rates S1/S2/S5 above target, budget no longer fast-burning); Neon `429`s subside; no new
+  downstream bottleneck.
 
 ## Load / soak testing (capacity planning)
 
@@ -61,7 +63,8 @@ Two layers, mirroring the game-day split:
    a **non-prod** org, provision a batch of tenants and run a `migrate-fleet` at the intended batch
    size, watching Neon `429`s and the adapter's backoff. **Pace into the limit** — do not raise
    `--batch` to force throughput past `429`s. Record the sustainable provisioning rate + fleet
-   throughput as the documented SLO; re-measure when Neon's limits or the batch defaults change.
+   throughput as the documented SLO (record it in `docs/reliability/slos.md` — this is the
+   capacity input behind the S1/S4 targets); re-measure when Neon's limits or the batch defaults change.
 
 ## Scaling back down
 

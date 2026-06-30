@@ -6,8 +6,9 @@
 
 ## When to use
 
-- A control-plane release caused an SLO regression, elevated errors, or provision/routing failures,
-  and forward-fix isn't fast enough.
+- A control-plane release caused an SLO regression (budget burn against `docs/reliability/slos.md` —
+  e.g. provisioning success below S1 99.0% or transition success below S2 99.5%), elevated errors, or
+  provision/routing failures, and forward-fix isn't fast enough.
 
 ## Severity / impact
 

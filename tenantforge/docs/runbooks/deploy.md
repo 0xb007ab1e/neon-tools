@@ -23,8 +23,11 @@
    DBs): `tenantforge migrate` → expected `migrations applied`. Changes are backward-compatible
    (expand/contract — `@rules/topic-database.md`); no long locks.
 3. Deploy the **promoted artifact** (build once, promote — no per-env rebuild).
-4. Roll out progressively (canary/blue-green); watch SLOs for `<N>` min:
-   provision success rate, Neon API error/`429` rate, connection-resolution denials, p95 latency.
+4. Roll out progressively (canary/blue-green); watch SLOs for `<N>` min against the targets in
+   `docs/reliability/slos.md`: provisioning success **≥ 99.0%** (S1), lifecycle-transition success
+   **≥ 99.5%** / p95 **≤ 1000 ms** (S2/S3), Neon API error/`429` rate (M2 watch signal),
+   connection-resolution denials (M4). Halt the rollout on a fast-burn alert (≥ 2% of the 28-day
+   budget in 1 h).
 5. Flip feature flags as planned (default off/safe).
 
 ## Verification

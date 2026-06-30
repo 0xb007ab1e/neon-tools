@@ -8,6 +8,20 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Service Level Objectives document (reliability — closes gap #5).** The runbooks referenced
+  "SLO" / "error budget" / "within SLO" without any document defining the numbers. Added
+  `docs/reliability/slos.md`: a catalog of SLIs grounded in the telemetry actually emitted
+  (`tenantforge_events_total{event,outcome}` + `tenantforge_event_duration_ms`) with initial SLO
+  targets (S1 provisioning success ≥ 99.0%, S2 lifecycle success ≥ 99.5%, S3 transition p95 ≤ 1000 ms,
+  S4 per-run fleet-migration success ≥ 99.0%, S5 billing-run success ≥ 99.5%, S6 sweep success +
+  liveness ≥ 99.0%), 28-day error budgets, an error-budget velocity policy, and multi-window
+  burn-rate alert thresholds. SLIs that cannot be computed from current telemetry are listed honestly
+  as tracked **measurement gaps** (M1 no per-request HTTP metric; M2 no distinct Neon-upstream series;
+  M3 duration histogram caps at 5 s so provisioning p95 isn't meaningful; M4 no connection-denial
+  counter; M5 per-instance metric aggregation) rather than asserting numbers we can't measure. The
+  `deploy`, `rollback`, and `scaling` runbooks now reference these targets by value instead of a bare
+  "within SLO." Docs only; targets are an initial proposal to ratify with stakeholders.
+
 - **Enforced frontend coverage gate (CI / testing — closes gap B4).** The coverage gate previously
   covered only the backend (`src/**`); the frontend (the shared design system `shared/ui/*` and the
   SPAs) had tests but **no enforced threshold**, so a coverage regression in the now-substantial
