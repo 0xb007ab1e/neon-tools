@@ -86,6 +86,17 @@ export interface HttpServerOptions {
    */
   metrics?: () => string;
   /**
+   * When set, time **every** HTTP request and record the per-request RED metrics (availability +
+   * latency SLIs) via this observer — typically the same
+   * {@link import('../adapters/metrics-event-sink.js').MetricsEventSink} that `metrics` renders.
+   * A narrow `observeHttpRequest`-only view so the middleware can't reach the rest of the sink.
+   * Omitted = no per-request metric (the operation-event metrics still render).
+   */
+  httpMetrics?: Pick<
+    import('../adapters/metrics-event-sink.js').MetricsEventSink,
+    'observeHttpRequest'
+  >;
+  /**
    * When true, mount the inbound PSP webhook endpoint `POST /webhooks/payment` — authenticated by the
    * PSP **signature** (not the bearer token), so it sits outside the `/v1/*` auth. Enable only when a
    * webhook verifier is configured on the service.
@@ -236,6 +247,43 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
   const now = options.now ?? ((): number => Date.now());
   const rateLimitStore = options.rateLimitStore ?? createInMemoryRateLimitStore();
   const idempotencyStore = options.idempotencyStore ?? createInMemoryIdempotencyStore();
+
+  // HTTP request RED metrics (first of all, so it times the WHOLE request — including tracing,
+  // auth, rate-limit, and a handler throw). Uses the injected `now()` (never Date.now() directly),
+  // labels by the matched ROUTE TEMPLATE (`c.req.routePath`, e.g. `/v1/tenants/:id`) — NEVER the raw
+  // path, which carries ids (cardinality + PII). try/finally so a throw still records (→ 500/5xx).
+  // No-op when no observer is wired. (std-owasp-api API4: route-bounded labels; topic-logging-observability.)
+  const httpMetrics = options.httpMetrics;
+  if (httpMetrics !== undefined) {
+    app.use('*', async (c, next) => {
+      const start = now();
+      let threw = false;
+      try {
+        await next();
+      } catch (error) {
+        // A handler/middleware throw unwinds before Hono's onError sets the final response, so
+        // c.res.status isn't 500 yet here — record a 5xx and re-throw so onError still runs.
+        threw = true;
+        throw error;
+      } finally {
+        const status = threw ? 500 : c.res.status;
+        const statusClass = `${Math.floor(status / 100)}xx`;
+        // routePath is the registered template after matching (e.g. `/v1/tenants/:id`). An UNMATCHED
+        // request only traversed this catch-all middleware, whose own routePath is `/*` — normalize
+        // that (and a bare `*` / undefined) to a stable, self-describing label, never the raw URL, so
+        // cardinality stays bounded. There is no `/*` handler in this server, so `/*` ⇒ unmatched.
+        const matched = c.req.routePath;
+        const route =
+          matched === undefined || matched === '/*' || matched === '*' ? '(unmatched)' : matched;
+        httpMetrics.observeHttpRequest({
+          method: c.req.method,
+          route,
+          statusClass,
+          durationMs: now() - start,
+        });
+      }
+    });
+  }
 
   // Tracing + correlation (first, so every request — including health, auth failures, and errors —
   // runs in a trace scope). Continues an inbound W3C `traceparent` (or the active OTel trace, or a

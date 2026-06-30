@@ -26,6 +26,11 @@ function readMigrationCatalog(dir: string): { version: string; sql: string }[] {
 /** Entry point: serve the TenantForge HTTP control-plane API. Fails closed without a way to authenticate. */
 async function main(): Promise<void> {
   const config = loadConfig();
+  // Surface non-fatal startup advisories (e.g. an in-memory store in production — gap #12). These are
+  // warnings, not fatals: a single-replica prod deploy with the memory default is valid.
+  for (const warning of config.warnings) {
+    process.stderr.write(`tenantforge config warning: ${warning}\n`);
+  }
   if (
     config.authMode === 'token' &&
     config.httpCredentials === undefined &&
@@ -170,6 +175,9 @@ async function main(): Promise<void> {
         }
       : {}),
     metrics: () => metrics.render(),
+    // Time every HTTP request into the same sink (per-request RED metrics — availability + latency
+    // SLIs). The middleware sees only `observeHttpRequest` (a narrow view of the sink).
+    httpMetrics: metrics,
   });
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

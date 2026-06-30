@@ -78,5 +78,133 @@ describe('createMetricsEventSink', () => {
     const text = createMetricsEventSink().render();
     expect(text).toContain('# TYPE tenantforge_events_total counter');
     expect(text).toContain('# TYPE tenantforge_event_duration_ms histogram');
+    // The HTTP series headers render even with no observations (stable scrape shape).
+    expect(text).toContain('# TYPE tenantforge_http_requests_total counter');
+    expect(text).toContain('# TYPE tenantforge_http_request_duration_ms histogram');
+  });
+
+  describe('observeHttpRequest — per-request RED metrics', () => {
+    it('counts HTTP requests by method, route template, and status class', () => {
+      const m = createMetricsEventSink();
+      m.observeHttpRequest({
+        method: 'GET',
+        route: '/v1/tenants',
+        statusClass: '2xx',
+        durationMs: 3,
+      });
+      m.observeHttpRequest({
+        method: 'GET',
+        route: '/v1/tenants',
+        statusClass: '2xx',
+        durationMs: 4,
+      });
+      m.observeHttpRequest({
+        method: 'GET',
+        route: '/v1/tenants/:id',
+        statusClass: '4xx',
+        durationMs: 2,
+      });
+      const text = m.render();
+
+      expect(text).toContain('# TYPE tenantforge_http_requests_total counter');
+      expect(text).toContain(
+        'tenantforge_http_requests_total{method="GET",route="/v1/tenants",status_class="2xx"} 2',
+      );
+      expect(text).toContain(
+        'tenantforge_http_requests_total{method="GET",route="/v1/tenants/:id",status_class="4xx"} 1',
+      );
+    });
+
+    it('uses the ROUTE TEMPLATE as the label, never a raw id-bearing path (cardinality bound)', () => {
+      const m = createMetricsEventSink();
+      // Two different concrete ids hit the SAME template → one series, not two.
+      m.observeHttpRequest({
+        method: 'GET',
+        route: '/v1/tenants/:id',
+        statusClass: '2xx',
+        durationMs: 1,
+      });
+      m.observeHttpRequest({
+        method: 'GET',
+        route: '/v1/tenants/:id',
+        statusClass: '2xx',
+        durationMs: 1,
+      });
+      const text = m.render();
+      expect(text).toContain(
+        'tenantforge_http_requests_total{method="GET",route="/v1/tenants/:id",status_class="2xx"} 2',
+      );
+      // The template placeholder is present; no concrete id leaks into a label.
+      expect(text).not.toContain('route="/v1/tenants/t1"');
+    });
+
+    it('builds a cumulative duration histogram reusing the shared buckets', () => {
+      const m = createMetricsEventSink();
+      m.observeHttpRequest({
+        method: 'POST',
+        route: '/v1/tenants',
+        statusClass: '2xx',
+        durationMs: 7,
+      }); // >5,<=10
+      m.observeHttpRequest({
+        method: 'POST',
+        route: '/v1/tenants',
+        statusClass: '5xx',
+        durationMs: 120,
+      }); // >100,<=250
+      const text = m.render();
+
+      expect(text).toContain('# TYPE tenantforge_http_request_duration_ms histogram');
+      expect(text).toContain(
+        'tenantforge_http_request_duration_ms_bucket{method="POST",route="/v1/tenants",le="5"} 0',
+      );
+      expect(text).toContain(
+        'tenantforge_http_request_duration_ms_bucket{method="POST",route="/v1/tenants",le="10"} 1',
+      );
+      expect(text).toContain(
+        'tenantforge_http_request_duration_ms_bucket{method="POST",route="/v1/tenants",le="250"} 2',
+      );
+      expect(text).toContain(
+        'tenantforge_http_request_duration_ms_bucket{method="POST",route="/v1/tenants",le="+Inf"} 2',
+      );
+      expect(text).toContain(
+        'tenantforge_http_request_duration_ms_sum{method="POST",route="/v1/tenants"} 127',
+      );
+      expect(text).toContain(
+        'tenantforge_http_request_duration_ms_count{method="POST",route="/v1/tenants"} 2',
+      );
+    });
+
+    it('renders the HTTP counter series in deterministic (sorted) order', () => {
+      const m = createMetricsEventSink();
+      // Insert out of order; render must sort by the composite key.
+      m.observeHttpRequest({
+        method: 'GET',
+        route: '/v1/tenants',
+        statusClass: '5xx',
+        durationMs: 1,
+      });
+      m.observeHttpRequest({
+        method: 'GET',
+        route: '/v1/tenants',
+        statusClass: '2xx',
+        durationMs: 1,
+      });
+      const text = m.render();
+      // "2xx" sorts before "5xx".
+      expect(text.indexOf('status_class="2xx"')).toBeLessThan(text.indexOf('status_class="5xx"'));
+    });
+
+    it('escapes special characters in HTTP label values', () => {
+      const m = createMetricsEventSink();
+      m.observeHttpRequest({
+        method: 'GET',
+        route: 'we"ird\\route',
+        statusClass: '2xx',
+        durationMs: 1,
+      });
+      const text = m.render();
+      expect(text).toContain('route="we\\"ird\\\\route"');
+    });
   });
 });

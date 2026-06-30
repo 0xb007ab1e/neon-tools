@@ -760,6 +760,13 @@ export interface Config {
   captcha: { provider: 'none' | 'turnstile'; secret?: string; siteKey?: string };
   /** Port for the HTTP entrypoint. */
   port: number;
+  /**
+   * Non-fatal startup advisories surfaced by {@link loadConfig} — operational footguns that are
+   * still valid configurations (so they must NOT fail closed), e.g. an in-memory rate-limit /
+   * idempotency store in production (fine single-replica, unsafe multi-replica — gap #12). The
+   * entrypoint logs these at startup (topic-config-environments); empty when there are none.
+   */
+  warnings: string[];
 }
 
 /**
@@ -839,6 +846,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     stepUpCodeTtlMs: parsed.TENANTFORGE_PORTAL_STEPUP_TTL_MS,
     erasureUndoWindowMs: parsed.TENANTFORGE_PORTAL_ERASURE_UNDO_WINDOW_MS,
     port: parsed.TENANTFORGE_PORT,
+    warnings: [],
     ...(parsed.TENANTFORGE_DASHBOARD_SECRET !== undefined
       ? { dashboardSecret: parsed.TENANTFORGE_DASHBOARD_SECRET }
       : {}),
@@ -1006,6 +1014,28 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (parsed.TENANTFORGE_HTTP_TOKEN !== undefined && parsed.TENANTFORGE_HTTP_TOKEN !== '') {
     config.httpToken = parsed.TENANTFORGE_HTTP_TOKEN;
+  }
+  // Non-fatal multi-replica readiness advisory (gap #12). In-memory rate-limit / idempotency stores
+  // are VALID single-replica in production, but the process can't know its replica count — so this is
+  // a WARNING, not a fail-closed throw (which would break legitimate single-replica prod). In
+  // multi-replica production an in-memory rate-limit store can't enforce a GLOBAL limit (each replica
+  // counts independently) and in-memory idempotency replay-protection is per-instance (a retry on
+  // another replica re-executes). The entrypoint logs these at startup.
+  if (config.env === 'production') {
+    if (config.rateLimitStore === 'memory') {
+      config.warnings.push(
+        'TENANTFORGE_RATE_LIMIT_STORE=memory in production: an in-memory rate-limit store cannot ' +
+          'enforce a global limit across replicas (each replica counts independently) — set ' +
+          'TENANTFORGE_RATE_LIMIT_STORE=pg for a multi-replica deployment.',
+      );
+    }
+    if (config.idempotencyStore === 'memory') {
+      config.warnings.push(
+        'TENANTFORGE_IDEMPOTENCY_STORE=memory in production: in-memory idempotency replay-protection ' +
+          'is per-instance (a POST retry landing on another replica re-executes) — set ' +
+          'TENANTFORGE_IDEMPOTENCY_STORE=pg for a multi-replica deployment.',
+      );
+    }
   }
   return config;
 }
