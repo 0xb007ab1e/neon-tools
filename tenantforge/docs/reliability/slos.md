@@ -25,10 +25,21 @@ feed structured logs feed the Prometheus metrics (`src/core/observability.ts`,
   rate** (request rate + error rate, the R+E of RED).
 - `tenantforge_event_duration_ms{event}` — histogram of operation durations. Drives **latency**
   (the D of RED). **Bucket boundaries (ms): 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, +Inf.**
+- `tenantforge_http_requests_total{method,route,status_class}` — **per-request** counter
+  (`status_class` ∈ `2xx|3xx|4xx|5xx`; `route` is the matched **route template**, e.g.
+  `/v1/tenants/:id`, never a raw id-bearing path). Drives **API availability** (the R+E of RED at the
+  HTTP edge). Emitted by an early timing middleware that times **every** request — including
+  `/health`, `/v1`, `/webhooks` — and records a `5xx` even when a handler throws.
+- `tenantforge_http_request_duration_ms{method,route}` — **per-request** latency histogram (same
+  bucket boundaries as above). Drives **read-path latency**.
 
-> **Per-instance caveat (gap #12):** the sink accumulates in-process, so `/metrics` reflects one
-> replica. Prometheus must scrape **every** replica and aggregate; counters reset on restart/redeploy.
-> Compute SLIs over the aggregated fleet series, not a single pod.
+> **Per-instance / multi-replica (gap #12 — this is normal Prometheus, not a footgun):** each sink
+> accumulates in-process, so `/metrics` reflects one replica. Prometheus already adds an `instance`
+> label per scraped target, so the **correct** aggregation is `sum without(instance)(…)` (or
+> `sum without(instance)(rate(…[5m]))` for the counters). Counter **resets** on restart/redeploy are
+> handled by `rate()`/`increase()`. Do **not** add a home-grown `instance` label. The real
+> multi-replica footgun is elsewhere: the in-memory rate-limit / idempotency **stores** — see the
+> in-memory-store warning in M5.
 
 A success-rate SLI is `sum(ok) / sum(ok+error)` for the relevant `event`(s) over the window. A
 latency SLI is a quantile over the `_bucket` series (so it inherits the bucket resolution above — see
@@ -46,6 +57,8 @@ Window: **28-day rolling** unless noted. Error budget = `(1 − SLO) × valid ev
 | S4  | **Fleet-migration per-tenant success**                                                                           | `fleet.migration` ok ratio, **per migration run**         | **≥ 99.0%** per run                                                  | 1.0% of tenants/run |
 | S5  | **Billing-run success rate**                                                                                     | `billing.run` ok ratio                                    | **≥ 99.5%**                                                          | 0.5% of runs        |
 | S6  | **Background-sweep success + liveness** (quota / usage-alert / secret-rotation / snapshot-prune / erasure-sweep) | `tenant.*_sweep` + `tenant.erased`/`archived` ok ratio    | **≥ 99.0%** ok **AND** each scheduled sweep runs within its interval | 1.0%                |
+| S7  | **API availability** (control-plane HTTP edge — non-`5xx` ratio on `/v1`)                                        | `tenantforge_http_requests_total{route=~"/v1.*"}`         | **≥ 99.9%**                                                          | 0.1% of `/v1` reqs  |
+| S8  | **Read-path latency** (GET `/v1/*` reads)                                                                        | p95 `tenantforge_http_request_duration_ms` (GET `/v1/*`)  | **p95 ≤ 1000 ms**                                                    | n/a (latency SLO)   |
 
 Notes:
 
@@ -59,6 +72,16 @@ Notes:
   (`docs/runbooks/fleet-migration-rollback.md`).
 - **S6** includes a **liveness** clause: a sweep that **did not run** is an incident too
   (`@rules/templates/batch-job.md`) — alert on silent non-execution, not only on `error` outcomes.
+- **S7** is the HTTP-edge availability SLI:
+  `sum without(instance)(rate(tenantforge_http_requests_total{status_class!="5xx",route=~"/v1.*"}[5m])) / sum without(instance)(rate(tenantforge_http_requests_total{route=~"/v1.*"}[5m]))`.
+  It is **stricter (99.9%)** than the provisioning SLO (S1, 99.0%) because most `/v1` traffic is
+  reads served from the control-plane registry — fast, fully within our budget — whereas a `4xx`
+  (client error / auth) is **not** counted against availability (only `5xx` is). It is the
+  request-level companion to S1/S2 (which stay the source of truth for the Neon-bound write paths).
+- **S8** is `histogram_quantile(0.95, sum without(instance)(rate(tenantforge_http_request_duration_ms_bucket{method="GET",route=~"/v1.*"}[5m])) by (le))`.
+  It deliberately **excludes the provisioning POST** (`POST /v1/tenants`): project creation is
+  Neon-bound and takes tens of seconds (it would blow past the 5 s top bucket — see M3), so it is
+  tracked via **S1**, not the HTTP read-path latency SLO. Keep S8 scoped to GET reads.
 
 ## Error-budget policy
 
@@ -92,11 +115,11 @@ Route alerts to on-call with the breached SLO + correlation id as context
 These are **not** assigned SLO numbers because the telemetry to measure them does not exist yet;
 each is a tracked follow-up so an SLO isn't asserted on a series we can't compute.
 
-- **M1 — HTTP request availability/latency.** There is **no per-request HTTP metric** today (the
-  metrics are operation-event level, not request level). A control-plane API availability SLI
-  (`5xx` ratio) and `/v1` request-latency p95/p99 need an HTTP middleware that emits a request
-  counter + duration histogram by route + status class. Until then, S1/S2 success rates + `/ready`
-  are the interim availability proxy. **(Highest-value gap to close to make this doc complete.)**
+- **M1 — HTTP request availability/latency. ✅ CLOSED (2026-06-30).** The per-request HTTP metrics
+  now exist (`tenantforge_http_requests_total{method,route,status_class}` +
+  `tenantforge_http_request_duration_ms{method,route}`, emitted by an early timing middleware in
+  `src/app/http-server.ts`). They are promoted into the SLO catalog as **S7 (API availability)** and
+  **S8 (read-path latency)** above. S1/S2 remain the source of truth for the Neon-bound write paths.
 - **M2 — Neon upstream SLI.** Neon-API `429`/error rate is not a distinct series (it's folded into
   S1's outcome). Add a `neon.api` call counter + duration to track the dependency directly
   (`@rules/topic-api-consumption.md`); the runbooks reference "Neon 429 rate" as a watch signal.
@@ -107,8 +130,18 @@ each is a tracked follow-up so an SLO isn't asserted on a series we can't comput
 - **M4 — Connection-resolution denial rate.** The deploy runbook lists "connection-resolution
   denials" as a watch signal, but routing does not emit a dedicated `connection.*` event/denial
   counter today. Add one to make it an SLI.
-- **M5 — Fleet metric aggregation (gap #12).** Per-instance counters must be aggregated across
-  replicas (or labelled per `instance`) for any fleet-wide SLI to be accurate.
+- **M5 — Fleet metric aggregation (gap #12) — guidance, not a defect.** Per-instance counters are
+  **normal** for Prometheus: it adds an `instance` label per scraped target, so a fleet-wide SLI is
+  just `sum without(instance)(rate(…[5m]))` and counter resets on restart/redeploy are handled by
+  `rate()`/`increase()`. **Do not** add a home-grown `instance` label to the sink. The genuine
+  multi-replica footgun is the in-memory **rate-limit / idempotency stores**: in multi-replica
+  production an in-memory rate-limit store can't enforce a **global** limit (each replica counts
+  independently) and in-memory idempotency replay-protection is **per-instance** (a POST retry on
+  another replica re-executes). These default to `memory` (valid single-replica); `loadConfig` now
+  emits a **non-fatal startup warning** when `TENANTFORGE_ENV=production` and either store is
+  `memory` (it is a warning, not a fail-closed throw — the process can't know its replica count) —
+  set `TENANTFORGE_RATE_LIMIT_STORE=pg` / `TENANTFORGE_IDEMPOTENCY_STORE=pg` for a multi-replica
+  deployment.
 
 ## References
 

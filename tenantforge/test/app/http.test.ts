@@ -1160,3 +1160,111 @@ describe('HTTP rate limiting (per principal, fixed window)', () => {
     expect((await app.request('/v1/tenants', { headers: hdr })).status).toBe(200);
   });
 });
+
+describe('HTTP request metrics middleware (per-request RED)', () => {
+  interface Observed {
+    method: string;
+    route: string;
+    statusClass: string;
+    durationMs: number;
+  }
+  const collector = () => {
+    const calls: Observed[] = [];
+    return { calls, observeHttpRequest: (r: Observed) => calls.push(r) };
+  };
+
+  it('records status class + route template + duration for a normal request (using injected now)', async () => {
+    const httpMetrics = collector();
+    // Advance the injected clock between the start and end of the request to assert duration is
+    // computed from the injected now() (not Date.now()): first call → 0 (start), next → 12 (end).
+    let first = true;
+    const advancingNow = (): number => {
+      if (first) {
+        first = false;
+        return 0;
+      }
+      return 12;
+    };
+    const server = createHttpServer(fakeTf({ listTenants: async () => [] }), {
+      token: 'tok',
+      now: advancingNow,
+      httpMetrics,
+    });
+    const res = await server.request('/v1/tenants', { headers: { authorization: 'Bearer tok' } });
+    expect(res.status).toBe(200);
+    expect(httpMetrics.calls).toHaveLength(1);
+    expect(httpMetrics.calls[0]).toMatchObject({
+      method: 'GET',
+      route: '/v1/tenants',
+      statusClass: '2xx',
+      durationMs: 12,
+    });
+  });
+
+  it('labels by the ROUTE TEMPLATE, never the raw id-bearing path (cardinality bound)', async () => {
+    const httpMetrics = collector();
+    const server = createHttpServer(fakeTf({ getTenant: async () => tenant }), {
+      token: 'tok',
+      httpMetrics,
+    });
+    await server.request('/v1/tenants/t1', { headers: { authorization: 'Bearer tok' } });
+    expect(httpMetrics.calls[0]?.route).toBe('/v1/tenants/:id');
+    // The concrete id never appears as a label.
+    expect(httpMetrics.calls[0]?.route).not.toContain('t1');
+  });
+
+  it('records a 5xx for a handler that throws (still runs via try/finally)', async () => {
+    const httpMetrics = collector();
+    const server = createHttpServer(
+      fakeTf({
+        listTenants: async () => {
+          throw new Error('boom upstream');
+        },
+      }),
+      { token: 'tok', httpMetrics },
+    );
+    const res = await server.request('/v1/tenants', { headers: { authorization: 'Bearer tok' } });
+    expect(res.status).toBe(500);
+    expect(httpMetrics.calls).toHaveLength(1);
+    expect(httpMetrics.calls[0]).toMatchObject({
+      method: 'GET',
+      route: '/v1/tenants',
+      statusClass: '5xx',
+    });
+  });
+
+  it('records a 4xx for an unauthenticated /v1 request (times before auth)', async () => {
+    const httpMetrics = collector();
+    const server = createHttpServer(fakeTf({ listTenants: async () => [] }), {
+      token: 'tok',
+      httpMetrics,
+    });
+    const res = await server.request('/v1/tenants'); // no bearer → 401
+    expect(res.status).toBe(401);
+    expect(httpMetrics.calls[0]?.statusClass).toBe('4xx');
+  });
+
+  it('times the unauthenticated /health probe too', async () => {
+    const httpMetrics = collector();
+    const server = createHttpServer(fakeTf({}), { token: 'tok', httpMetrics });
+    await server.request('/health');
+    expect(httpMetrics.calls.some((c) => c.route === '/health' && c.statusClass === '2xx')).toBe(
+      true,
+    );
+  });
+
+  it('uses a stable "(unmatched)" route label for an unknown path (no raw URL)', async () => {
+    const httpMetrics = collector();
+    const server = createHttpServer(fakeTf({}), { token: 'tok', httpMetrics });
+    const res = await server.request('/no/such/route');
+    expect(res.status).toBe(404);
+    expect(httpMetrics.calls[0]?.route).toBe('(unmatched)');
+  });
+
+  it('does not record anything when no httpMetrics observer is wired', async () => {
+    // Just assert the server works without the option (no throw, normal response).
+    const server = createHttpServer(fakeTf({ listTenants: async () => [] }), { token: 'tok' });
+    const res = await server.request('/v1/tenants', { headers: { authorization: 'Bearer tok' } });
+    expect(res.status).toBe(200);
+  });
+});

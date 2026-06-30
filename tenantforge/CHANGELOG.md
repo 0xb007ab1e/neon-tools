@@ -8,6 +8,22 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Per-request HTTP RED metrics (observability — closes gap M1).** Added two Prometheus series so
+  the control-plane API has a real availability + latency SLI (previously metrics were only
+  operation-event level, with no request-level signal): `tenantforge_http_requests_total{method,
+route,status_class}` (counter; `status_class` ∈ `2xx|3xx|4xx|5xx`) and
+  `tenantforge_http_request_duration_ms{method,route}` (histogram, reusing the existing
+  `DURATION_BUCKETS_MS`). A new `observeHttpRequest` method on `MetricsEventSink`
+  (`src/adapters/metrics-event-sink.ts`) accumulates them, rendered deterministically (sorted)
+  alongside the existing event series. An early Hono timing middleware in `src/app/http-server.ts`
+  (gated behind a new `httpMetrics` option, wired in `src/app/http.ts`) times **every** request —
+  `/health`, `/v1`, `/webhooks` — using the injected clock, labels by the matched **route template**
+  (`c.req.routePath`, never the raw id-bearing path → bounded label cardinality), and records a
+  `5xx` even when a handler throws (try/finally). Promoted to the SLO catalog as **S7 API
+  availability** (non-`5xx` ratio on `/v1`, ≥ 99.9% / 28d) and **S8 read-path latency** (p95 of GET
+  `/v1/*` ≤ 1000 ms; provisioning `POST /v1/tenants` is Neon-bound and tracked via S1) in
+  `docs/reliability/slos.md`.
+
 - **Service Level Objectives document (reliability — closes gap #5).** The runbooks referenced
   "SLO" / "error budget" / "within SLO" without any document defining the numbers. Added
   `docs/reliability/slos.md`: a catalog of SLIs grounded in the telemetry actually emitted
@@ -406,6 +422,18 @@ status='pending'` whose rowcount decides the single winner), satisfying the mult
   `confirm` is 400). +15 tests; `src/core` stays at 100%, overall coverage unaffected.
 
 ### Changed
+
+- **Multi-replica readiness advisory for in-memory stores (config — gap #12).** `loadConfig` now
+  collects non-fatal startup advisories in `config.warnings: string[]` and the HTTP entrypoint
+  (`src/app/http.ts`) logs them at startup. When `TENANTFORGE_ENV=production` and
+  `TENANTFORGE_RATE_LIMIT_STORE` and/or `TENANTFORGE_IDEMPOTENCY_STORE` is left at the `memory`
+  default, it warns that in multi-replica production an in-memory rate-limit store can't enforce a
+  global limit and in-memory idempotency replay-protection is per-instance — set them to `pg` for
+  multi-replica. Deliberately a **warning, not a fail-closed throw** (single-replica prod with memory
+  is valid, and the process can't know its replica count). `docs/reliability/slos.md` M5 reworded:
+  per-instance counters are normal Prometheus (`sum without(instance)`; `rate()` handles resets) —
+  do not add a home-grown `instance` label; the real footgun is the in-memory stores. `.env.example`
+  notes added next to both vars.
 
 - **BREAKING (pre-release — no backward-compat preserved):** `TenantForge.erase` and
   `executePendingErasure` now return a **`SignedErasureCertificate`** (`{ certificate, jws }`) instead
