@@ -65,7 +65,12 @@ export default tseslint.config(
     // a11y is a non-negotiable mandate (master §1) — lint it, don't just hand-verify.
     // `shared/**` holds the cross-SPA Cloudflare-style shell components (React/TSX) consumed by the
     // SPAs, so they get the same React + a11y rules.
-    files: ['dashboard/**/*.{ts,tsx}', 'portal/**/*.{ts,tsx}', 'shared/**/*.{ts,tsx}'],
+    files: [
+      'dashboard/**/*.{ts,tsx}',
+      'portal/**/*.{ts,tsx}',
+      'signup/**/*.{ts,tsx}',
+      'shared/**/*.{ts,tsx}',
+    ],
     plugins: { react, 'react-hooks': reactHooks, 'jsx-a11y': jsxA11y },
     languageOptions: {
       globals: globals.browser,
@@ -86,6 +91,7 @@ export default tseslint.config(
       'test/**/*.ts',
       'dashboard/test/**/*.{ts,tsx}',
       'portal/test/**/*.{ts,tsx}',
+      'signup/test/**/*.{ts,tsx}',
       '*.config.ts',
       '*.config.js',
     ],

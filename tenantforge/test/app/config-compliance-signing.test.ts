@@ -37,11 +37,14 @@ describe('loadConfig — compliance signing key (ADR-0011 startup fail-fast)', (
   });
 
   it('accepts production when both signing keys are provided', () => {
+    // Production also requires a durable (`pg`) evidence store — supply it so this isolates the
+    // compliance-key acceptance path (the evidence-store guard has its own test).
     const config = loadConfig(
       baseEnv({
         TENANTFORGE_ENV: 'production',
         TENANTFORGE_ERASURE_SIGNING_KEY: 'k',
         TENANTFORGE_COMPLIANCE_SIGNING_KEY: 'pem-or-jwk',
+        TENANTFORGE_EVIDENCE_STORE: 'pg',
       }),
     );
     expect(config.complianceSigningKey).toBe('pem-or-jwk');

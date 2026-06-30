@@ -526,6 +526,43 @@ const EnvSchema = z
         message: 'TENANTFORGE_EXPORT_DIR is required when TENANTFORGE_EVIDENCE_STORE=object-store',
       });
     }
+    // Production requires a DURABLE evidence store. Neither non-`pg` backend is prod-safe for
+    // auditable retrieval: `memory` loses every persisted bundle + its manifest on restart, and
+    // `object-store` (Phase 3a) keeps the manifest INDEX in-process — so after a restart get/list
+    // silently return nothing even though the bodies are on disk (`src/ports/evidence-store.ts`).
+    // Only `pg` (`tf_evidence_bundles`, migration 0013) survives restart + holds across replicas.
+    // Fail fast at startup rather than ship an audit surface that silently loses evidence
+    // (master §2 fail-closed; the evidence layer is the compliance product — losing it is SEV-grade).
+    if (env.TENANTFORGE_ENV === 'production' && env.TENANTFORGE_EVIDENCE_STORE !== 'pg') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TENANTFORGE_EVIDENCE_STORE'],
+        message:
+          'TENANTFORGE_EVIDENCE_STORE must be "pg" when TENANTFORGE_ENV=production (memory loses ' +
+          'persisted evidence on restart; object-store keeps the manifest index in-process so ' +
+          'get/list break after restart — neither is durable for auditable retrieval)',
+      });
+    }
+    // Destructive self-serve (cancel + erasure) requires a DURABLE pending-erasure store. With the
+    // in-memory store the undo/claim CAS (`UPDATE … status='processing' WHERE id=? AND status=
+    // 'pending'`) is per-instance and lost on restart — reopening the B8w / red-team-F2 race the
+    // project gated against (a cancel and the executor on different replicas could both "win", or a
+    // restart could drop a pending erasure mid-window). Only `pg` (`tf_pending_erasures`, migration
+    // 0012) makes the flip atomic across replicas and durable. Fail closed: if the destructive flag
+    // is on, the durable store is mandatory (master §2; ADR-0010).
+    if (
+      env.TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE === true &&
+      env.TENANTFORGE_PENDING_ERASURE_STORE !== 'pg'
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TENANTFORGE_PENDING_ERASURE_STORE'],
+        message:
+          'TENANTFORGE_PENDING_ERASURE_STORE must be "pg" when ' +
+          'TENANTFORGE_PORTAL_SELFSERVE_DESTRUCTIVE=true (an in-memory pending-erasure store makes ' +
+          'the cancel/claim CAS per-instance and lost on restart — the B8w/red-team-F2 race)',
+      });
+    }
   });
 
 /** Resolved, validated configuration. */

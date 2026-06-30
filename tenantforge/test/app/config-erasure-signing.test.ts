@@ -30,13 +30,15 @@ describe('loadConfig — erasure signing key (always-signed startup fail-fast)',
   });
 
   it('accepts production when a signing key is provided', () => {
-    // Production also requires the compliance signing key (ADR-0011) — provide both so this asserts
-    // only the erasure-key acceptance path (the compliance-key guard has its own test below).
+    // Production also requires the compliance signing key (ADR-0011) and a durable (`pg`) evidence
+    // store — provide all three so this asserts only the erasure-key acceptance path (each other
+    // prod guard has its own test).
     const config = loadConfig(
       baseEnv({
         TENANTFORGE_ENV: 'production',
         TENANTFORGE_ERASURE_SIGNING_KEY: 'pem-or-jwk',
         TENANTFORGE_COMPLIANCE_SIGNING_KEY: 'pem-or-jwk',
+        TENANTFORGE_EVIDENCE_STORE: 'pg',
       }),
     );
     expect(config.env).toBe('production');
