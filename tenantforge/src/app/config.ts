@@ -238,8 +238,12 @@ const EnvSchema = z
     // Cache getConnection resolutions for this many ms (0 = disabled). Process-local + tenant-keyed.
     TENANTFORGE_CONNECTION_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(0),
     // Web dashboard: when set, mount the cookie-session dashboard backend at /dashboard. The value
-    // is the HMAC key that signs session cookies (a secret). Unset = dashboard disabled.
-    TENANTFORGE_DASHBOARD_SECRET: z.string().min(1).optional(),
+    // is the HMAC key that signs session cookies (a secret). Unset = dashboard disabled. Min 32 chars
+    // when set — it signs the session + CSRF tokens, so a short key is forgeable (gap #8).
+    TENANTFORGE_DASHBOARD_SECRET: z
+      .string()
+      .min(32, 'TENANTFORGE_DASHBOARD_SECRET must be at least 32 chars')
+      .optional(),
     // Path to the built SPA (`dashboard/dist`); when set, the dashboard also serves the front-end,
     // so a production deploy needs no separate static web server. Unset = JSON API only.
     TENANTFORGE_DASHBOARD_DIST: z.string().min(1).optional(),
@@ -250,8 +254,12 @@ const EnvSchema = z
     // sub-app also serves the customer-facing front-end (scoped CSP allows Stripe.js).
     TENANTFORGE_PORTAL_DIST: z.string().min(1).optional(),
     // Customer-facing self-serve portal: when set (with PORTAL_CREDENTIALS), mount the tenant portal
-    // at /portal. The value is the HMAC key that signs portal session cookies (a secret).
-    TENANTFORGE_PORTAL_SECRET: z.string().min(1).optional(),
+    // at /portal. The value is the HMAC key that signs portal session cookies (a secret). Min 32 chars
+    // when set — it signs the session + CSRF tokens, so a short key is forgeable (gap #8).
+    TENANTFORGE_PORTAL_SECRET: z
+      .string()
+      .min(32, 'TENANTFORGE_PORTAL_SECRET must be at least 32 chars')
+      .optional(),
     // Portal credentials: comma-separated `tenantId:token` pairs (the token is a secret). Each token
     // authenticates as exactly its tenant; the portal shows only that tenant's data.
     TENANTFORGE_PORTAL_CREDENTIALS: z.string().min(1).optional(),
@@ -359,7 +367,11 @@ const EnvSchema = z
     // --- Self-serve signup (public, payment-gated web onboarding) ---
     // HMAC key for the signup-session cookie; **set ⇒ self-serve signup is enabled** and (enforced
     // below) requires Stripe, a captcha provider, and a notifier. A secret; never committed/logged.
-    TENANTFORGE_SIGNUP_SECRET: z.string().min(1).optional(),
+    // Min 32 chars when set — it signs the signup-session cookie, so a short key is forgeable (gap #8).
+    TENANTFORGE_SIGNUP_SECRET: z
+      .string()
+      .min(32, 'TENANTFORGE_SIGNUP_SECRET must be at least 32 chars')
+      .optional(),
     // Backend for the signup stores (email-verification + funnel): `pg` (durable) or `memory` (dev).
     TENANTFORGE_SIGNUP_STORE: z.enum(['memory', 'pg']).default('pg'),
     // TTL (ms) for an emailed verification code. Default 15 minutes.
@@ -389,6 +401,11 @@ const EnvSchema = z
               .map((s) => s.trim())
               .filter((s) => s.length > 0),
       ),
+    // Optional Bearer token guarding GET /metrics (defense-in-depth over network isolation — gap #17).
+    // When set, a Prometheus scrape must present `Authorization: Bearer <token>`; when unset, /metrics
+    // stays unauthenticated (default scraping unbroken). A secret; never committed/logged. This is NOT
+    // a substitute for keeping /metrics, /health, /ready off any public route (metrics/admin network).
+    TENANTFORGE_METRICS_TOKEN: z.string().min(1).optional(),
     TENANTFORGE_PORT: z.coerce.number().int().positive().default(3000),
   })
   .superRefine((env, ctx) => {
@@ -758,6 +775,11 @@ export interface Config {
   stripePublishableKey?: string;
   /** Captcha config for the public signup. */
   captcha: { provider: 'none' | 'turnstile'; secret?: string; siteKey?: string };
+  /**
+   * Optional Bearer token guarding `GET /metrics` (defense-in-depth over network isolation — gap #17).
+   * Set ⇒ scrapes must present `Authorization: Bearer <token>`; unset ⇒ /metrics is unauthenticated.
+   */
+  metricsToken?: string;
   /** Port for the HTTP entrypoint. */
   port: number;
   /**
@@ -837,6 +859,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       : {}),
     ...(parsed.TENANTFORGE_PAYMENT_WEBHOOK_SECRET !== undefined
       ? { paymentWebhookSecret: parsed.TENANTFORGE_PAYMENT_WEBHOOK_SECRET }
+      : {}),
+    ...(parsed.TENANTFORGE_METRICS_TOKEN !== undefined
+      ? { metricsToken: parsed.TENANTFORGE_METRICS_TOKEN }
       : {}),
     connectionCacheTtlMs: parsed.TENANTFORGE_CONNECTION_CACHE_TTL_MS,
     authMode: parsed.TENANTFORGE_AUTH_MODE,

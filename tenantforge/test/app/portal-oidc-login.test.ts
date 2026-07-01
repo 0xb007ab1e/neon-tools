@@ -4,7 +4,7 @@ import type { TenantForge } from '../../src/app/lib.js';
 import type { TenantAuthenticator } from '../../src/ports/tenant-authenticator.js';
 import type { OidcCodeFlow } from '../../src/ports/oidc-code-flow.js';
 
-const SECRET = 'portal-session-secret';
+const SECRET = 'portal-session-secret-0123456789ab';
 
 /** A minimal fake TenantForge (the login flow only needs tenantSummary for the session probe). */
 const fakeTf = (): TenantForge =>

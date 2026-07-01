@@ -65,6 +65,41 @@ describe('HTTP control-plane', () => {
     expect(res.status).toBe(404);
   });
 
+  // #17 — optional Bearer token on /metrics (defense-in-depth over network isolation).
+  const METRICS = 'tenantforge_events_total{event="x",outcome="ok"} 1\n';
+  const metricsServer = (metricsToken?: string) =>
+    createHttpServer(fakeTf({}), {
+      token: TOKEN,
+      metrics: () => METRICS,
+      ...(metricsToken !== undefined ? { metricsToken } : {}),
+    });
+
+  it('serves /metrics unauthenticated when no token is configured (default scraping unbroken)', async () => {
+    const res = await metricsServer().request('/metrics');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('tenantforge_events_total');
+  });
+
+  it('401s /metrics without a bearer token when a token is configured', async () => {
+    const res = await metricsServer('metrics-secret').request('/metrics');
+    expect(res.status).toBe(401);
+  });
+
+  it('401s /metrics with the wrong bearer token when a token is configured', async () => {
+    const res = await metricsServer('metrics-secret').request('/metrics', {
+      headers: { authorization: 'Bearer wrong' },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('200s /metrics with the correct bearer token when a token is configured', async () => {
+    const res = await metricsServer('metrics-secret').request('/metrics', {
+      headers: { authorization: 'Bearer metrics-secret' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('tenantforge_events_total');
+  });
+
   it('rejects /v1 routes without a bearer token (401)', async () => {
     const res = await app().request('/v1/tenants');
     expect(res.status).toBe(401);

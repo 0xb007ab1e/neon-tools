@@ -43,6 +43,11 @@ feed structured logs feed the Prometheus metrics (`src/core/observability.ts`,
 > multi-replica footgun is elsewhere: the in-memory rate-limit / idempotency **stores** — see the
 > in-memory-store warning in M5.
 
+> **Endpoint exposure (gap #17):** `GET /metrics`, `/health`, and `/ready` **MUST NOT be publicly
+> routable** — scope them to the metrics/admin network (network isolation is the primary control).
+> `/metrics` may optionally require a Bearer token (`TENANTFORGE_METRICS_TOKEN`) as defense-in-depth,
+> but that token is a supplement to network isolation, never a substitute for it.
+
 A success-rate SLI is `sum(ok) / sum(ok+error)` for the relevant `event`(s) over the window. A
 latency SLI is a quantile over the `_bucket` series (so it inherits the bucket resolution above — see
 the provisioning-latency gap).

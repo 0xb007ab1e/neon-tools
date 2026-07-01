@@ -18,7 +18,7 @@ import type { TenantAuthenticator } from '../../src/ports/tenant-authenticator.j
 import type { SignedEvidenceBundle } from '../../src/core/evidence-bundle.js';
 import type { JWK } from 'jose';
 
-const SESSION_SECRET = 'portal-session-secret-for-e2e';
+const SESSION_SECRET = 'portal-session-secret-for-e2e-0123';
 const NOW = 1_700_000_000_000;
 const SESSION_EXP = NOW + 60 * 60 * 1000; // portal default 1h TTL
 

@@ -4,7 +4,7 @@ import type { TenantForge, TenantSummary } from '../../src/app/lib.js';
 import type { TenantEvent } from '../../src/core/index.js';
 import type { TenantAuthenticator } from '../../src/ports/tenant-authenticator.js';
 
-const SECRET = 'portal-session-secret';
+const SECRET = 'portal-session-secret-0123456789ab';
 
 const summaries: Record<string, TenantSummary> = {
   't-a': {
