@@ -146,3 +146,96 @@ describe('createStripeGateway', () => {
     ).rejects.toThrow(/already been refunded/);
   });
 });
+
+describe('createStripeGateway transient retries (gap #9)', () => {
+  /**
+   * A fake fetch driven by a scripted sequence: a `number` yields an HTTP response with that status,
+   * `'throw'` simulates a network error / timeout. Records every call so we can assert the retry
+   * count + that the SAME idempotency key is reused (Stripe de-dupes → no double-charge).
+   */
+  function scriptedFetch(
+    steps: (number | 'throw')[],
+    okBody: unknown = { id: 'pi_r', status: 'succeeded' },
+  ) {
+    const calls: { url: string; init: RequestInit }[] = [];
+    let i = 0;
+    const impl = ((url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      const step = steps[Math.min(i, steps.length - 1)]!;
+      i += 1;
+      if (step === 'throw') return Promise.reject(new Error('network down'));
+      const body =
+        step >= 200 && step < 300 ? okBody : { error: { message: `stripe says ${step}` } };
+      return Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status: step,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }) as unknown as typeof fetch;
+    return { impl, calls };
+  }
+
+  // Instant, deterministic backoff for the suite (no real waiting; jitter value is irrelevant here).
+  const noSleep = (): Promise<void> => Promise.resolve();
+
+  it('retries a 429 then succeeds, reusing the same idempotency key on every attempt', async () => {
+    const { impl, calls } = scriptedFetch([429, 200]);
+    const gw = createStripeGateway({ secretKey: 'sk', fetchImpl: impl, sleep: noSleep });
+    const result = await gw.charge(req);
+    expect(result.status).toBe('succeeded');
+    expect(calls.length).toBe(2);
+    const keys = calls.map((c) => (c.init.headers as Record<string, string>)['idempotency-key']);
+    expect(keys).toEqual(['idem-key-1', 'idem-key-1']); // same key → Stripe de-dupes, no double-charge
+  });
+
+  it('retries a 5xx then succeeds', async () => {
+    const { impl, calls } = scriptedFetch([503, 200]);
+    const gw = createStripeGateway({ secretKey: 'sk', fetchImpl: impl, sleep: noSleep });
+    expect((await gw.charge(req)).status).toBe('succeeded');
+    expect(calls.length).toBe(2);
+  });
+
+  it('retries a network error then succeeds', async () => {
+    const { impl, calls } = scriptedFetch(['throw', 200]);
+    const gw = createStripeGateway({ secretKey: 'sk', fetchImpl: impl, sleep: noSleep });
+    expect((await gw.charge(req)).status).toBe('succeeded');
+    expect(calls.length).toBe(2);
+  });
+
+  it('gives up after maxAttempts on a persistent 5xx and throws the last error', async () => {
+    const { impl, calls } = scriptedFetch([500]);
+    const gw = createStripeGateway({
+      secretKey: 'sk',
+      fetchImpl: impl,
+      sleep: noSleep,
+      maxAttempts: 3,
+    });
+    await expect(gw.charge(req)).rejects.toThrow(/stripe charge failed \(500\)/);
+    expect(calls.length).toBe(3);
+  });
+
+  it('gives up after maxAttempts on a persistent network error', async () => {
+    const { impl, calls } = scriptedFetch(['throw']);
+    const gw = createStripeGateway({
+      secretKey: 'sk',
+      fetchImpl: impl,
+      sleep: noSleep,
+      maxAttempts: 2,
+    });
+    await expect(gw.charge(req)).rejects.toThrow(/stripe charge request failed/);
+    expect(calls.length).toBe(2);
+  });
+
+  it('fails fast on a 4xx card decline (402) — no retry', async () => {
+    const { impl, calls } = scriptedFetch([402]);
+    const gw = createStripeGateway({
+      secretKey: 'sk',
+      fetchImpl: impl,
+      sleep: noSleep,
+      maxAttempts: 3,
+    });
+    await expect(gw.charge(req)).rejects.toThrow(/stripe charge failed \(402\)/);
+    expect(calls.length).toBe(1); // terminal — not retried
+  });
+});
