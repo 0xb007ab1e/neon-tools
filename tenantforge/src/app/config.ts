@@ -1062,5 +1062,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       );
     }
   }
+  // Evidence-at-rest retention advisory (gap #15). With `object-store`, `pruneExpired` removes only the
+  // manifest INDEX entry — the at-rest object body is deleted by the object store's own lifecycle
+  // (the write-only port exposes no delete). So a configured retention window is only *enforced* on
+  // the body if the operator sets a matching bucket lifecycle rule. Warn when a retention is set but
+  // the store can't self-delete, so archives don't silently accumulate past their window
+  // (workflow-data-lifecycle). Env-agnostic (production requires `pg`, which self-deletes, so this
+  // only fires for a non-prod object-store). Non-fatal — TenantForge can't inspect the bucket policy.
+  if (config.evidenceStore === 'object-store' && config.evidenceRetentionDays > 0) {
+    config.warnings.push(
+      `TENANTFORGE_EVIDENCE_STORE=object-store with TENANTFORGE_EVIDENCE_RETENTION_DAYS=${config.evidenceRetentionDays}: ` +
+        'prune removes only the manifest index, not the at-rest object — configure a bucket lifecycle ' +
+        'rule matching the retention window so evidence bodies are actually deleted (TenantForge cannot ' +
+        'verify the bucket policy). Same applies to pg_dump/neon-archive export archives — see ' +
+        'docs/runbooks/backup-restore.md.',
+    );
+  }
   return config;
 }

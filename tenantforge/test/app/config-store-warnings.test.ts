@@ -64,3 +64,46 @@ describe('loadConfig — in-memory store multi-replica advisory (gap #12, non-fa
     }
   });
 });
+
+describe('loadConfig — object-store evidence retention advisory (gap #15, non-fatal)', () => {
+  // Non-prod: production requires `pg` (which self-deletes on prune), so object-store only appears
+  // outside prod. object-store also requires TENANTFORGE_EXPORT_DIR.
+  function objectStoreEnv(retentionDays: string): NodeJS.ProcessEnv {
+    return {
+      DATABASE_URL: 'postgres://u:p@host/db?sslmode=require',
+      NEON_API_KEY: 'neon_key',
+      NEON_ORG_ID: 'org_1',
+      TENANTFORGE_SECRET_KEY: 'a-sufficiently-long-secret-key',
+      TENANTFORGE_ENV: 'staging',
+      TENANTFORGE_EVIDENCE_STORE: 'object-store',
+      TENANTFORGE_EXPORT_DIR: '/var/lib/tenantforge/exports',
+      TENANTFORGE_EVIDENCE_RETENTION_DAYS: retentionDays,
+    };
+  }
+  const isRetentionWarn = (w: string): boolean =>
+    /object-store with TENANTFORGE_EVIDENCE_RETENTION_DAYS/.test(w);
+
+  it('warns (does NOT throw) when object-store has a retention window (prune leaves the body)', () => {
+    const config = loadConfig(objectStoreEnv('30'));
+    expect(config.evidenceStore).toBe('object-store');
+    expect(config.warnings.some(isRetentionWarn)).toBe(true);
+  });
+
+  it('does NOT warn when object-store retention is indefinite (0 = keep everything)', () => {
+    const config = loadConfig(objectStoreEnv('0'));
+    expect(config.warnings.some(isRetentionWarn)).toBe(false);
+  });
+
+  it('does NOT warn for a non-object-store backend with a retention window', () => {
+    const config = loadConfig({
+      DATABASE_URL: 'postgres://u:p@host/db?sslmode=require',
+      NEON_API_KEY: 'neon_key',
+      NEON_ORG_ID: 'org_1',
+      TENANTFORGE_SECRET_KEY: 'a-sufficiently-long-secret-key',
+      TENANTFORGE_ENV: 'staging',
+      TENANTFORGE_EVIDENCE_STORE: 'memory',
+      TENANTFORGE_EVIDENCE_RETENTION_DAYS: '30',
+    });
+    expect(config.warnings.some(isRetentionWarn)).toBe(false);
+  });
+});
