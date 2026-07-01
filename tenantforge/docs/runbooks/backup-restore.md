@@ -66,6 +66,11 @@ The durable, long-term tier — archives **survive project deletion** (unlike br
 2. **Retention** is the **object store's lifecycle policy** (e.g. an S3/GCS lifecycle rule on the
    `archives/` prefix) — TenantForge does not delete archives. Configure the bucket rule to your
    retention/compliance window. (Filesystem export is dev-only; no lifecycle.)
+   - **Prod-readiness (gap #15):** the same applies to the **`object-store` evidence** backend — its
+     `evidence-prune` sweep removes only the manifest index, not the at-rest body, so a bucket
+     lifecycle rule must match `TENANTFORGE_EVIDENCE_RETENTION_DAYS` (startup warns for that combo).
+     TenantForge cannot inspect the bucket policy, so **verifying the lifecycle rule exists is a
+     prod-readiness checklist item.** (`pg` evidence/registry data self-deletes on prune — no rule needed.)
 3. **Restore** an archive into a fresh project: `pg_restore -d "<new tenant connection URI>"
 <artifact>` (same as the offboard pg-dump path above).
 

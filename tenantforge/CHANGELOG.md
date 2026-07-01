@@ -8,6 +8,16 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Evidence-retention advisory (closes gap #15).** With the `object-store` evidence backend,
+  `evidence-prune` removes only the manifest index — the at-rest object body is deleted by the object
+  store's own lifecycle policy (the write-only port exposes no delete). `loadConfig` now emits a
+  non-fatal startup **warning** when `TENANTFORGE_EVIDENCE_STORE=object-store` and a retention window
+  (`TENANTFORGE_EVIDENCE_RETENTION_DAYS > 0`) is set, so bodies don't silently accumulate past the
+  window without a matching bucket lifecycle rule (`workflow-data-lifecycle`). TenantForge cannot
+  inspect the bucket policy, so verifying that rule exists is documented as a prod-readiness item in
+  `docs/runbooks/backup-restore.md` (the pg_dump/neon-archive export archives already carried this
+  note) and in `.env.example`. `pg` self-deletes on prune (prod requires `pg`), so it needs no rule.
+
 - **Compliance control-mapping matrix (docs — closes gap #6).** New `docs/compliance-matrix.md`
   cross-references each signed evidence artifact (isolation / residency / erasure certificate / audit
   excerpt / inventory / retention, plus the cross-cutting signing, redaction, and per-tenant scoping
