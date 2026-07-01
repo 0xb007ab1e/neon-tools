@@ -13,6 +13,8 @@ import type { FleetMigrationSpec } from '../adapters/fleet-orchestrator.js';
 const COOKIE = 'tf_dash';
 /** Default session lifetime: 8 hours. */
 const DEFAULT_TTL_MS = 8 * 60 * 60 * 1000;
+/** The custom header carrying the signed per-session CSRF token (gap #7 — mirrors the portal). */
+const CSRF_HEADER = 'x-tf-csrf';
 
 /** Options for {@link createDashboard}. */
 export interface DashboardOptions {
@@ -39,6 +41,13 @@ export interface DashboardOptions {
    * plan). Unset = preview only (execution stays a CLI op — the server has no SQL to apply).
    */
   reconcileCatalog?: readonly FleetMigrationSpec[];
+  /**
+   * Allowed browser origins for state-changing requests (e.g. `https://ops.example.com`). When set, a
+   * mutation's `Origin` (if present) must be in this list — combined with the `Sec-Fetch-Site` check +
+   * the signed CSRF token (gap #7, mirrors the portal). Empty/unset ⇒ rely on `Sec-Fetch-Site` + the
+   * CSRF token (same-origin). `SameSite=Strict` on the cookie remains a backstop, not the control.
+   */
+  allowedOrigins?: string[];
 }
 
 const LoginSchema = z.object({ token: z.string().min(1) });
@@ -57,8 +66,16 @@ function encodeSession(principal: Principal, secret: string, expMs: number): str
   return `${body}.${sign(body, secret)}`;
 }
 
-/** Verify + decode a session cookie; null if missing/tampered/expired (fail closed). */
-function decodeSession(value: string, secret: string, nowMs: number): Principal | null {
+/** A decoded, verified dashboard session: the principal and the cookie's absolute expiry (epoch ms). */
+interface Session {
+  /** The authenticated operator principal (server-derived; never from request input). */
+  principal: Principal;
+  /** The session cookie's absolute expiry (epoch ms) — also the CSRF token's binding value. */
+  exp: number;
+}
+
+/** Verify + decode a session cookie to its principal + expiry; null if missing/tampered/expired. */
+function decodeSessionInfo(value: string, secret: string, nowMs: number): Session | null {
   const dot = value.indexOf('.');
   if (dot <= 0) return null;
   const body = value.slice(0, dot);
@@ -79,18 +96,44 @@ function decodeSession(value: string, secret: string, nowMs: number): Principal 
     ) {
       return null;
     }
-    return { id: p.id, role: p.role };
+    return { principal: { id: p.id, role: p.role }, exp: p.exp };
   } catch {
     return null;
   }
 }
 
 /**
+ * Mint a **signed, session-bound CSRF token**: `{id}.HMAC(csrf:{id}:{exp}, secret)`, where `exp` is the
+ * live session cookie's expiry. The browser reads it (`GET /api/csrf`) and echoes it in the
+ * {@link CSRF_HEADER} on every mutation; the server re-derives from the *current* session and
+ * constant-time compares. Bound to the session's `exp`, it **rotates with the cookie and dies on
+ * expiry/logout** — a leaked token is not a forever-valid bypass. A **signed** token (not a bare
+ * double-submit value a subdomain/cookie-injection could forge), carrying the principal id so a token
+ * for one operator can't be replayed as another. Mirrors the portal's `mintCsrf`.
+ */
+function mintCsrf(session: Session, secret: string): string {
+  return `${session.principal.id}.${sign(`csrf:${session.principal.id}:${session.exp}`, secret)}`;
+}
+
+/** Verify a presented CSRF token against the **current** session (constant-time, session-bound). */
+function verifyCsrf(token: string | undefined, session: Session, secret: string): boolean {
+  if (token === undefined) return false;
+  const expected = mintCsrf(session, secret);
+  const got = Buffer.from(token);
+  const want = Buffer.from(expected);
+  return got.length === want.length && timingSafeEqual(got, want);
+}
+
+/**
  * Build the TenantForge **dashboard backend**: a small JSON API the web dashboard (SPA) calls,
  * authenticated by a **signed, HttpOnly session cookie** minted from an operator token (cookie ≠
  * bearer-in-the-browser; no token in client storage — topic-web-frontend / topic-authn-authz). The
- * cookie is `SameSite=Strict` (CSRF defence for the cookie-auth'd routes) and path-scoped to the
- * dashboard. Reuses the API's authenticator + the core `can` authorization. Read-only for now.
+ * cookie is `SameSite=Strict` and path-scoped to the dashboard. State-changing routes (execute
+ * reconcile, logout) additionally require a **signed, session-bound CSRF token** in the
+ * {@link CSRF_HEADER} plus an `Origin`/`Sec-Fetch-Site` allow-list (gap #7, mirroring the portal) —
+ * defense in depth over the SameSite backstop; login (`POST /api/session`) is exempt (no session
+ * exists yet — it's defended by the operator token + SameSite). Reuses the API's authenticator + the
+ * core `can` authorization.
  *
  * @param options - The service, authenticator, session secret, and optional ttl/clock.
  * @returns A Hono sub-app (mount it under `/dashboard`).
@@ -101,10 +144,45 @@ export function createDashboard(options: DashboardOptions): Hono {
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
   const secret = options.sessionSecret;
 
-  /** Resolve the current principal from the session cookie, or null. */
-  const session = (c: Context): Principal | null => {
+  const allowedOrigins = options.allowedOrigins ?? [];
+
+  /** Resolve the full session ({ principal, exp }) from the cookie, or null (fail closed). */
+  const sessionInfo = (c: Context): Session | null => {
     const raw = getCookie(c, COOKIE);
-    return raw === undefined ? null : decodeSession(raw, secret, now());
+    return raw === undefined ? null : decodeSessionInfo(raw, secret, now());
+  };
+
+  /** Resolve the current principal from the session cookie, or null. */
+  const session = (c: Context): Principal | null => sessionInfo(c)?.principal ?? null;
+
+  /**
+   * CSRF guard for state-changing routes (gap #7 — mirrors the portal): a **signed per-session token**
+   * in {@link CSRF_HEADER} (not a bare double-submit a subdomain could forge), plus an
+   * `Origin`/`Sec-Fetch-Site` allow-list as defense in depth. `SameSite=Strict` on the cookie is a
+   * backstop, not the control. Returns a ready 403 Response when the request fails the check, else null.
+   */
+  const csrfRejected = (c: Context, principal: Principal): Response | null => {
+    // `Sec-Fetch-Site` (sent by modern browsers, not forgeable by JS): only same-origin/none allowed.
+    const site = c.req.header('sec-fetch-site');
+    if (site !== undefined && site !== 'same-origin' && site !== 'none') {
+      return c.json({ error: 'cross-site request rejected' }, 403);
+    }
+    // When an Origin is present, it must be in the allow-list (if one is configured).
+    const origin = c.req.header('origin');
+    if (origin !== undefined && allowedOrigins.length > 0 && !allowedOrigins.includes(origin)) {
+      return c.json({ error: 'origin not allowed' }, 403);
+    }
+    // The CSRF token must verify against the LIVE session — bound to this session's expiry (rotates
+    // with the cookie, dies on expiry/logout) and to this principal. A session that vanished
+    // mid-request (logout/expiry) fails closed here.
+    const live = sessionInfo(c);
+    if (live === null || live.principal.id !== principal.id) {
+      return c.json({ error: 'no session' }, 403);
+    }
+    if (!verifyCsrf(c.req.header(CSRF_HEADER), live, secret)) {
+      return c.json({ error: 'missing or invalid CSRF token' }, 403);
+    }
+    return null;
   };
 
   // Exchange an operator token for a session cookie (login).
@@ -137,8 +215,24 @@ export function createDashboard(options: DashboardOptions): Hono {
       : c.json({ id: principal.id, role: principal.role });
   });
 
-  // Logout: clear the cookie.
+  // Issue the session-bound CSRF token (the SPA reads this then echoes it in the CSRF header on every
+  // mutation). Minted from the live session's expiry, so it rotates with the cookie and dies on
+  // expiry/logout. Requires a valid session (mirrors the portal's GET /api/csrf).
+  app.get('/api/csrf', (c) => {
+    const live = sessionInfo(c);
+    if (live === null) return c.json({ error: 'not authenticated' }, 401);
+    return c.json({ csrfToken: mintCsrf(live, secret) });
+  });
+
+  // Logout: clear the cookie. State-changing → CSRF-guarded (a signed session-bound token) so a
+  // cross-site page can't force-logout an operator (mirrors the portal's mutation guard — gap #7).
   app.delete('/api/session', (c) => {
+    const principal = session(c);
+    // No session ⇒ logout is already a no-op; return 204 idempotently (nothing to protect).
+    if (principal !== null) {
+      const csrf = csrfRejected(c, principal);
+      if (csrf !== null) return csrf;
+    }
     deleteCookie(c, COOKIE, { path: '/dashboard' });
     return c.body(null, 204);
   });
@@ -404,12 +498,15 @@ export function createDashboard(options: DashboardOptions): Hono {
   });
 
   // EXECUTE a fleet reconcile (mutating, gated). Requires a session, `tenant:provision` (deny by
-  // default — readonly/operator-without-it get 403), and a server-configured SQL catalog. The
-  // SameSite=Strict session cookie defends against CSRF. Audited via the fleet.reconcile event.
+  // default — readonly/operator-without-it get 403), and a server-configured SQL catalog. CSRF is
+  // defended in depth: a signed session-bound token in the CSRF header + Origin/Sec-Fetch-Site
+  // allow-list (gap #7), on top of the SameSite=Strict cookie backstop. Audited via fleet.reconcile.
   app.post('/api/reconcile', async (c) => {
     const principal = session(c);
     if (principal === null) return c.json({ error: 'not authenticated' }, 401);
     if (!can(principal, 'tenant:provision')) return c.json({ error: 'forbidden' }, 403);
+    const csrf = csrfRejected(c, principal);
+    if (csrf !== null) return csrf;
     if (options.reconcileCatalog === undefined) {
       return c.json({ error: 'reconcile execution is not enabled on this server' }, 409);
     }

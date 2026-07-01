@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
@@ -61,6 +61,8 @@ export interface HttpServerOptions {
   dashboardStaticRoot?: string;
   /** Migration SQL catalog; when set, the dashboard can EXECUTE a reconcile (tenant:provision-gated). */
   dashboardReconcileCatalog?: readonly import('../adapters/fleet-orchestrator.js').FleetMigrationSpec[];
+  /** Allowed browser origins for dashboard mutations (CSRF defense in depth — gap #7, mirrors portal). */
+  dashboardAllowedOrigins?: string[];
   /** When set (with a tenant authenticator), mount the customer-facing **self-serve portal** at `/portal`. */
   portalSecret?: string;
   /** Resolves a portal token to a tenant; required to mount the portal. */
@@ -80,11 +82,22 @@ export interface HttpServerOptions {
   /** Injectable clock (ms) for rate limiting — defaults to `Date.now`. */
   now?: () => number;
   /**
-   * When set, mount an unauthenticated `GET /metrics` returning this Prometheus text (e.g. a
+   * When set, mount `GET /metrics` returning this Prometheus text (e.g. a
    * {@link import('../adapters/metrics-event-sink.js').MetricsEventSink}'s `render`). Omitted = no
-   * metrics endpoint.
+   * metrics endpoint. By default `/metrics` (like `/health` and `/ready`) is unauthenticated so a
+   * Prometheus scraper on the metrics/admin network works out of the box — the primary control is
+   * network isolation (these endpoints MUST NOT be publicly routable). Set {@link metricsToken} for
+   * opt-in defense-in-depth (a Bearer token).
    */
   metrics?: () => string;
+  /**
+   * Optional Bearer token guarding `GET /metrics` (defense-in-depth over network isolation — gap #17).
+   * When SET, a scrape must present `Authorization: Bearer <token>` (constant-time compare) or gets
+   * 401; when UNSET, `/metrics` stays unauthenticated so default Prometheus scraping is unbroken. This
+   * is a supplement to — never a substitute for — keeping `/metrics`, `/health`, `/ready` off any
+   * public route (scope them to the metrics/admin network).
+   */
+  metricsToken?: string;
   /**
    * When set, time **every** HTTP request and record the per-request RED metrics (availability +
    * latency SLIs) via this observer — typically the same
@@ -323,6 +336,9 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
         ...(options.dashboardReconcileCatalog !== undefined
           ? { reconcileCatalog: options.dashboardReconcileCatalog }
           : {}),
+        ...(options.dashboardAllowedOrigins !== undefined
+          ? { allowedOrigins: options.dashboardAllowedOrigins }
+          : {}),
       }),
     );
   }
@@ -392,12 +408,25 @@ export function createHttpServer(tf: TenantForge, options: HttpServerOptions): H
     return c.json(report, report.status === 'ok' ? 200 : 503);
   });
 
-  // Prometheus scrape endpoint (text exposition), unauthenticated like the probes; only when wired.
+  // Prometheus scrape endpoint (text exposition); only when wired. Unauthenticated by default (like
+  // the probes) so a scraper works out of the box — the primary control is network isolation (these
+  // MUST NOT be publicly routable). When `metricsToken` is set, require a matching Bearer token
+  // (constant-time compare — CWE-208 timing) as opt-in defense-in-depth (gap #17).
   if (options.metrics !== undefined) {
     const renderMetrics = options.metrics;
-    app.get('/metrics', (c) =>
-      c.text(renderMetrics(), 200, { 'content-type': 'text/plain; version=0.0.4' }),
-    );
+    const metricsToken = options.metricsToken;
+    app.get('/metrics', (c) => {
+      if (metricsToken !== undefined) {
+        const header = c.req.header('authorization') ?? '';
+        const presented = header.startsWith('Bearer ') ? header.slice(7) : '';
+        const got = Buffer.from(presented);
+        const want = Buffer.from(metricsToken);
+        if (got.length !== want.length || !timingSafeEqual(got, want)) {
+          return problem(c, 401, 'Unauthorized');
+        }
+      }
+      return c.text(renderMetrics(), 200, { 'content-type': 'text/plain; version=0.0.4' });
+    });
   }
 
   // Inbound PSP webhook endpoint — authenticated by the **signature** (not the bearer token), so it

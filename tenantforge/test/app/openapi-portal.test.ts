@@ -7,7 +7,7 @@ import type { TenantAuthenticator } from '../../src/ports/tenant-authenticator.j
 import type { OidcCodeFlow } from '../../src/ports/oidc-code-flow.js';
 import { createPortal } from '../../src/app/portal.js';
 
-const SECRET = 'portal-contract-secret';
+const SECRET = 'portal-contract-secret-0123456789';
 
 /**
  * Unauthenticated operations — they MUST NOT require a portal session (the SPA hits them before

@@ -175,6 +175,8 @@ async function main(): Promise<void> {
         }
       : {}),
     metrics: () => metrics.render(),
+    // Optional Bearer token guarding /metrics (defense-in-depth over network isolation — gap #17).
+    ...(config.metricsToken !== undefined ? { metricsToken: config.metricsToken } : {}),
     // Time every HTTP request into the same sink (per-request RED metrics — availability + latency
     // SLIs). The middleware sees only `observeHttpRequest` (a narrow view of the sink).
     httpMetrics: metrics,

@@ -37,7 +37,7 @@ function build(knobs: { captchaFails?: boolean } = {}) {
   const { tf, calls } = fakeTf(knobs);
   const app = createSignup({
     tf,
-    sessionSecret: 'signup-secret',
+    sessionSecret: 'signup-session-secret-0123456789ab',
     publishableKey: 'pk_test',
     captchaSiteKey: 'site_test',
     now: () => NOW,

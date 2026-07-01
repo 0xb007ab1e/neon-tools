@@ -3,6 +3,8 @@ import { createHttpServer } from '../../src/app/http-server.js';
 import type { TenantForge } from '../../src/app/lib.js';
 
 const TOKEN = 'op-token';
+// Session/CSRF secrets sign the HMAC — must be >= 32 chars (config floor, gap #8).
+const DASH_SECRET = 'dashboard-session-secret-0123456789';
 const fakeTf = (o: Partial<TenantForge>): TenantForge => o as unknown as TenantForge;
 const report = { report: { inventory: { total: 3 } }, digest: 'd1' };
 const drift = {
@@ -102,7 +104,7 @@ const app = () =>
           { kind: 'unprofitable', tenantId: 't1', costUsd: 30, priceUsd: 20, marginUsd: -10 },
         ] as never,
     }),
-    { token: TOKEN, dashboardSecret: 'session-secret' },
+    { token: TOKEN, dashboardSecret: DASH_SECRET },
   );
 
 /** Extract the `tf_dash=…` cookie pair from a Set-Cookie response. */
@@ -114,6 +116,12 @@ const login = (server: ReturnType<typeof app>, token: string) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ token }),
   });
+
+/** Fetch the session-bound CSRF token for a logged-in cookie (gap #7). */
+const csrfOf = async (server: ReturnType<typeof app>, cookie: string): Promise<string> => {
+  const res = await server.request('/dashboard/api/csrf', { headers: { cookie } });
+  return ((await res.json()) as { csrfToken: string }).csrfToken;
+};
 
 describe('dashboard backend', () => {
   it('exchanges a valid operator token for a session cookie, then serves the compliance panel', async () => {
@@ -177,7 +185,10 @@ describe('dashboard backend', () => {
         evidenceGet: async () => null,
         evidenceBundlePublicKey: async () => null,
       }),
-      { credentials: [{ id: 'ro', role: 'readonly', token: 'ro-token' }], dashboardSecret: 's' },
+      {
+        credentials: [{ id: 'ro', role: 'readonly', token: 'ro-token' }],
+        dashboardSecret: DASH_SECRET,
+      },
     );
     const cookie = cookieOf(await login(server, 'ro-token'));
     expect(
@@ -383,9 +394,11 @@ describe('dashboard backend', () => {
     const cookie = cookieOf(await login(server, TOKEN));
     const who = await server.request('/dashboard/api/session', { headers: { cookie } });
     expect(await who.json()).toEqual({ id: 'default', role: 'admin' });
+    // Logout is state-changing → CSRF-guarded; a valid session-bound token succeeds (gap #7).
+    const token = await csrfOf(server, cookie);
     const out = await server.request('/dashboard/api/session', {
       method: 'DELETE',
-      headers: { cookie },
+      headers: { cookie, 'x-tf-csrf': token },
     });
     expect(out.status).toBe(204);
   });
@@ -405,7 +418,7 @@ describe('dashboard reconcile execution (gated)', () => {
   const execServer = (role: 'admin' | 'operator' | 'readonly', token: string) =>
     createHttpServer(reconcileTf(), {
       credentials: [{ id: role, role, token }],
-      dashboardSecret: 'session-secret',
+      dashboardSecret: DASH_SECRET,
       dashboardReconcileCatalog: catalog,
     });
 
@@ -421,9 +434,10 @@ describe('dashboard reconcile execution (gated)', () => {
   it('executes a reconcile for a tenant:provision holder (admin) and returns the report', async () => {
     const server = execServer('admin', 'a');
     const cookie = cookieOf(await login(server, 'a'));
+    const token = await csrfOf(server, cookie);
     const res = await server.request('/dashboard/api/reconcile', {
       method: 'POST',
-      headers: { cookie },
+      headers: { cookie, 'x-tf-csrf': token },
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(report);
@@ -451,17 +465,119 @@ describe('dashboard reconcile execution (gated)', () => {
   it('409s when no reconcile catalog is configured (execution disabled)', async () => {
     const server = createHttpServer(reconcileTf(), {
       token: 'a',
-      dashboardSecret: 'session-secret',
+      dashboardSecret: DASH_SECRET,
     });
     const cookie = cookieOf(await login(server, 'a'));
     const caps = await server.request('/dashboard/api/reconcile/capabilities', {
       headers: { cookie },
     });
     expect(await caps.json()).toEqual({ executable: false, mayExecute: true });
+    const token = await csrfOf(server, cookie);
     const res = await server.request('/dashboard/api/reconcile', {
+      method: 'POST',
+      headers: { cookie, 'x-tf-csrf': token },
+    });
+    expect(res.status).toBe(409);
+  });
+});
+
+describe('dashboard CSRF (gap #7)', () => {
+  const catalog = [{ version: '0001', sql: '-- 1' }];
+  const report = { target: '0001', total: 1, alreadyAtLatest: 0, reconciled: ['t1'], partial: [] };
+  const csrfServer = (allowedOrigins?: string[]) =>
+    createHttpServer(fakeTf({ reconcileFleet: async () => report }), {
+      token: TOKEN,
+      dashboardSecret: DASH_SECRET,
+      dashboardReconcileCatalog: catalog,
+      ...(allowedOrigins !== undefined ? { dashboardAllowedOrigins: allowedOrigins } : {}),
+    });
+
+  it('GET /api/csrf returns a token that verifies a mutation; missing token is 403', async () => {
+    const server = csrfServer();
+    const cookie = cookieOf(await login(server, TOKEN));
+    // The issued token succeeds on a mutation.
+    const token = await csrfOf(server, cookie);
+    expect(typeof token).toBe('string');
+    const ok = await server.request('/dashboard/api/reconcile', {
+      method: 'POST',
+      headers: { cookie, 'x-tf-csrf': token },
+    });
+    expect(ok.status).toBe(200);
+    // The same mutation WITHOUT the token is rejected (403) — SameSite alone is not the control.
+    const no = await server.request('/dashboard/api/reconcile', {
       method: 'POST',
       headers: { cookie },
     });
-    expect(res.status).toBe(409);
+    expect(no.status).toBe(403);
+    expect(((await no.json()) as { error: string }).error).toMatch(/csrf/i);
+  });
+
+  it('GET /api/csrf requires a session (401 without a cookie)', async () => {
+    const res = await csrfServer().request('/dashboard/api/csrf');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a cross-site mutation via Sec-Fetch-Site even with a valid token (403)', async () => {
+    const server = csrfServer();
+    const cookie = cookieOf(await login(server, TOKEN));
+    const token = await csrfOf(server, cookie);
+    const res = await server.request('/dashboard/api/reconcile', {
+      method: 'POST',
+      headers: { cookie, 'x-tf-csrf': token, 'sec-fetch-site': 'cross-site' },
+    });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toMatch(/cross-site/i);
+  });
+
+  it('rejects a mutation whose Origin is not in the allow-list (403)', async () => {
+    const server = csrfServer(['https://ops.example.com']);
+    const cookie = cookieOf(await login(server, TOKEN));
+    const token = await csrfOf(server, cookie);
+    const bad = await server.request('/dashboard/api/reconcile', {
+      method: 'POST',
+      headers: { cookie, 'x-tf-csrf': token, origin: 'https://evil.example.com' },
+    });
+    expect(bad.status).toBe(403);
+    // The allow-listed origin passes (with same-origin Sec-Fetch-Site + a valid token).
+    const good = await server.request('/dashboard/api/reconcile', {
+      method: 'POST',
+      headers: {
+        cookie,
+        'x-tf-csrf': token,
+        origin: 'https://ops.example.com',
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+    expect(good.status).toBe(200);
+  });
+
+  it('rejects an invalid CSRF token (403) and one for a different session (403)', async () => {
+    const server = csrfServer();
+    const cookie = cookieOf(await login(server, TOKEN));
+    const garbage = await server.request('/dashboard/api/reconcile', {
+      method: 'POST',
+      headers: { cookie, 'x-tf-csrf': 'default.not-a-real-mac' },
+    });
+    expect(garbage.status).toBe(403);
+  });
+
+  it('login (POST /api/session) needs no CSRF token — it is exempt', async () => {
+    const server = csrfServer();
+    const res = await login(server, TOKEN);
+    expect(res.status).toBe(200);
+    expect(cookieOf(res)).toMatch(/^tf_dash=/);
+  });
+
+  it('logout without a CSRF token is rejected for a live session (403), no-op without one (204)', async () => {
+    const server = csrfServer();
+    const cookie = cookieOf(await login(server, TOKEN));
+    const blocked = await server.request('/dashboard/api/session', {
+      method: 'DELETE',
+      headers: { cookie },
+    });
+    expect(blocked.status).toBe(403);
+    // No session ⇒ logout is idempotently 204 (nothing to protect).
+    const noSession = await server.request('/dashboard/api/session', { method: 'DELETE' });
+    expect(noSession.status).toBe(204);
   });
 });

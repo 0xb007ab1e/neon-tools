@@ -21,7 +21,7 @@ afterAll(() => rmSync(dist, { recursive: true, force: true }));
 const server = () =>
   createHttpServer(fakeTf({}), {
     token: TOKEN,
-    dashboardSecret: 'session-secret',
+    dashboardSecret: 'dashboard-session-secret-0123456789',
     dashboardStaticRoot: dist,
   });
 
@@ -53,7 +53,7 @@ describe('dashboard static SPA serving', () => {
   it('serves JSON API only when no static root is configured (root 404)', async () => {
     const apiOnly = createHttpServer(fakeTf({}), {
       token: TOKEN,
-      dashboardSecret: 'session-secret',
+      dashboardSecret: 'dashboard-session-secret-0123456789',
     });
     expect((await apiOnly.request('/dashboard/')).status).toBe(404);
   });

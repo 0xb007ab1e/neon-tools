@@ -10,7 +10,7 @@ import {
 import type { SignedEvidenceBundle } from '../../src/core/evidence-bundle.js';
 import type { EvidenceManifestFilter } from '../../src/core/evidence-manifest.js';
 
-const SECRET = 'portal-session-secret';
+const SECRET = 'portal-session-secret-0123456789ab';
 const NOW = 1_700_000_000_000;
 const TTL_MS = 60 * 60 * 1000; // portal default
 const SESSION_EXP = NOW + TTL_MS;

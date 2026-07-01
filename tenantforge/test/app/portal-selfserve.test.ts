@@ -4,7 +4,7 @@ import { createPortal } from '../../src/app/portal.js';
 import type { TenantForge, TenantSummary } from '../../src/app/lib.js';
 import type { TenantAuthenticator } from '../../src/ports/tenant-authenticator.js';
 
-const SECRET = 'portal-session-secret';
+const SECRET = 'portal-session-secret-0123456789ab';
 
 /**
  * A configurable fake {@link TenantForge} that records the tenant id each self-serve method was
