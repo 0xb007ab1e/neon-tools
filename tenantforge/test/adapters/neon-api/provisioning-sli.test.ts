@@ -190,3 +190,35 @@ describe('Neon provider — upstream-dependency SLI (M2)', () => {
     expect(text).toContain('tenantforge_event_duration_ms_count{event="neon.api"}');
   });
 });
+
+describe('Neon provider — retry backoff jitter (gap #10)', () => {
+  it('waits a bounded, jittered backoff (via the injected sleep) between retries', async () => {
+    const slept: number[] = [];
+    let call = 0;
+    const fetchImpl = (async () => {
+      call += 1;
+      if (call <= 2) return new Response('overloaded', { status: 503 }); // two transient failures
+      return createProjectResponse();
+    }) as unknown as typeof fetch;
+    const provider = createNeonProvisioningProvider({
+      apiKey: 'secret-key',
+      orgId: 'org-1',
+      maxAttempts: 3,
+      fetchImpl,
+      sleep: async (ms): Promise<void> => {
+        slept.push(ms);
+      },
+    });
+
+    const result = await provider.createTenantProject({ slug: 'acme', region: 'aws-us-east-1' });
+    expect(result.neonProjectId).toBe('proj-1');
+    // One sleep per retry (two 503s → sleeps before attempts 2 and 3, which succeeds).
+    expect(slept).toHaveLength(2);
+    // Full jitter: each wait ∈ [0, min(2000, 100·2^(attempt-1))] ⇒ [0,100) then [0,200) — never a
+    // fixed value (that would resynchronize a fleet-wide retry storm), always bounded by the ceiling.
+    expect(slept[0]!).toBeGreaterThanOrEqual(0);
+    expect(slept[0]!).toBeLessThan(100);
+    expect(slept[1]!).toBeGreaterThanOrEqual(0);
+    expect(slept[1]!).toBeLessThan(200);
+  });
+});

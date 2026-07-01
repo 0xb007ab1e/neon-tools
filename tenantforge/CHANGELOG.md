@@ -6,6 +6,19 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Upstream retry resilience — Stripe retries + jittered backoff (closes gaps #9, #10).** The Stripe
+  payment gateway (`src/adapters/payment/stripe-gateway.ts`) now **retries transient failures**
+  (network/timeout, 429, 5xx) with bounded exponential backoff — previously it had none, unlike the
+  Neon adapter. Safe because every attempt reuses the caller's `Idempotency-Key`, so Stripe
+  de-duplicates a retried charge/refund (no double-billing); a 4xx other than 429 (e.g. a card
+  decline) still fails fast. Both adapters' backoff now applies **full jitter** (`[0, min(cap,
+base·2^n)]`) instead of a fixed delay, so a fleet-wide upstream outage can't resynchronize retries
+  into a thundering herd (`topic-reliability` / `topic-api-consumption`). Retry count + an injectable
+  `sleep` (for fast, deterministic tests) are new optional adapter options; defaults unchanged
+  (3 attempts). No behavior change for callers beyond improved resilience.
+
 ### Added
 
 - **Reliability measurement-gap trio (observability — closes gaps M2, M3, M4).** Three new SLIs now

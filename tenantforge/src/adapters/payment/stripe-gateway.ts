@@ -39,6 +39,14 @@ export interface StripeGatewayOptions {
   timeoutMs?: number;
   /** Injectable fetch (for testing). Defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /** Max attempts for transient failures (network/timeout, 429, 5xx). Defaults to 3. */
+  maxAttempts?: number;
+  /**
+   * Injectable delay between retry attempts (tests pass an instant/no-op sleep for speed +
+   * determinism). Defaults to a real `setTimeout`-backed sleep; the backoff duration (exponential +
+   * jitter) is computed by the gateway.
+   */
+  sleep?: (ms: number) => Promise<void>;
   /** Permit a non-https base URL override (local dev / mock only — documented leaky-endpoint opt-out). */
   allowInsecure?: boolean;
 }
@@ -78,10 +86,12 @@ function normalizeRefundStatus(status: string): RefundResult['status'] {
  * confirmed, **off-session** PaymentIntent against the customer's saved default payment method, with
  * the caller's **idempotency key** on the `Idempotency-Key` header so a retry never double-bills.
  *
- * Stripe is an untrusted, unreliable upstream (`topic-api-consumption`): every call is timeout-bound
- * and the response is schema-validated; a non-2xx (e.g. a card decline / 402) throws with Stripe's
- * message (the caller audits + isolates it). The secret key is never logged. Swap this adapter for
- * any other PSP behind the same port without touching the control plane.
+ * Stripe is an untrusted, unreliable upstream (`topic-api-consumption`): every call is timeout-bound,
+ * transient failures (network/timeout, 429, 5xx) are retried with bounded exponential backoff + full
+ * jitter (safe under the shared idempotency key — no double-billing), and the response is
+ * schema-validated; a terminal non-2xx (e.g. a card decline / 402) throws with Stripe's message (the
+ * caller audits + isolates it). The secret key is never logged. Swap this adapter for any other PSP
+ * behind the same port without touching the control plane.
  *
  * @param options - Stripe secret key + optional base URL / timeout / fetch.
  * @returns A Stripe-backed payment gateway.
@@ -91,11 +101,19 @@ export function createStripeGateway(options: StripeGatewayOptions): PaymentGatew
   // The default is https; a custom baseUrl (mock/proxy) must stay TLS too — card-charge traffic.
   assertHttpsUrl(baseUrl, 'STRIPE_API_BASE_URL', options.allowInsecure);
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const maxAttempts = options.maxAttempts ?? 3;
   const doFetch = options.fetchImpl ?? globalThis.fetch;
+  const sleep =
+    options.sleep ?? ((ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)));
 
   /**
    * POST a form-encoded body to a Stripe endpoint with the idempotency key + timeout, and return the
-   * parsed JSON. Throws `stripe {op} failed (status): message` on a non-2xx (the caller isolates it).
+   * parsed JSON. **Transient failures (network/timeout, 429, 5xx) are retried** with bounded
+   * exponential backoff + full jitter (topic-api-consumption / topic-reliability) — safe because every
+   * attempt sends the SAME `Idempotency-Key`, so Stripe de-duplicates a retried charge/refund (no
+   * double-billing). A 4xx other than 429 (e.g. a card decline / 402) is a caller error — fail fast,
+   * no retry. Throws `stripe {op} failed (status): message` on a terminal non-2xx (the caller isolates
+   * it), or `stripe {op} request failed` when the network never responded after all attempts.
    */
   const post = async (
     path: string,
@@ -103,31 +121,51 @@ export function createStripeGateway(options: StripeGatewayOptions): PaymentGatew
     idempotencyKey: string,
     op: string,
   ): Promise<unknown> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let res: Response;
-    try {
-      res = await doFetch(`${baseUrl}${path}`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${options.secretKey}`,
-          'content-type': 'application/x-www-form-urlencoded',
-          // Stripe de-duplicates retried POSTs sharing this key — the no-double-charge/refund guarantee.
-          'idempotency-key': idempotencyKey,
-        },
-        body,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      let res: Response | undefined;
+      try {
+        res = await doFetch(`${baseUrl}${path}`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${options.secretKey}`,
+            'content-type': 'application/x-www-form-urlencoded',
+            // Stripe de-duplicates retried POSTs sharing this key — the no-double-charge/refund guarantee.
+            'idempotency-key': idempotencyKey,
+          },
+          body,
+          signal: controller.signal,
+        });
+      } catch (cause) {
+        // Network error / timeout — transient (retryable).
+        lastError = cause;
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (res !== undefined) {
+        const payload: unknown = await res.json().catch(() => ({}));
+        if (res.ok) return payload;
+        const parsed = StripeErrorSchema.safeParse(payload);
+        const msg = parsed.success ? parsed.data.error?.message : undefined;
+        const error = new Error(`stripe ${op} failed (${res.status}): ${msg ?? 'unknown error'}`);
+        // 429 + 5xx are transient; any other 4xx (card decline, bad request) is terminal — fail fast.
+        const transient = res.status === 429 || res.status >= 500;
+        if (!transient || attempt === maxAttempts) throw error;
+        lastError = error;
+      } else if (attempt === maxAttempts) {
+        throw new Error(`stripe ${op} request failed`, { cause: lastError });
+      }
+
+      // Full jitter: sleep a random duration in [0, min(cap, base·2^(attempt-1))] before retrying, so
+      // concurrent callers don't resynchronize into a thundering herd. Math.random is fine (jitter).
+      const backoffCeil = Math.min(2000, 100 * 2 ** (attempt - 1));
+      await sleep(Math.floor(Math.random() * backoffCeil));
     }
-    const payload: unknown = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const parsed = StripeErrorSchema.safeParse(payload);
-      const msg = parsed.success ? parsed.data.error?.message : undefined;
-      throw new Error(`stripe ${op} failed (${res.status}): ${msg ?? 'unknown error'}`);
-    }
-    return payload;
+    // Unreachable: the loop returns or throws on the final attempt. Satisfies the type checker.
+    throw lastError instanceof Error ? lastError : new Error(`stripe ${op} failed`);
   };
 
   return {

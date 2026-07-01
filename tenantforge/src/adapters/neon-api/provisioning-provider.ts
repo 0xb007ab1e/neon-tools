@@ -60,6 +60,12 @@ export interface NeonProvisioningOptions {
   /** Permit a non-https base URL (local dev / mock only — the documented leaky-endpoint opt-out). */
   allowInsecure?: boolean;
   /**
+   * Injectable delay between retry attempts (for tests — pass an instant/no-op sleep to keep the
+   * retry suite fast + deterministic). Defaults to a real `setTimeout`-backed sleep. The backoff
+   * duration itself (exponential + jitter) is computed by the provider; this only performs the wait.
+   */
+  sleep?: (ms: number) => Promise<void>;
+  /**
    * Sink for the Neon upstream-dependency SLI (M2). One `neon.api` {@link TenantEvent} is emitted per
    * logical call (across retries), so `tenantforge_events_total{event="neon.api",outcome}` (error
    * rate) and `tenantforge_event_duration_ms{event="neon.api"}` (latency) render for free from the
@@ -106,6 +112,8 @@ export function createNeonProvisioningProvider(
   const doFetch = options.fetchImpl ?? globalThis.fetch;
   const traceHeaders = options.traceHeaders ?? (() => ({}));
   const eventSink = options.eventSink ?? createNoopEventSink();
+  const sleep =
+    options.sleep ?? ((ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)));
 
   /** The parsed body plus the observed HTTP status, so `api()` can attribute the SLI event. */
   interface OnceResult {
@@ -204,8 +212,12 @@ export function createNeonProvisioningProvider(
           });
           throw error;
         }
-        // Exponential backoff with a fixed base; jitter omitted for determinism in tests.
-        await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** (attempt - 1)));
+        // Exponential backoff with **full jitter** (topic-reliability / topic-api-consumption): sleep a
+        // random duration in [0, min(cap, base·2^(attempt-1))] to avoid a synchronized retry storm
+        // across the fleet during a Neon outage. Math.random is fine here (jitter, not a security
+        // context). Tests inject an instant `sleep` for determinism/speed.
+        const backoffCeil = Math.min(2000, 100 * 2 ** (attempt - 1));
+        await sleep(Math.floor(Math.random() * backoffCeil));
       }
     }
     // Unreachable: the loop either returns or throws. Satisfies the type checker.
