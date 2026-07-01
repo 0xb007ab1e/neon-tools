@@ -6,6 +6,18 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Compliance control-mapping matrix (docs — closes gap #6).** New `docs/compliance-matrix.md`
+  cross-references each signed evidence artifact (isolation / residency / erasure certificate / audit
+  excerpt / inventory / retention, plus the cross-cutting signing, redaction, and per-tenant scoping
+  properties) to the **SOC 2 Trust Services Criteria** (CC6.1, C1.1/C1.2, CC7.2, PI1.x, …) and **GDPR
+  articles** (Art. 5, 17, 25, 30, 32, 44–49) it provides evidence toward. This is the deliberate
+  mapping layer that keeps the "facts v1" attestations framework-agnostic (ADR-0011) while giving an
+  auditor the control cross-walk. Explicitly framed as evidence-support (not a certification) with a
+  "validate with a qualified assessor/DPO" caveat and an honest list of what the layer does **not**
+  cover (encryption config, key mgmt, backups, change mgmt, physical/people controls).
+
 ### Changed
 
 - **Crypto-agility for sealed connection secrets (closes gap #16).** `secret-crypto.ts` `seal()` now
