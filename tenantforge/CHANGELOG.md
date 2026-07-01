@@ -8,6 +8,17 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Manual accessibility test plans for all three consoles (docs — scopes gap B1).** The keyboard-only
+  - screen-reader (NVDA/VoiceOver) pass that covers the ~60% of WCAG 2.2 AA that axe-core can't. New
+    `docs/a11y/dashboard-manual-test-plan.md` and `docs/a11y/signup-manual-test-plan.md` (mirroring the
+    existing portal plan, grounded in each SPA's actual flows — dashboard shell + read panels +
+    reconcile-execute; signup wizard: captcha/verify/Stripe/provisioning), plus `docs/a11y/README.md`
+    — the B1 runner that defines scope (3 SPAs + shared shell), environment/flags, tools, procedure, a
+    consolidated sign-off matrix, and the definition-of-done. **Execution is an outstanding human task**
+    (an agent can't drive a real screen reader); the docs are the checklist, not evidence of a pass.
+
+### Added
+
 - **Property-based tests + DAST stage (closes gap #18).** Two verification layers:
   - **Property tests** (`fast-check`, new devDep): `test/core/slug-region.property.test.ts`,
     `test/adapters/secret-crypto.property.test.ts`, `test/core/evidence-canonicalization.property.test.ts`
