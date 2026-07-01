@@ -8,6 +8,21 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Property-based tests + DAST stage (closes gap #18).** Two verification layers:
+  - **Property tests** (`fast-check`, new devDep): `test/core/slug-region.property.test.ts`,
+    `test/adapters/secret-crypto.property.test.ts`, `test/core/evidence-canonicalization.property.test.ts`
+    — ~34 invariants over the highest-value pure logic: slug/region validation (well-formed always
+    accepted, any disallowed char always rejected, `selectRegion` only ever returns a compliant region
+    or throws), `secret-crypto` seal/open (round-trip for arbitrary unicode/binary, fresh nonce, tamper
+    of any ciphertext/tag byte throws), and evidence-claim canonicalization (deterministic +
+    order-independent; sign→verify with an ephemeral Ed25519 key; cross-type and alg-confusion tokens
+    rejected). Defense-in-depth over the example-based suites; `src/core` stays 100%.
+  - **DAST** (`.github/workflows/tenantforge-dast.yml`): boots the control-plane API against an
+    ephemeral throwaway Postgres and runs the OWASP ZAP **baseline** (passive) scan against it —
+    fail-on-high-risk-only, on PR + weekly + dispatch. Helper `scripts/wait-for-health.sh`
+    (fail-closed health poller) + `scripts/zap-baseline-rules.tsv` (escalate injection/XSS to FAIL).
+    Documented in `docs/security/dast.md`; digest-pinned actions.
+
 - **Evidence-retention advisory (closes gap #15).** With the `object-store` evidence backend,
   `evidence-prune` removes only the manifest index — the at-rest object body is deleted by the object
   store's own lifecycle policy (the write-only port exposes no delete). `loadConfig` now emits a

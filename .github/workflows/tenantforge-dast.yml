@@ -1,0 +1,141 @@
+name: TenantForge DAST (ZAP baseline)
+
+# Dynamic Application Security Testing (gap #18, DAST half) for the TenantForge HTTP control-plane
+# API. Complements the STATIC gates in ci.yml (SAST/SCA/secret/IaC) and codeql.yml by exercising a
+# RUNNING instance: it boots the Hono API against an ephemeral throwaway Postgres and runs the OWASP
+# ZAP baseline (largely-passive) scan against it. This validates the deployed-surface hardening that
+# static analysis can't see — the `secureHeaders()` config, that error/401 responses on `/v1/*` leak
+# no internals, HTTPS/cookie flags, cache headers on sensitive responses, etc.
+#
+# It is a PASSIVE baseline: ZAP spiders + passively analyses responses; it does NOT actively fuzz or
+# attack (no auth token is supplied, so it only reaches the public probes + the 401 wall on /v1/*).
+# Authenticated deep-fuzzing (e.g. schemathesis driven by the OpenAPI spec + a bearer token) is a
+# possible future enhancement — see tenantforge/docs/security/dast.md.
+#
+# Fail-closed gate policy: the job FAILS on ZAP high-risk (FAIL) alerts only; WARN-level passive
+# findings are surfaced in the uploaded report but do not block (a baseline is largely advisory).
+# Tune per-rule thresholds in tenantforge/scripts/zap-baseline-rules.tsv.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+  schedule:
+    # 09:23 UTC weekly (Mondays) — a scheduled re-scan of main so drift surfaces even without a PR
+    # touching the HTTP surface. Off-the-hour to avoid GitHub cron congestion.
+    - cron: "23 9 * * 1"
+
+# Least privilege: the job only needs to read the repo. It does NOT write GitHub issues
+# (allow_issue_writing=false below), so no `issues: write` is granted — the report is an artifact.
+permissions:
+  contents: read
+
+concurrency:
+  group: tenantforge-dast-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zap-baseline:
+    runs-on: ubuntu-latest
+
+    # Ephemeral, throwaway control-plane registry Postgres — NEVER a real/prod DB. The server
+    # requires a live Postgres at boot (tenantForgeFromConfig connects DATABASE_URL for the
+    # registry). Mirrors the service pattern used by the integration workflows. `postgres` is the
+    # official image, pinned by digest (supply-chain: pin by digest, not a floating tag).
+    services:
+      postgres:
+        # postgres:17-alpine — digest-pinned (multi-arch manifest list). Bump deliberately.
+        image: postgres@sha256:dc17045ccfd343b49600570ea734b9c4991cf1c3f3302e67df51e3b402dd55c4
+        env:
+          POSTGRES_USER: tenantforge
+          POSTGRES_PASSWORD: tenantforge
+          POSTGRES_DB: tenantforge
+        ports:
+          - 5432:5432
+        # Gate the job on the DB actually being ready before we migrate/boot (fail-closed).
+        options: >-
+          --health-cmd "pg_isready -U tenantforge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # A LOCAL, loopback, non-TLS Postgres — hence TENANTFORGE_ALLOW_INSECURE_DB below. This is a
+      # disposable metadata registry for the scan; it holds no tenant data (never prod).
+      DATABASE_URL: postgres://tenantforge:tenantforge@127.0.0.1:5432/tenantforge
+      # Loopback service has no TLS cert; permit the non-`sslmode=require` DSN for this local run
+      # only (config fails closed by default — master §5). Never set in production.
+      TENANTFORGE_ALLOW_INSECURE_DB: "true"
+      # Non-prod context: avoids the production-only fail-fast requirements (real erasure/compliance
+      # signing keys, a `pg` evidence store). A passive scan needs none of those.
+      TENANTFORGE_ENV: staging
+      # neon-pg secret backend (the default) requires this AES key (>=16 chars). Throwaway — the scan
+      # never stores a real per-tenant secret. From the env, not committed (workflow-secrets).
+      TENANTFORGE_SECRET_KEY: dast-throwaway-secret-key-0000
+      # Token auth: the entrypoint fails closed without a way to authenticate. Throwaway admin token;
+      # the ZAP baseline does NOT use it (unauthenticated scan) — it only lets the server boot.
+      TENANTFORGE_HTTP_TOKEN: dast-throwaway-http-token-0000
+      # Neon API creds gate config parsing (min(1) strings) but are NOT contacted during a passive
+      # scan (no provisioning happens — the Neon client connects lazily, per request). Dummy values.
+      NEON_API_KEY: dast-dummy-neon-api-key
+      NEON_ORG_ID: dast-dummy-neon-org
+      # Fixed port the server binds and ZAP targets.
+      TENANTFORGE_PORT: "3000"
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # pnpm before setup-node so the node cache can key on pnpm (mirrors ci.yml).
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Apply the control-plane registry schema so the server's readiness/registry queries work.
+      - name: Migrate registry schema
+        run: pnpm --filter tenantforge cli migrate
+
+      # Boot the HTTP control-plane API in the background, then block until /health is 200 (bounded
+      # poll — fail-closed: if it never comes up, the job fails rather than scanning nothing). The
+      # server logs to stderr; capture it so a boot failure is visible in the job log.
+      - name: Boot control-plane API
+        run: |
+          pnpm --filter tenantforge http > "${RUNNER_TEMP}/tenantforge-http.log" 2>&1 &
+          echo "$!" > "${RUNNER_TEMP}/tenantforge-http.pid"
+          if ! ./tenantforge/scripts/wait-for-health.sh "http://127.0.0.1:${TENANTFORGE_PORT}/health" 90 2; then
+            echo "::error::control-plane API failed to become healthy; server log follows:"
+            cat "${RUNNER_TEMP}/tenantforge-http.log" || true
+            exit 1
+          fi
+
+      # OWASP ZAP baseline scan (passive) against the running API. Pinned by commit SHA
+      # (supply-chain). The scanner image (ghcr.io/zaproxy/zaproxy:stable, the action default) runs
+      # zap-baseline.py: it spiders + passively analyses; a rules file tunes per-rule thresholds.
+      #  - fail_action: true          → job FAILS on any ZAP FAIL-level (high-risk) alert (gate policy)
+      #  - allow_issue_writing: false → no GitHub issue is filed (keeps permissions to contents:read)
+      #  - rules_file_name            → per-rule WARN/FAIL/IGNORE tuning
+      #  - cmd_options: -T 5          → cap the total spider/scan time (bounded run; -I already implied
+      #                                 off since we want fail-on-FAIL — do NOT pass -I which would
+      #                                 make ZAP always exit 0)
+      - name: OWASP ZAP baseline scan
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+        with:
+          target: http://127.0.0.1:3000
+          rules_file_name: tenantforge/scripts/zap-baseline-rules.tsv
+          cmd_options: "-T 5"
+          fail_action: true
+          allow_issue_writing: false
+          artifact_name: tenantforge-zap-baseline-report
+
+      # Always surface the server log for triage (esp. on a scan failure). The ZAP HTML/JSON/MD
+      # report is uploaded by the action above under `artifact_name`.
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tenantforge-dast-server-log
+          path: ${{ runner.temp }}/tenantforge-http.log
+          if-no-files-found: warn
