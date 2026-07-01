@@ -44,7 +44,8 @@
 
 ## Escalation
 
-- Page `<on-call>`; notify `<stakeholders>` on `<channel>`.
+- Alert **the maintainer** (ntfy — solo-maintained, no rotation); record the timeline + status in the
+  incident's **GitHub issue**.
 
 ## Related
 

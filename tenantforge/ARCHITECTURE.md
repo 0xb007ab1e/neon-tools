@@ -111,8 +111,12 @@ retention/erasure obligations.
 ## 6. Discoverability (harness/agent integration)
 
 - Publishes [`neon-tool.json`](./neon-tool.json) → found by globbing `**/neon-tool.json`.
-- **MCP server** exposes `tf_provision`, `tf_tenant`, `tf_list_tenants`, `tf_migrate_fleet`,
-  `tf_suspend`, `tf_offboard` over stdio.
+- **MCP server** exposes read/report tools plus **reversible, non-secret, non-money** lifecycle
+  ops over stdio — e.g. `tf_provision`, `tf_tenant`, `tf_list_tenants`, `tf_suspend`, `tf_offboard`,
+  `tf_resume`, `tf_restore`, `tf_reconcile_plan`/`tf_reconcile_history` (read-side), and the
+  `tf_*_report`/`tf_audit*` reporting tools. **Fleet-mutating, secret-, and money-bearing ops
+  (e.g. execute-migrate-fleet, purge) are deliberately NOT on the MCP surface** (ADR-0004; tests
+  assert their absence) — those stay on the CLI/HTTP surfaces behind the gate policy.
 - `provides` (`tenant.provision`, `tenant.route`, `tenant.lifecycle`, `tenant.migrate`) and
   `consumes` (`rag.*` from VectorNest) describe how it composes into a SaaS.
 

@@ -62,7 +62,7 @@
 
 ## Escalation
 
-- Page `<on-call>` on a failed run that doesn't clear on a retry, or any cross-tenant anomaly;
+- Alert **the maintainer** (ntfy) on a failed run that doesn't clear on a retry, or any cross-tenant anomaly;
   follow `incident-response.md` for a suspected mass-charge or PSP-credential issue.
 
 ## Related

@@ -42,7 +42,8 @@
 
 ## Escalation
 
-- IC pages `<security lead>` / `<eng lead>`; legal + comms for SEV1 breach.
+- IC = **the maintainer** (solo-maintained — no internal second tier to page). For a SEV1 breach,
+  **engage external security/legal help** and honor breach-notification duties (`std-privacy` — GDPR 72h).
 
 ## Post-incident
 
