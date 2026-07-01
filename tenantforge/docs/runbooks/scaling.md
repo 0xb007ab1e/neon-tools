@@ -72,7 +72,7 @@ Two layers, mirroring the game-day split:
 
 ## Escalation
 
-- If scaling doesn't relieve it (or a hard Neon quota is hit), page `<on-call>` / open an incident.
+- If scaling doesn't relieve it (or a hard Neon quota is hit), alert **the maintainer** (ntfy) / open an incident.
 
 ## Related
 

@@ -117,7 +117,7 @@ already-registered version is rejected as **checksum drift** — bump to a new v
 
 ## Escalation
 
-- Page `<on-call>` / incident commander for SEV2+. Notify `<stakeholders>` on `<channel>`.
+- Alert **the maintainer** (ntfy) for SEV2+. Record the timeline + status in the incident's **GitHub issue**.
 - Data-loss risk (a destructive down migration, or restore needed) → security/DBA lead +
   `runbooks/backup-restore.md`.
 

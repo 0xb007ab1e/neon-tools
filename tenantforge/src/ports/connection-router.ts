@@ -13,7 +13,9 @@ export interface TenantConnection {
  * client-supplied value (BOLA — std-owasp-api, topic-multi-tenancy). Resolving an unknown or
  * non-active tenant fails closed.
  *
- * Adapter implementation is deferred to the connection-routing milestone (ARCHITECTURE §10).
+ * Adapters: {@link import('../adapters/connection-router.js')} (base) and
+ * {@link import('../adapters/caching-connection-router.js')} (process-local resolution cache,
+ * invalidated on every transition/erasure). Wired at the composition root in `app/lib.ts`.
  */
 export interface ConnectionRouter {
   /**

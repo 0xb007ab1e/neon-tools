@@ -13,9 +13,10 @@ export interface ExportResult {
  *
  * Offboarding is **export-then-delete** (privacy / data-lifecycle): the export must succeed before
  * the irreversible {@link import('./provisioning-provider.js').ProvisioningProvider.deleteTenantProject}
- * runs, so an erasure request still yields the tenant their data. The adapter is deferred to the
- * lifecycle milestone; until one is injected, offboarding fails closed unless export is explicitly
- * skipped with a recorded reason.
+ * runs, so an erasure request still yields the tenant their data. Adapters:
+ * {@link import('../adapters/pg-dump/exporter.js')} (logical `pg_dump`) and
+ * {@link import('../adapters/neon-archive-exporter.js')}. Until an exporter is injected, offboarding
+ * fails closed unless export is explicitly skipped with a recorded reason.
  */
 export interface TenantExporter {
   /**

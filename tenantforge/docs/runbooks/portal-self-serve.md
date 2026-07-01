@@ -220,11 +220,11 @@ true`, `reversibleUntil`) is in the audit trail, and no post-cancel charge fired
 
 ## Escalation
 
-- Page `<on-call>` for: a persistently-failing sweep nearing the SLA, a suspected wrong-account or
+- Alert **the maintainer** (ntfy) for: a persistently-failing sweep nearing the SLA, a suspected wrong-account or
   griefing erasure (act before `execute-at`), or any cross-tenant anomaly. A suspected wrong erasure
-  or mass-erasure is a security incident → `incident-response.md`. Notify `<stakeholders>` /
-  data-protection owner for any executed erasure that may have been in error (breach-notification
-  duties — `@rules/std-privacy.md`).
+  or mass-erasure is a security incident → `incident-response.md`. As the **maintainer** (and
+  data-protection owner), honor breach-notification duties for any executed erasure that may have been
+  in error (`@rules/std-privacy.md`).
 
 ## Related
 

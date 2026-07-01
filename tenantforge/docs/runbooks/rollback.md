@@ -42,7 +42,8 @@
 
 ## Escalation
 
-- Page `<on-call>` / incident commander; notify `<stakeholders>`.
+- Alert **the maintainer** (ntfy); if it's an incident, follow `incident-response.md` and record the
+  timeline in the incident's **GitHub issue**.
 
 ## Related
 

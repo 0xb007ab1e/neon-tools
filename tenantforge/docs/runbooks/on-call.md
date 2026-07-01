@@ -24,10 +24,10 @@
 
 ## Responding
 
-1. **Acknowledge** within `<SLA>`.
+1. **Acknowledge** within the severity window (master §7 — SEV1: right away).
 2. **Mitigate first, diagnose later** — throttle/rollback/flag-off to stop user pain, then root-cause.
 3. If it's a security incident or major outage, **declare** and follow `incident-response.md`.
-4. Keep a timeline; communicate on `<channel>` at a cadence.
+4. Keep a timeline; communicate on the incident's **GitHub issue** at a cadence.
 
 ## Verification
 
@@ -35,8 +35,9 @@
 
 ## Escalation
 
-- Can't resolve in `<time>` / out of depth → `<secondary on-call>` / `<eng lead>`. Escalating early
-  is encouraged.
+- Solo-maintained: there is **no secondary on-call tier**. If you can't resolve it or it's beyond your
+  depth, **pull in outside help** — for a SEV1 security/legal matter engage external security/legal —
+  rather than pressing on alone. Escalating early is encouraged.
 
 ## Shift handoff
 
