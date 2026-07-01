@@ -20,15 +20,34 @@ describe('secret-crypto', () => {
 
   it('fails closed on tampering (GCM auth)', () => {
     const sealed = seal(key, 'secret');
-    const [nonce, tag, ct] = sealed.split('.');
+    const [version, nonce, tag, ct] = sealed.split('.');
     // Flip a byte of the ciphertext.
     const bytes = Buffer.from(ct!, 'base64');
     bytes[0] = bytes[0]! ^ 0xff;
-    const tampered = [nonce, tag, bytes.toString('base64')].join('.');
+    const tampered = [version, nonce, tag, bytes.toString('base64')].join('.');
     expect(() => open(key, tampered)).toThrow();
   });
 
   it('rejects a malformed sealed value', () => {
-    expect(() => open(key, 'not-three-parts')).toThrow(/malformed/);
+    expect(() => open(key, 'not-enough-parts')).toThrow(/malformed/);
+    expect(() => open(key, 'a.b.c.d.e')).toThrow(/malformed/);
+  });
+
+  it('tags new sealed values with the current version (crypto-agility, gap #16)', () => {
+    const sealed = seal(key, 'secret');
+    expect(sealed.split('.')).toHaveLength(4);
+    expect(sealed.startsWith('v1.')).toBe(true);
+  });
+
+  it('still opens a legacy untagged (3-part) value as v1 — backward compatible', () => {
+    // Values written before versioning had no leading tag: `nonce.tag.ciphertext`.
+    const legacy = seal(key, 'legacy-secret').split('.').slice(1).join('.');
+    expect(legacy.split('.')).toHaveLength(3);
+    expect(open(key, legacy)).toBe('legacy-secret');
+  });
+
+  it('fails closed on an unsupported version tag', () => {
+    const body = seal(key, 'secret').split('.').slice(1).join('.');
+    expect(() => open(key, `v2.${body}`)).toThrow(/unsupported sealed-secret version/);
   });
 });

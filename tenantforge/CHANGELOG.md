@@ -8,6 +8,18 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Changed
 
+- **Crypto-agility for sealed connection secrets (closes gap #16).** `secret-crypto.ts` `seal()` now
+  prepends a format-version tag — `v1.b64(nonce).b64(tag).b64(ciphertext)` — and `open()` dispatches
+  on it, so the cipher/KDF can be upgraded later (a future `v2`) WITHOUT losing access to
+  already-stored secrets (`topic-cryptography` crypto-agility). Backward compatible: legacy untagged
+  3-part values are read as `v1`; an unknown version fails closed (never silently mis-decrypts). No
+  data migration required.
+- **Mutation-gate ratchet (closes gap #11).** Stryker `break` threshold raised 85 → **87** to match
+  the re-measured baseline (87.30%), so a real drop in critical-core test quality fails CI instead of
+  eroding within the old cushion. Confirmed the mutation PR trigger is correctly scoped: the pure
+  core imports nothing outside `src/core`, so no first-party change to a mutated module bypasses the
+  gate (dependency-driven drift is caught by the weekly cron) — documented in `stryker.config.mjs`.
+
 - **Upstream retry resilience — Stripe retries + jittered backoff (closes gaps #9, #10).** The Stripe
   payment gateway (`src/adapters/payment/stripe-gateway.ts`) now **retries transient failures**
   (network/timeout, 429, 5xx) with bounded exponential backoff — previously it had none, unlike the

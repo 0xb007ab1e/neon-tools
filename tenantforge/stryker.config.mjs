@@ -33,11 +33,15 @@ export default {
   reporters: ['clear-text', 'progress', 'html'],
   htmlReporter: { fileName: 'reports/mutation/index.html' },
   tempDirName: '.stryker-tmp',
-  // Gate: fail under `break`. Set below the measured baseline (~87% — the practical ceiling on these
-  // modules, since the remaining survivors are equivalent mutants: proration boundaries that fall
-  // through to the same value, and a redundant `typeof` guard before a membership check). This
-  // catches a real regression in test quality without being unattainable; ratchet up over time.
-  thresholds: { high: 95, low: 85, break: 85 },
+  // Gate: fail under `break`. Re-measured 2026-07-01 at **87.30%** (concurrency-pinned below for
+  // reproducibility); `break` is ratcheted to the baseline floor (**87**) so a real drop in test
+  // quality fails CI instead of eroding within a slack cushion (gap #11). The residual survivors are
+  // equivalent mutants (proration boundaries that fall through to the same value, a redundant
+  // `typeof` guard before a membership check); ratchet further as the score rises.
+  // NOTE on the PR trigger (mutation.yml): it is correctly scoped to `src/core/**` + `test/core/**` —
+  // the mutated pure core imports nothing outside `src/core`, so no first-party change to a mutated
+  // module can bypass the gate; a dependency bump that alters core behavior is caught by the weekly cron.
+  thresholds: { high: 95, low: 85, break: 87 },
   // Reproducible run: don't fan out across an unknown CI core count in a way that changes results.
   concurrency: 2,
 };
