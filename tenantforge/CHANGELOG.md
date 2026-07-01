@@ -8,6 +8,39 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Reliability measurement-gap trio (observability — closes gaps M2, M3, M4).** Three new SLIs now
+  fall out of the existing `EventSink` → `MetricsEventSink` channel (no parallel metrics path):
+  - **M2 — Neon upstream dependency SLI.** `createNeonProvisioningProvider`
+    (`src/adapters/neon-api/provisioning-provider.ts`) takes an optional `eventSink` and emits one
+    `neon.api` `TenantEvent` per **logical** call (across retries): `outcome` ok/error,
+    `durationMs` (total incl. retries), and a redacted `context` of `{ operation, status, attempts,
+transient }` — `operation` a **bounded** label (endpoint operation name, never an id-bearing
+    path), `status` the last HTTP status (0 = network error), no secrets. Renders
+    `tenantforge_events_total{event="neon.api",outcome}` (dependency error rate) +
+    `tenantforge_event_duration_ms{event="neon.api"}` (dependency latency) automatically. Wired at
+    the composition root in `src/app/lib.ts` (`tenantForgeFromConfig`, now built after the fan-out
+    sink). Surfaced in `docs/reliability/slos.md` as the **D1 dependency-health indicator** — a
+    signal feeding S1 with an alerting threshold, explicitly **not** an availability SLO we own.
+  - **M3 — extended duration buckets.** `DURATION_BUCKETS_MS`
+    (`src/adapters/metrics-event-sink.ts`) now appends **10000, 30000, 60000** ms after 5000, so
+    slow, Neon-bound operations — notably `tenant.provisioned` (project creation takes tens of
+    seconds) — have a measurable p95 instead of collapsing into `+Inf`. Backward-compatible (existing
+    buckets unchanged; shared by the event + HTTP histograms). Surfaced as the **D2 provisioning-latency
+    indicator**, target **to be ratified from observed p95** (not invented).
+  - **M4 — connection-resolution denial rate.** `createConnectionRouter`
+    (`src/adapters/connection-router.ts`) takes an optional `eventSink` and emits a
+    `connection.resolve` event per resolve (before re-throwing, so caller behavior is unchanged):
+    `outcome="error"` marks a denial with a bounded `context.reason`
+    (`not_found`/`not_routable`/`no_secret`), never a secret or free text. Renders
+    `tenantforge_events_total{event="connection.resolve",outcome}` — the denial rate the deploy
+    runbook already lists as a watch signal. Wired via the base router in `src/app/lib.ts`
+    (`createTenantForge`). Surfaced as the **D3 indicator**.
+
+  `docs/reliability/slos.md` marks M2/M3/M4 **CLOSED (2026-06-30)**, adds a "Dependency & operational
+  indicators" table (D1/D2/D3) with `sum without(instance)(rate(...))` PromQL, and updates the
+  telemetry bucket-boundary line. The Neon indicator is framed as dependency health (not an owned
+  SLO); provisioning-latency and connection-resolution targets are to be ratified from observed data.
+
 - **Per-request HTTP RED metrics (observability — closes gap M1).** Added two Prometheus series so
   the control-plane API has a real availability + latency SLI (previously metrics were only
   operation-event level, with no request-level signal): `tenantforge_http_requests_total{method,

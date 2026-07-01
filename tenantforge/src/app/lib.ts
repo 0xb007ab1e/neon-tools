@@ -2131,7 +2131,9 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
   const complianceReportSigner = deps.complianceReportSigner;
   const evidenceBundleSigner = deps.evidenceBundleSigner;
   const allowedRegions = deps.allowedRegions ?? [];
-  const baseRouter = createConnectionRouter({ registry, secretStore });
+  const eventSink = deps.eventSink ?? createNoopEventSink();
+  // The base router emits the `connection.resolve` denial-rate SLI (M4) through the same event sink.
+  const baseRouter = createConnectionRouter({ registry, secretStore, eventSink });
   // Optional process-local resolution cache (control-plane cost at fleet scale). When enabled, the
   // cache is invalidated on every transition + erasure so a non-routable/re-keyed tenant is never served.
   const cachingRouter =
@@ -2146,7 +2148,6 @@ export function createTenantForge(deps: TenantForgeDeps): TenantForge {
       : undefined;
   const router = cachingRouter ?? baseRouter;
   const invalidateConnection = (id: string): void => cachingRouter?.invalidate(id);
-  const eventSink = deps.eventSink ?? createNoopEventSink();
   const auditLog = deps.auditLog;
   const paymentGateway = deps.paymentGateway;
   const notifier = deps.notifier;
@@ -5000,18 +5001,6 @@ export async function tenantForgeFromConfig(
     connectionString: config.databaseUrl,
     allowInsecure: allowInsecureDb,
   });
-  const provisioning = createNeonProvisioningProvider({
-    apiKey: config.neonApiKey,
-    orgId: config.neonOrgId,
-    allowInsecure: allowInsecureUrls,
-    ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
-    // Propagate the active trace to the upstream so a tenant operation is traceable across the
-    // boundary into the Neon API (W3C trace context). No-op outside any request trace scope.
-    traceHeaders: () => {
-      const traceparent = outboundTraceparent();
-      return traceparent === undefined ? {} : { [TRACEPARENT_HEADER]: traceparent };
-    },
-  });
   // Per-tenant connection secrets: the Neon-prioritized default is an AES-256-GCM-encrypted store in
   // the control-plane DB (encryption key separate from the DB credential — separation of duties).
   // `vault` selects the HashiCorp Vault backend instead; both satisfy the same SecretStore port.
@@ -5070,6 +5059,21 @@ export async function tenantForgeFromConfig(
     ...(auditLog !== undefined ? [createAuditLogEventSink(auditLog)] : []),
     subscriptionSink,
   ]);
+  // Neon provisioning provider — constructed AFTER the fan-out event sink so its `neon.api`
+  // upstream-dependency SLI events (M2) flow through the metrics sink alongside every other event.
+  const provisioning = createNeonProvisioningProvider({
+    apiKey: config.neonApiKey,
+    orgId: config.neonOrgId,
+    allowInsecure: allowInsecureUrls,
+    ...(config.neonApiBaseUrl ? { baseUrl: config.neonApiBaseUrl } : {}),
+    // Propagate the active trace to the upstream so a tenant operation is traceable across the
+    // boundary into the Neon API (W3C trace context). No-op outside any request trace scope.
+    traceHeaders: () => {
+      const traceparent = outboundTraceparent();
+      return traceparent === undefined ? {} : { [TRACEPARENT_HEADER]: traceparent };
+    },
+    eventSink,
+  });
   // Credit ledger: durable Postgres (authoritative) or process-local memory; absent = credit off.
   const creditLedger =
     config.creditLedger === 'pg'
