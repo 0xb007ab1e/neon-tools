@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Manual accessibility test plans (gap B1)
+    url: https://github.com/0xb007ab1e/neon-tools/blob/main/tenantforge/docs/a11y/README.md
+    about: How to run the keyboard + screen-reader passes and where each finding maps. Read before filing an a11y issue.
+  - name: Report a security vulnerability
+    url: https://github.com/0xb007ab1e/neon-tools/security/advisories/new
+    about: Do NOT open a public issue for a security/vulnerability report — use a private advisory.

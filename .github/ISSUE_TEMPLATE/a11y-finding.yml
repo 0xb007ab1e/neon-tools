@@ -1,0 +1,109 @@
+name: Accessibility finding (a11y)
+description: Report a WCAG 2.2 AA issue — esp. a finding from the manual keyboard / screen-reader pass (gap B1).
+title: "[a11y] <console> <step>: <short summary>"
+labels: ["a11y", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For findings from the manual a11y pass (`tenantforge/docs/a11y/`) or an ad-hoc accessibility
+        bug. If it's an **automated** (axe-core) failure, that's a code bug caught by CI — fix it
+        there rather than filing here. One issue per finding, referencing the plan step + WCAG SC so
+        it rolls up into the plan's results log.
+  - type: dropdown
+    id: console
+    attributes:
+      label: Console / SPA
+      options:
+        - Operator dashboard
+        - Customer portal
+        - Self-serve signup
+        - Shared app shell (shared/ui)
+    validations:
+      required: true
+  - type: dropdown
+    id: pass
+    attributes:
+      label: How it was found
+      options:
+        - Keyboard-only
+        - Screen reader — NVDA (Windows)
+        - Screen reader — VoiceOver (macOS)
+        - Zoom / reflow (400%)
+        - Contrast / use of color
+        - Reduced motion
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: step
+    attributes:
+      label: Plan step id
+      description: The test-plan step this maps to (from the docs/a11y plans). Leave blank if not from the plan.
+      placeholder: e.g. dashboard A4.3 / portal A6.2 / signup B2
+  - type: input
+    id: wcag
+    attributes:
+      label: WCAG 2.2 success criterion
+      description: The specific SC the finding violates.
+      placeholder: e.g. 2.1.2 No Keyboard Trap / 4.1.3 Status Messages / 2.4.3 Focus Order
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Impact on a user relying on assistive technology.
+      options:
+        - Blocker — a user relying on AT cannot complete the task
+        - Serious — major barrier / significant confusion; hard to work around
+        - Moderate — a barrier, but there is a workaround
+        - Minor — annoyance / polish
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected (per the plan / WCAG)
+      description: What should happen — quote the plan's "Expected" column if applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened (e.g. focus lost to <body>, control announced no name, no live-region announcement).
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Browser + version, screen reader + version, OS, theme, zoom.
+      placeholder: e.g. Chrome 126 + NVDA 2024.x, Windows 11, dark theme, 100%
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshot / screen-reader transcript / recording
+      description: Optional but helpful — a paste of what the SR announced, or a short clip.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: This is a **manual**-pass finding (not something the automated axe suite already catches).
+          required: true
+        - label: I checked there isn't an existing open `a11y` issue for it.
+          required: true
