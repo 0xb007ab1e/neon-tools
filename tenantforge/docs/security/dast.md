@@ -43,7 +43,7 @@ gate. High-risk classes (injection, reflected/persistent XSS) are escalated to F
 
 Per-rule thresholds are tuned in
 [`tenantforge/scripts/zap-baseline-rules.tsv`](../../scripts/zap-baseline-rules.tsv)
-(tab-separated `pluginId<TAB>threshold<TAB>action`). Loosening a `FAIL`→`WARN` or adding an
+(tab-separated `pluginId<TAB>action`, where action ∈ PASS/IGNORE/INFO/WARN/FAIL). Loosening a `FAIL`→`WARN` or adding an
 `IGNORE` is **relaxing a security gate** (`@rules/workflow-gated-actions.md`) and an accepted,
 owned, time-boxed risk (`@rules/workflow-cve-management.md`) — review it in the PR.
 
