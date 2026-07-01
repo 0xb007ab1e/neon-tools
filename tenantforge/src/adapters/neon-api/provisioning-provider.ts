@@ -5,6 +5,8 @@ import type {
   ProvisionResult,
 } from '../../ports/provisioning-provider.js';
 import { assertHttpsUrl } from '../../core/transport-security.js';
+import type { EventSink } from '../../ports/event-sink.js';
+import { createNoopEventSink } from '../event-sink.js';
 
 /** Shape of the Neon "create project" response we depend on. */
 const CreateProjectResponseSchema = z.object({
@@ -57,10 +59,32 @@ export interface NeonProvisioningOptions {
   traceHeaders?: () => Record<string, string>;
   /** Permit a non-https base URL (local dev / mock only — the documented leaky-endpoint opt-out). */
   allowInsecure?: boolean;
+  /**
+   * Sink for the Neon upstream-dependency SLI (M2). One `neon.api` {@link TenantEvent} is emitted per
+   * logical call (across retries), so `tenantforge_events_total{event="neon.api",outcome}` (error
+   * rate) and `tenantforge_event_duration_ms{event="neon.api"}` (latency) render for free from the
+   * metrics sink. Defaults to a no-op. Context carries a **bounded** `operation` label (never a raw
+   * id-bearing path) and never a secret.
+   */
+  eventSink?: EventSink;
 }
 
-/** A transient (retryable) Neon API failure. */
-class TransientNeonError extends Error {}
+/**
+ * A Neon API failure carrying the observed HTTP status (0 = network error / timeout) and whether it
+ * is transient (retryable). Used to attribute the {@link EventSink} `neon.api` event's context.
+ */
+class NeonApiError extends Error {
+  /** Last observed HTTP status, or 0 for a network error / timeout. */
+  readonly status: number;
+  /** Whether the failure is transient (429 / 5xx / network) and thus retryable. */
+  readonly transient: boolean;
+
+  constructor(message: string, opts: { status: number; transient: boolean; cause?: unknown }) {
+    super(message, opts.cause === undefined ? undefined : { cause: opts.cause });
+    this.status = opts.status;
+    this.transient = opts.transient;
+  }
+}
 
 /**
  * Create a {@link ProvisioningProvider} backed by the Neon API (project-per-tenant).
@@ -81,8 +105,15 @@ export function createNeonProvisioningProvider(
   const maxAttempts = options.maxAttempts ?? 3;
   const doFetch = options.fetchImpl ?? globalThis.fetch;
   const traceHeaders = options.traceHeaders ?? (() => ({}));
+  const eventSink = options.eventSink ?? createNoopEventSink();
 
-  const once = async (method: string, path: string, body?: unknown): Promise<unknown> => {
+  /** The parsed body plus the observed HTTP status, so `api()` can attribute the SLI event. */
+  interface OnceResult {
+    body: unknown;
+    status: number;
+  }
+
+  const once = async (method: string, path: string, body?: unknown): Promise<OnceResult> => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -102,8 +133,12 @@ export function createNeonProvisioningProvider(
           signal: controller.signal,
         });
       } catch (cause) {
-        // Network error / timeout — retryable.
-        throw new TransientNeonError(`Neon API ${method} ${path} request failed`, { cause });
+        // Network error / timeout — retryable. status 0 marks "no HTTP response".
+        throw new NeonApiError(`Neon API ${method} ${path} request failed`, {
+          status: 0,
+          transient: true,
+          cause,
+        });
       }
       if (!response.ok) {
         let detail = '';
@@ -114,26 +149,61 @@ export function createNeonProvisioningProvider(
         }
         const message = `Neon API ${method} ${path} failed: HTTP ${response.status} ${detail}`;
         // 429 + 5xx are transient; 4xx (except 429) are caller errors — fail fast.
-        if (response.status === 429 || response.status >= 500) {
-          throw new TransientNeonError(message);
-        }
-        throw new Error(message);
+        const transient = response.status === 429 || response.status >= 500;
+        throw new NeonApiError(message, { status: response.status, transient });
       }
-      if (response.status === 204) return undefined;
-      return await response.json();
+      if (response.status === 204) return { body: undefined, status: response.status };
+      return { body: await response.json(), status: response.status };
     } finally {
       clearTimeout(timer);
     }
   };
 
-  const api = async (method: string, path: string, body?: unknown): Promise<unknown> => {
+  /**
+   * Invoke the Neon API with bounded retries, emitting exactly ONE `neon.api` SLI event per logical
+   * call (across all retry attempts). `operation` is a bounded label (never the raw id-bearing path).
+   *
+   * @param operation - A bounded operation label for the metrics `operation` context (low cardinality).
+   * @param method - HTTP method.
+   * @param path - Request path (may contain ids — used only for the request/error message, not a label).
+   * @param body - Optional JSON request body.
+   * @returns The parsed response body.
+   */
+  const api = async (
+    operation: string,
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<unknown> => {
+    const startedAt = Date.now();
+    let attempts = 0;
     let lastError: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      attempts = attempt;
       try {
-        return await once(method, path, body);
+        const result = await once(method, path, body);
+        eventSink.emit({
+          event: 'neon.api',
+          at: new Date().toISOString(),
+          outcome: 'ok',
+          durationMs: Date.now() - startedAt,
+          context: { operation, status: result.status, attempts, transient: false },
+        });
+        return result.body;
       } catch (error) {
         lastError = error;
-        if (!(error instanceof TransientNeonError) || attempt === maxAttempts) throw error;
+        const isTransient = error instanceof NeonApiError && error.transient;
+        if (!isTransient || attempt === maxAttempts) {
+          const status = error instanceof NeonApiError ? error.status : 0;
+          eventSink.emit({
+            event: 'neon.api',
+            at: new Date().toISOString(),
+            outcome: 'error',
+            durationMs: Date.now() - startedAt,
+            context: { operation, status, attempts, transient: isTransient },
+          });
+          throw error;
+        }
         // Exponential backoff with a fixed base; jitter omitted for determinism in tests.
         await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** (attempt - 1)));
       }
@@ -144,7 +214,7 @@ export function createNeonProvisioningProvider(
 
   return {
     async createTenantProject(request: ProvisionRequest): Promise<ProvisionResult> {
-      const json = await api('POST', '/projects', {
+      const json = await api('create_project', 'POST', '/projects', {
         project: {
           name: `tenant-${request.slug}`,
           region_id: request.region,
@@ -159,20 +229,28 @@ export function createNeonProvisioningProvider(
     },
 
     async deleteTenantProject(neonProjectId: string): Promise<void> {
-      await api('DELETE', `/projects/${encodeURIComponent(neonProjectId)}`);
+      await api('delete_project', 'DELETE', `/projects/${encodeURIComponent(neonProjectId)}`);
     },
 
     async rotateTenantCredential(neonProjectId: string): Promise<{ connectionUri: string }> {
       // Reset the owner role's password on the project's default branch → a fresh connection URI.
       // (Integration-verified via the live game-day, like the other Neon API calls.)
       const projectPath = `/projects/${encodeURIComponent(neonProjectId)}`;
-      const branches = BranchesResponseSchema.parse(await api('GET', `${projectPath}/branches`));
+      const branches = BranchesResponseSchema.parse(
+        await api('list_branches', 'GET', `${projectPath}/branches`),
+      );
       const branch = branches.branches.find((b) => b.default === true) ?? branches.branches[0]!;
       const branchPath = `${projectPath}/branches/${encodeURIComponent(branch.id)}`;
-      const roles = RolesResponseSchema.parse(await api('GET', `${branchPath}/roles`));
+      const roles = RolesResponseSchema.parse(
+        await api('list_roles', 'GET', `${branchPath}/roles`),
+      );
       const roleName = roles.roles[0]!.name;
       const reset = ResetPasswordResponseSchema.parse(
-        await api('POST', `${branchPath}/roles/${encodeURIComponent(roleName)}/reset_password`),
+        await api(
+          'reset_role_password',
+          'POST',
+          `${branchPath}/roles/${encodeURIComponent(roleName)}/reset_password`,
+        ),
       );
       return { connectionUri: reset.connection_uris[0]!.connection_uri };
     },

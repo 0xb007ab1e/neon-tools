@@ -58,6 +58,51 @@ describe('createMetricsEventSink', () => {
     );
   });
 
+  // M3: high-end buckets (10 s / 30 s / 60 s) make slow ops (tenant.provisioned) measurable
+  // instead of collapsing into +Inf.
+  it('renders the extended high-end buckets and keeps +Inf as the final bucket', () => {
+    const m = createMetricsEventSink();
+    // A 45 s provisioning duration: > 30000, <= 60000.
+    m.emit(ev({ event: 'tenant.provisioned', durationMs: 45000 }));
+    const text = m.render();
+
+    // Existing top-end boundary still present (backward compatible), now not the last finite bucket.
+    expect(text).toContain(
+      'tenantforge_event_duration_ms_bucket{event="tenant.provisioned",le="5000"} 0',
+    );
+    // New high buckets exist.
+    expect(text).toContain(
+      'tenantforge_event_duration_ms_bucket{event="tenant.provisioned",le="10000"} 0',
+    );
+    expect(text).toContain(
+      'tenantforge_event_duration_ms_bucket{event="tenant.provisioned",le="30000"} 0',
+    );
+    // 45 s falls into the 60 s bucket (measurable p95), not +Inf.
+    expect(text).toContain(
+      'tenantforge_event_duration_ms_bucket{event="tenant.provisioned",le="60000"} 1',
+    );
+    expect(text).toContain(
+      'tenantforge_event_duration_ms_bucket{event="tenant.provisioned",le="+Inf"} 1',
+    );
+    // Ordering: the finite 60000 bucket renders before +Inf.
+    expect(text.indexOf('le="60000"')).toBeLessThan(text.indexOf('le="+Inf"'));
+  });
+
+  it('shares the extended buckets with the HTTP duration histogram', () => {
+    const m = createMetricsEventSink();
+    m.observeHttpRequest({
+      method: 'POST',
+      route: '/v1/tenants',
+      statusClass: '2xx',
+      durationMs: 3,
+    });
+    const text = m.render();
+    // HTTP histograms get the same high buckets (mostly empty), keeping the two histograms aligned.
+    expect(text).toContain(
+      'tenantforge_http_request_duration_ms_bucket{method="POST",route="/v1/tenants",le="60000"} 1',
+    );
+  });
+
   it('records a counter but no histogram when durationMs is absent', () => {
     const m = createMetricsEventSink();
     m.emit(ev({ event: 'tenant.transition', outcome: 'ok' }));

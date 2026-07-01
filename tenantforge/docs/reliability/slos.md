@@ -24,7 +24,9 @@ feed structured logs feed the Prometheus metrics (`src/core/observability.ts`,
 - `tenantforge_events_total{event,outcome}` — counter; `outcome` is `ok` | `error`. Drives **success
   rate** (request rate + error rate, the R+E of RED).
 - `tenantforge_event_duration_ms{event}` — histogram of operation durations. Drives **latency**
-  (the D of RED). **Bucket boundaries (ms): 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, +Inf.**
+  (the D of RED). **Bucket boundaries (ms): 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000,
+  30000, 60000, +Inf.** (The 10s/30s/60s buckets were added for M3 so slow, Neon-bound operations —
+  notably `tenant.provisioned` — have a measurable p95 instead of collapsing into `+Inf`.)
 - `tenantforge_http_requests_total{method,route,status_class}` — **per-request** counter
   (`status_class` ∈ `2xx|3xx|4xx|5xx`; `route` is the matched **route template**, e.g.
   `/v1/tenants/:id`, never a raw id-bearing path). Drives **API availability** (the R+E of RED at the
@@ -65,7 +67,8 @@ Notes:
 - **S1** is intentionally only 99.0%: provisioning calls the Neon API (an untrusted upstream with its
   own availability + `429`s); the adapter already does bounded retry + transient classification
   (`src/adapters/neon-api/provisioning-provider.ts`), but some failures are genuinely upstream and
-  outside our budget to eliminate. Track the Neon dependency separately (gap M2).
+  outside our budget to eliminate. Track the Neon dependency separately via the **D1** indicator
+  (from the `neon.api` event series — M2, now closed).
 - **S4** is _per migration run_, not 28-day: a fleet migration is a release (`@rules/workflow-release.md`).
   The design invariant — a failure in one tenant never blocks the others — is verified in tests; this
   SLO bounds how many tenants in a single run may fail before the run is rolled back
@@ -80,8 +83,47 @@ Notes:
   request-level companion to S1/S2 (which stay the source of truth for the Neon-bound write paths).
 - **S8** is `histogram_quantile(0.95, sum without(instance)(rate(tenantforge_http_request_duration_ms_bucket{method="GET",route=~"/v1.*"}[5m])) by (le))`.
   It deliberately **excludes the provisioning POST** (`POST /v1/tenants`): project creation is
-  Neon-bound and takes tens of seconds (it would blow past the 5 s top bucket — see M3), so it is
-  tracked via **S1**, not the HTTP read-path latency SLO. Keep S8 scoped to GET reads.
+  Neon-bound and takes tens of seconds, so it is tracked via **S1** (and the **D2** provisioning-latency
+  indicator, now that the buckets reach 60 s — M3 closed), not the HTTP read-path latency SLO. Keep S8
+  scoped to GET reads.
+
+## Dependency & operational indicators (measurable, not owned SLOs)
+
+These are now emitted from the event stream (M2/M3/M4 closed 2026-06-30). They are **indicators we
+watch and alert on**, deliberately framed distinctly from the S-series SLOs above:
+
+| #   | Indicator                              | Event series                                               | Target / threshold                                                            |
+| --- | -------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| D1  | **Neon upstream dependency health**    | `neon.api` ok ratio + duration                             | **Alerting threshold, not an owned SLO** — see below                          |
+| D2  | **Provisioning latency**               | p95 `tenant_event_duration_ms{event="tenant.provisioned"}` | **Ratify from observed p95** (target set from data — not yet numbered)        |
+| D3  | **Connection-resolution availability** | `connection.resolve` ok ratio                              | denial-rate watch signal (deploy runbook); ratify a target from observed data |
+
+- **D1 — Neon dependency health (a signal feeding S1, NOT an availability SLO we own).** From
+  `tenantforge_events_total{event="neon.api",outcome}` (error rate) and
+  `tenantforge_event_duration_ms{event="neon.api"}` (latency), one event per logical Neon call
+  (across retries). We **cannot fix Neon's uptime**, so this is not an availability SLO we commit to;
+  it is a dependency-health signal that **explains** S1 (provisioning success) and drives an alert
+  when the upstream degrades. Error rate:
+  `sum without(instance)(rate(tenantforge_events_total{event="neon.api",outcome="error"}[5m])) / sum without(instance)(rate(tenantforge_events_total{event="neon.api"}[5m]))`.
+  Latency p95:
+  `histogram_quantile(0.95, sum without(instance)(rate(tenantforge_event_duration_ms_bucket{event="neon.api"}[5m])) by (le))`.
+  The event `context.status` distinguishes `429` from `5xx`/network for **logs**; per-status-class
+  isolation as its own metric label is a documented further refinement (kept out of the label set to
+  bound cardinality). **Alerting threshold:** page when the 5m Neon error rate is sustained high
+  (e.g. > 10%) — it is a leading indicator for S1 burn.
+- **D2 — Provisioning latency.** Now that the duration histogram reaches 60 s (M3),
+  `tenant.provisioned` p95 is measurable:
+  `histogram_quantile(0.95, sum without(instance)(rate(tenantforge_event_duration_ms_bucket{event="tenant.provisioned"}[5m])) by (le))`.
+  **No target number is invented here:** provisioning time is Neon-bound and previously unmeasured —
+  the target is **to be ratified from the observed p95** once data accumulates, then promoted to S1's
+  latency counterpart.
+- **D3 — Connection-resolution availability.** From
+  `tenantforge_events_total{event="connection.resolve",outcome}` — `outcome="error"` is a **denial**
+  (tenant not found / not routable / no stored secret; the bounded reason is in `context.reason`).
+  This makes the deploy runbook's "connection-resolution denials" watch signal real. Denial rate:
+  `sum without(instance)(rate(tenantforge_events_total{event="connection.resolve",outcome="error"}[5m])) / sum without(instance)(rate(tenantforge_events_total{event="connection.resolve"}[5m]))`.
+  A target is likewise **to be ratified from observed data** (a baseline denial rate is expected from
+  legitimate lifecycle states, so a fixed number now would be guesswork).
 
 ## Error-budget policy
 
@@ -120,16 +162,23 @@ each is a tracked follow-up so an SLO isn't asserted on a series we can't comput
   `tenantforge_http_request_duration_ms{method,route}`, emitted by an early timing middleware in
   `src/app/http-server.ts`). They are promoted into the SLO catalog as **S7 (API availability)** and
   **S8 (read-path latency)** above. S1/S2 remain the source of truth for the Neon-bound write paths.
-- **M2 — Neon upstream SLI.** Neon-API `429`/error rate is not a distinct series (it's folded into
-  S1's outcome). Add a `neon.api` call counter + duration to track the dependency directly
-  (`@rules/topic-api-consumption.md`); the runbooks reference "Neon 429 rate" as a watch signal.
-- **M3 — Provisioning latency.** `tenant.provisioned` duration regularly exceeds the **5000 ms** top
-  bucket (Neon project creation takes tens of seconds), so a p95 latency SLO on it is not meaningful
-  with the current buckets. Extend `DURATION_BUCKETS_MS` for the provisioning event (e.g. add 10s,
-  30s, 60s) before setting S1's latency counterpart.
-- **M4 — Connection-resolution denial rate.** The deploy runbook lists "connection-resolution
-  denials" as a watch signal, but routing does not emit a dedicated `connection.*` event/denial
-  counter today. Add one to make it an SLI.
+- **M2 — Neon upstream SLI. ✅ CLOSED (2026-06-30).** The Neon provisioning adapter
+  (`src/adapters/neon-api/provisioning-provider.ts`) now emits one `neon.api` {@link TenantEvent} per
+  logical call (across retries) through the injected event sink, so
+  `tenantforge_events_total{event="neon.api",outcome}` (dependency error rate) and
+  `tenantforge_event_duration_ms{event="neon.api"}` (dependency latency) render for free. Surfaced as
+  the **D1 dependency-health indicator** above — a signal feeding S1 with an alerting threshold, **not**
+  an availability SLO we own (we cannot fix Neon's uptime). The event `context` carries a bounded
+  `operation` label + `status` (429 vs 5xx/network in logs), never a secret.
+- **M3 — Provisioning latency. ✅ CLOSED (2026-06-30).** `DURATION_BUCKETS_MS` now extends to
+  **10000, 30000, 60000** ms (backward-compatible; existing buckets unchanged), so `tenant.provisioned`
+  p95 no longer collapses into `+Inf`. Surfaced as the **D2 latency indicator** above, with its target
+  **to be ratified from observed p95** rather than invented.
+- **M4 — Connection-resolution denial rate. ✅ CLOSED (2026-06-30).** The connection router
+  (`src/adapters/connection-router.ts`) now emits a `connection.resolve` event per resolve —
+  `outcome="error"` marks a denial with a bounded `context.reason`
+  (`not_found`/`not_routable`/`no_secret`). `tenantforge_events_total{event="connection.resolve",outcome}`
+  gives the denial rate the deploy runbook already watches. Surfaced as the **D3 indicator** above.
 - **M5 — Fleet metric aggregation (gap #12) — guidance, not a defect.** Per-instance counters are
   **normal** for Prometheus: it adds an `instance` label per scraped target, so a fleet-wide SLI is
   just `sum without(instance)(rate(…[5m]))` and counter resets on restart/redeploy are handled by

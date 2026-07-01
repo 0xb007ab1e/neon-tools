@@ -1,8 +1,17 @@
 import type { TenantEvent } from '../core/observability.js';
 import type { EventSink } from '../ports/event-sink.js';
 
-/** Cumulative histogram bucket boundaries (ms) for event durations. */
-const DURATION_BUCKETS_MS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000] as const;
+/**
+ * Cumulative histogram bucket boundaries (ms) for event durations.
+ *
+ * The high-end boundaries (10 s / 30 s / 60 s) exist so slow control-plane operations — notably
+ * `tenant.provisioned` (Neon project creation takes tens of seconds) — have measurable p95/p99
+ * instead of collapsing into `+Inf` (M3). Shared by the event and HTTP histograms; HTTP requests
+ * simply leave the high buckets mostly empty. Backward-compatible: existing boundaries unchanged.
+ */
+const DURATION_BUCKETS_MS = [
+  5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000,
+] as const;
 
 /** An {@link EventSink} that also renders accumulated RED metrics in Prometheus text format. */
 export interface MetricsEventSink extends EventSink {
