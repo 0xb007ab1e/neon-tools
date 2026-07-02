@@ -6,6 +6,20 @@ All notable changes to TenantForge are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **DAST now mounts + scans all three SPAs, not just the `/v1` 401 wall (closes re-audit gap #3).**
+  The ZAP-baseline job set only `TENANTFORGE_HTTP_TOKEN`, so the dashboard/portal/signup sub-apps —
+  guarded on their session secrets (+ portal `tenantAuthenticator`, + signup publishable/captcha-site
+  keys) — never mounted; ZAP reached only the 401'd `/v1` API + public probes, giving false
+  confidence about the customer-facing cookie/CSP hardening the scan exists to validate. The job now
+  sets throwaway ≥32-char session secrets + portal token-auth creds + Stripe/Turnstile **test** keys
+  so all three mount, **builds the SPA dists** and serves them (`*_DIST`), and asserts `/dashboard/`,
+  `/portal/`, `/signup/` each return 200 post-boot (a 404 = unsatisfied guard → fail). Fail-on-
+  high-risk-only (`-I`), digest-pinned actions, ephemeral Postgres, and `contents: read` unchanged.
+  `docs/security/dast.md` updated (all four surfaces scanned; schemathesis authenticated-fuzz remains
+  the future enhancement).
+
 ### Added
 
 - **Evidence-retention sweep now has an invocation path (closes re-audit gap #1).** `evidencePrune`
