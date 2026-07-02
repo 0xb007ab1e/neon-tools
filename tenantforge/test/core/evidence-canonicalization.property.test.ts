@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { generateKeyPair, exportJWK, SignJWT, importJWK } from 'jose';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   complianceReportClaims,
   verifyComplianceReport,
@@ -16,6 +16,12 @@ import {
 import type { ComplianceReport, ComplianceAuditEntry } from '../../src/core/compliance.js';
 import type { EvidenceBundle } from '../../src/core/evidence-bundle.js';
 import type { TenantStatus } from '../../src/core/domain.js';
+
+// The async sign→verify properties generate an ephemeral Ed25519 key and run dozens of
+// sign+verify rounds per case — legitimately ~5 s, which tipped over vitest's 5 s default and
+// flaked CI under load. Give the file real headroom (the fast sync canonicalization props are
+// unaffected — a higher ceiling doesn't slow a test that finishes in ms).
+vi.setConfig({ testTimeout: 20_000 });
 
 /**
  * Property-based tests for the compliance/evidence JWS canonicalization + sign/verify path
