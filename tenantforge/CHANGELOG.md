@@ -8,6 +8,18 @@ All notable changes to TenantForge are documented here. The format follows
 
 ### Added
 
+- **Evidence-retention sweep now has an invocation path (closes re-audit gap #1).** `evidencePrune`
+  was implemented + configured (`TENANTFORGE_EVIDENCE_RETENTION_DAYS`) but had **no caller** — no CLI
+  command, no worker wiring — so `retentionUntil` was stamped and expired bundles then accumulated
+  forever, despite `.env.example`/ADR-0011/SLO S6 claiming the sweep runs. Now: `runWorkerCycle`
+  (`src/app/worker.ts`) runs `evidencePrune` every cycle (wrapped so a failure can't crash the worker;
+  a clean no-op when no store is wired or nothing is expired — mirrors the erasure sweep), and a new
+  `tenantforge cli evidence-prune [--limit]` command runs it on demand / via external cron. Fixed the
+  now-accurate claims in `.env.example` + SLO **S6** (which sweeps run in the worker vs. via cron), and
+  corrected two `tenant_event_duration_ms` → `tenantforge_event_duration_ms` typos in the S3/D2 SLI
+  cells (re-audit gap #6). Worker tests extended (prune runs each cycle; failure logged not crashing;
+  no-op silent).
+
 - **Manual accessibility test plans for all three consoles (docs — scopes gap B1).** The keyboard-only
   - screen-reader (NVDA/VoiceOver) pass that covers the ~60% of WCAG 2.2 AA that axe-core can't. New
     `docs/a11y/dashboard-manual-test-plan.md` and `docs/a11y/signup-manual-test-plan.md` (mirroring the

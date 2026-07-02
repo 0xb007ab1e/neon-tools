@@ -29,12 +29,12 @@ type WorkerLog = (line: string) => void;
  * it, a scheduled GDPR Art. 17 erasure would never execute (SLA unmeetable).
  *
  * @param consumer - The lifecycle-queue consumer to drain.
- * @param tf - The control-plane facade (provides `erasureSweep`).
+ * @param tf - The control-plane facade (provides `erasureSweep` + `evidencePrune`).
  * @param log - Sink for diagnostic lines.
  */
 export async function runWorkerCycle(
   consumer: Pick<LifecycleConsumer, 'drain'>,
-  tf: Pick<TenantForge, 'erasureSweep'>,
+  tf: Pick<TenantForge, 'erasureSweep' | 'evidencePrune'>,
   log: WorkerLog,
 ): Promise<void> {
   const report = await consumer.drain();
@@ -49,6 +49,20 @@ export async function runWorkerCycle(
   } catch (error) {
     log(
       `tenantforge worker erasure-sweep error: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
+  // Evidence retention sweep — always run, wrapped so a failure can't crash the worker. Deletes
+  // evidence bundles past their `retentionUntil` (stamped from TENANTFORGE_EVIDENCE_RETENTION_DAYS);
+  // a clean no-op when no evidence store is wired or nothing is expired. Without this, a configured
+  // retention window would never actually be enforced on persisted evidence (gap #1 / data-lifecycle).
+  try {
+    const { pruned } = await tf.evidencePrune();
+    if (pruned > 0) {
+      log(`tenantforge worker evidence-prune: ${pruned} expired bundle(s) pruned\n`);
+    }
+  } catch (error) {
+    log(
+      `tenantforge worker evidence-prune error: ${error instanceof Error ? error.message : String(error)}\n`,
     );
   }
 }
