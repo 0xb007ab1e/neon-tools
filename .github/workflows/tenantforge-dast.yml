@@ -8,9 +8,16 @@ name: TenantForge DAST (ZAP baseline)
 # no internals, HTTPS/cookie flags, cache headers on sensitive responses, etc.
 #
 # It is a PASSIVE baseline: ZAP spiders + passively analyses responses; it does NOT actively fuzz or
-# attack (no auth token is supplied, so it only reaches the public probes + the 401 wall on /v1/*).
-# Authenticated deep-fuzzing (e.g. schemathesis driven by the OpenAPI spec + a bearer token) is a
-# possible future enhancement — see tenantforge/docs/security/dast.md.
+# attack. No API auth token is supplied to ZAP (the /v1/* control-plane sits behind a 401 wall). But
+# the job DOES configure the three customer-facing SPAs to mount + serve their built HTML — the
+# dashboard, the tenant portal, and the public signup — so ZAP spiders their real pages and passively
+# validates the deployed-surface hardening those SPAs carry (the Stripe-/Turnstile-relaxed CSPs,
+# cookie flags, cache + security headers). Each sub-app is gated on its own session secret (and, for
+# the portal, a tenant authenticator; for signup, the public Stripe/captcha keys + a notifier), so
+# they only mount when those are set — hence the throwaway values in `env:` below. Without them the
+# scan reaches only the probes + the /v1/* 401 wall (the gap this job closes — gap #3).
+# Authenticated deep-fuzzing (e.g. schemathesis driven by the OpenAPI spec + a bearer token, plus a
+# ZAP full/active scan) is a possible future enhancement — see tenantforge/docs/security/dast.md.
 #
 # Fail-closed gate policy: the job FAILS on ZAP high-risk (FAIL) alerts only; WARN-level passive
 # findings are surfaced in the uploaded report but do not block (a baseline is largely advisory).
@@ -82,6 +89,41 @@ jobs:
       # Fixed port the server binds and ZAP targets.
       TENANTFORGE_PORT: "3000"
 
+      # --- Mount the three customer-facing SPAs so ZAP actually scans them (gap #3) ---
+      # Each sub-app mounts only when its guards are satisfied (src/app/http-server.ts):
+      #   dashboard → dashboardSecret            (TENANTFORGE_DASHBOARD_SECRET)
+      #   portal    → portalSecret + tenantAuthenticator
+      #                                          (TENANTFORGE_PORTAL_SECRET + a portal authenticator)
+      #   signup    → signupSecret + signupPublishableKey + signupCaptchaSiteKey
+      #                                          (TENANTFORGE_SIGNUP_SECRET + Stripe pk + captcha site key)
+      # All values below are THROWAWAY/public test-mode — no real secret, never reaches prod. The
+      # session secrets are >=32 chars (config.ts enforces a min(32) floor — gap #8).
+
+      # Dashboard: session-cookie HMAC key (>=32) ⇒ /dashboard mounts. (36 chars.)
+      TENANTFORGE_DASHBOARD_SECRET: dast-throwaway-dashboard-session-000
+      # Portal: session key (>=32) + a tenant authenticator. Token mode (default) builds the
+      # authenticator from PORTAL_CREDENTIALS (`tenantId:token`) — a single dummy tenant. (36 chars.)
+      TENANTFORGE_PORTAL_SECRET: dast-throwaway-portal-session-000000
+      TENANTFORGE_PORTAL_AUTH_MODE: token
+      TENANTFORGE_PORTAL_CREDENTIALS: dast-tenant:dast-throwaway-portal-token-0000
+      # Signup: session key (>=32) ⇒ /signup mounts, BUT enabling signup fails-closed at config time
+      # unless Stripe + a captcha + a notifier are all set (config.ts). So we set all of them. (36 chars.)
+      TENANTFORGE_SIGNUP_SECRET: dast-throwaway-signup-session-000000
+      # Stripe: publishable key is the public browser key that satisfies the signup guard's
+      # signupPublishableKey; the secret key is required whenever paymentGateway=stripe. Both are
+      # Stripe's documented public TEST-mode placeholders (never live) — no charge is attempted.
+      TENANTFORGE_PAYMENT_GATEWAY: stripe
+      STRIPE_PUBLISHABLE_KEY: pk_test_dast_throwaway_publishable_0000
+      STRIPE_SECRET_KEY: sk_test_dast_throwaway_secret_0000
+      # Captcha: Cloudflare Turnstile's official ALWAYS-PASSES test keys (public, documented). The
+      # site key satisfies the signup guard's signupCaptchaSiteKey; the secret satisfies siteverify.
+      TENANTFORGE_CAPTCHA_PROVIDER: turnstile
+      TENANTFORGE_CAPTCHA_SITE_KEY: 1x00000000000000000000AA
+      TENANTFORGE_CAPTCHA_SECRET: 1x0000000000000000000000000000000AA
+      # Signup requires a notifier for email verification; `log` sends nothing (audit-only) — no
+      # outbound email during the scan.
+      TENANTFORGE_NOTIFIER: log
+
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -94,6 +136,16 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Build the three SPAs so the sub-apps can serve real HTML (each vite build emits
+      # `<spa>/dist/`, base-pathed under /dashboard//portal//signup/). ZAP then spiders the actual
+      # pages + assets instead of only API routes — the whole point of gap #3. If a build fails the
+      # job fails here (fail-closed) rather than silently scanning empty sub-apps.
+      - name: Build SPAs (dashboard, portal, signup)
+        run: |
+          pnpm --filter tenantforge dashboard:build
+          pnpm --filter tenantforge portal:build
+          pnpm --filter tenantforge signup:build
+
       # Apply the control-plane registry schema so the server's readiness/registry queries work.
       - name: Migrate registry schema
         run: pnpm --filter tenantforge cli migrate
@@ -101,7 +153,16 @@ jobs:
       # Boot the HTTP control-plane API in the background, then block until /health is 200 (bounded
       # poll — fail-closed: if it never comes up, the job fails rather than scanning nothing). The
       # server logs to stderr; capture it so a boot failure is visible in the job log.
+      #
+      # The `*_DIST` static-root envs point each sub-app at its built `dist/` so it serves the SPA
+      # (absolute paths under $GITHUB_WORKSPACE — the `http` process runs with `tenantforge/` as its
+      # working dir via the pnpm filter, so relative paths would be ambiguous). Set here (not in the
+      # job `env:`) because they interpolate the workspace path.
       - name: Boot control-plane API
+        env:
+          TENANTFORGE_DASHBOARD_DIST: ${{ github.workspace }}/tenantforge/dashboard/dist
+          TENANTFORGE_PORTAL_DIST: ${{ github.workspace }}/tenantforge/portal/dist
+          TENANTFORGE_SIGNUP_DIST: ${{ github.workspace }}/tenantforge/signup/dist
         run: |
           pnpm --filter tenantforge http > "${RUNNER_TEMP}/tenantforge-http.log" 2>&1 &
           echo "$!" > "${RUNNER_TEMP}/tenantforge-http.pid"
@@ -110,6 +171,17 @@ jobs:
             cat "${RUNNER_TEMP}/tenantforge-http.log" || true
             exit 1
           fi
+          # Fail closed if a sub-app didn't mount (a 404 means its guard wasn't satisfied — the exact
+          # regression gap #3 fixes). A mounted SPA returns 200 text/html; the API returns 404 JSON.
+          for path in /dashboard/ /portal/ /signup/; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${TENANTFORGE_PORT}${path}")"
+            if [ "$code" != "200" ]; then
+              echo "::error::sub-app ${path} did not mount (HTTP ${code}); ZAP would not scan it. Server log:"
+              cat "${RUNNER_TEMP}/tenantforge-http.log" || true
+              exit 1
+            fi
+            echo "sub-app ${path} mounted (HTTP ${code})"
+          done
 
       # OWASP ZAP baseline scan (passive) against the running API. Pinned by commit SHA
       # (supply-chain). The scanner image (ghcr.io/zaproxy/zaproxy:stable, the action default) runs
