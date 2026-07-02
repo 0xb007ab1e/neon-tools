@@ -784,6 +784,25 @@ const pruneSnapshots = defineCommand({
   },
 });
 
+const evidencePrune = defineCommand({
+  meta: {
+    name: 'evidence-prune',
+    description:
+      'Prune persisted evidence bundles past their retention window (the scheduled evidence retention sweep; the worker also runs it each cycle)',
+  },
+  args: {
+    limit: { type: 'string', description: 'Max expired bundles to prune this run' },
+  },
+  async run({ args }) {
+    await withTenantForge(async (tf) => {
+      const report = await tf.evidencePrune(
+        args.limit !== undefined ? { limit: Number(args.limit) } : {},
+      );
+      process.stdout.write(`evidence prune: ${report.pruned} expired bundle(s) pruned\n`);
+    });
+  },
+});
+
 const restoreSnapshot = defineCommand({
   meta: {
     name: 'restore-snapshot',
@@ -1966,6 +1985,7 @@ const main = defineCommand({
     'evidence-list': evidenceList,
     'evidence-get': evidenceGet,
     'evidence-pubkey': evidencePublicKey,
+    'evidence-prune': evidencePrune,
   },
 });
 

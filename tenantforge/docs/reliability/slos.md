@@ -56,16 +56,16 @@ the provisioning-latency gap).
 
 Window: **28-day rolling** unless noted. Error budget = `(1 − SLO) × valid events in window`.
 
-| #   | SLI                                                                                                              | Event series                                              | SLO target                                                           | 28d error budget    |
-| --- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------- | ------------------- |
-| S1  | **Provisioning success rate**                                                                                    | `tenant.provisioned` ok ratio                             | **≥ 99.0%**                                                          | 1.0% of provisions  |
-| S2  | **Lifecycle-operation success rate** (suspend/resume/offboard/restore/rehome)                                    | `tenant.transition` ok ratio                              | **≥ 99.5%**                                                          | 0.5% of transitions |
-| S3  | **Lifecycle-operation latency**                                                                                  | p95 `tenant_event_duration_ms{event="tenant.transition"}` | **p95 ≤ 1000 ms**                                                    | n/a (latency SLO)   |
-| S4  | **Fleet-migration per-tenant success**                                                                           | `fleet.migration` ok ratio, **per migration run**         | **≥ 99.0%** per run                                                  | 1.0% of tenants/run |
-| S5  | **Billing-run success rate**                                                                                     | `billing.run` ok ratio                                    | **≥ 99.5%**                                                          | 0.5% of runs        |
-| S6  | **Background-sweep success + liveness** (quota / usage-alert / secret-rotation / snapshot-prune / erasure-sweep) | `tenant.*_sweep` + `tenant.erased`/`archived` ok ratio    | **≥ 99.0%** ok **AND** each scheduled sweep runs within its interval | 1.0%                |
-| S7  | **API availability** (control-plane HTTP edge — non-`5xx` ratio on `/v1`)                                        | `tenantforge_http_requests_total{route=~"/v1.*"}`         | **≥ 99.9%**                                                          | 0.1% of `/v1` reqs  |
-| S8  | **Read-path latency** (GET `/v1/*` reads)                                                                        | p95 `tenantforge_http_request_duration_ms` (GET `/v1/*`)  | **p95 ≤ 1000 ms**                                                    | n/a (latency SLO)   |
+| #   | SLI                                                                                                              | Event series                                                   | SLO target                                                           | 28d error budget    |
+| --- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------- |
+| S1  | **Provisioning success rate**                                                                                    | `tenant.provisioned` ok ratio                                  | **≥ 99.0%**                                                          | 1.0% of provisions  |
+| S2  | **Lifecycle-operation success rate** (suspend/resume/offboard/restore/rehome)                                    | `tenant.transition` ok ratio                                   | **≥ 99.5%**                                                          | 0.5% of transitions |
+| S3  | **Lifecycle-operation latency**                                                                                  | p95 `tenantforge_event_duration_ms{event="tenant.transition"}` | **p95 ≤ 1000 ms**                                                    | n/a (latency SLO)   |
+| S4  | **Fleet-migration per-tenant success**                                                                           | `fleet.migration` ok ratio, **per migration run**              | **≥ 99.0%** per run                                                  | 1.0% of tenants/run |
+| S5  | **Billing-run success rate**                                                                                     | `billing.run` ok ratio                                         | **≥ 99.5%**                                                          | 0.5% of runs        |
+| S6  | **Background-sweep success + liveness** (quota / usage-alert / secret-rotation / snapshot-prune / erasure-sweep) | `tenant.*_sweep` + `tenant.erased`/`archived` ok ratio         | **≥ 99.0%** ok **AND** each scheduled sweep runs within its interval | 1.0%                |
+| S7  | **API availability** (control-plane HTTP edge — non-`5xx` ratio on `/v1`)                                        | `tenantforge_http_requests_total{route=~"/v1.*"}`              | **≥ 99.9%**                                                          | 0.1% of `/v1` reqs  |
+| S8  | **Read-path latency** (GET `/v1/*` reads)                                                                        | p95 `tenantforge_http_request_duration_ms` (GET `/v1/*`)       | **p95 ≤ 1000 ms**                                                    | n/a (latency SLO)   |
 
 Notes:
 
@@ -80,6 +80,11 @@ Notes:
   (`docs/runbooks/fleet-migration-rollback.md`).
 - **S6** includes a **liveness** clause: a sweep that **did not run** is an incident too
   (`@rules/templates/batch-job.md`) — alert on silent non-execution, not only on `error` outcomes.
+  **Where each sweep runs (gap #1):** the **erasure** and **evidence-prune** sweeps run automatically
+  every worker cycle (`src/app/worker.ts` `runWorkerCycle`); the remaining interval sweeps (quota,
+  usage-alert, secret-rotation, snapshot-prune, archived-purge) are **CLI commands** an operator
+  schedules via external cron (`tenantforge cli <sweep>`), so their liveness depends on that wiring —
+  a missing cron is the silent-non-execution incident this clause covers.
 - **S7** is the HTTP-edge availability SLI:
   `sum without(instance)(rate(tenantforge_http_requests_total{status_class!="5xx",route=~"/v1.*"}[5m])) / sum without(instance)(rate(tenantforge_http_requests_total{route=~"/v1.*"}[5m]))`.
   It is **stricter (99.9%)** than the provisioning SLO (S1, 99.0%) because most `/v1` traffic is
@@ -97,11 +102,11 @@ Notes:
 These are now emitted from the event stream (M2/M3/M4 closed 2026-06-30). They are **indicators we
 watch and alert on**, deliberately framed distinctly from the S-series SLOs above:
 
-| #   | Indicator                              | Event series                                               | Target / threshold                                                            |
-| --- | -------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| D1  | **Neon upstream dependency health**    | `neon.api` ok ratio + duration                             | **Alerting threshold, not an owned SLO** — see below                          |
-| D2  | **Provisioning latency**               | p95 `tenant_event_duration_ms{event="tenant.provisioned"}` | **Ratify from observed p95** (target set from data — not yet numbered)        |
-| D3  | **Connection-resolution availability** | `connection.resolve` ok ratio                              | denial-rate watch signal (deploy runbook); ratify a target from observed data |
+| #   | Indicator                              | Event series                                                    | Target / threshold                                                            |
+| --- | -------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| D1  | **Neon upstream dependency health**    | `neon.api` ok ratio + duration                                  | **Alerting threshold, not an owned SLO** — see below                          |
+| D2  | **Provisioning latency**               | p95 `tenantforge_event_duration_ms{event="tenant.provisioned"}` | **Ratify from observed p95** (target set from data — not yet numbered)        |
+| D3  | **Connection-resolution availability** | `connection.resolve` ok ratio                                   | denial-rate watch signal (deploy runbook); ratify a target from observed data |
 
 - **D1 — Neon dependency health (a signal feeding S1, NOT an availability SLO we own).** From
   `tenantforge_events_total{event="neon.api",outcome}` (error rate) and
